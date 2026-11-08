@@ -1,0 +1,10 @@
+/* Maple Mono NF CN v7.9 的 OFL 子集衍生版（scripts/build-font-subset.py 生成）。
+   字符集：ASCII + CJK/全角标点 + 源码出现过的字符 + GB2312 一级汉字（3972 个）。
+   按 OFL 要求改用派生族名，原字体版权与许可见 src/assets/third-party-notices.txt。 */
+@font-face {
+  font-family: 'Maple Mono NF CN Subset';
+  src: url('./MapleMono-NF-CN-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

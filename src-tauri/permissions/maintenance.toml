@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "maintenance"
+description = "允许主窗口检查数据目录所在磁盘剩余空间并清理较旧的临时文件"
+commands.allow = [
+  "disk_free_space",
+  "disk_cleanup_temp",
+]

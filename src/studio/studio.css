@@ -1,0 +1,148 @@
+/* Studio 壳子的全局样式。Tailwind 主题 token 在 tailwind.config 中映射，这里只保留 CSS 变量与自定义类。 */
+
+:root {
+  --studio-color-surface-dim: #f1f3f5;
+  --studio-color-surface: #ffffff;
+  --studio-color-surface-sidebar: #f8f9fa;
+  --studio-color-surface-card: #ffffff;
+  --studio-font-sans: var(--font-ui-sans);
+  --studio-font-mono: var(--font-mono);
+  --studio-font-display: var(--font-ui-sans);
+
+  /* 4px Rhythm Spacing System */
+  --studio-spacing-0_5: 2px;
+  --studio-spacing-1: 4px;
+  --studio-spacing-2: 8px;
+  --studio-spacing-3: 12px;
+  --studio-spacing-4: 16px;
+  --studio-spacing-5: 20px;
+  --studio-spacing-6: 24px;
+  --studio-spacing-7: 28px;
+  --studio-spacing-8: 32px;
+  --studio-spacing-9: 36px;
+  --studio-spacing-10: 40px;
+  --studio-spacing-11: 44px;
+  --studio-spacing-12: 48px;
+
+  /* Strict Radii Standard: 8px and 12px */
+  --studio-radius-xs: 4px;
+  --studio-radius-sm: 6px;
+  --studio-radius-md: 8px;
+  --studio-radius-lg: 12px;
+  --studio-radius-xl: 16px;
+  --studio-radius-full: 9999px;
+}
+
+/* Hide scrollbars for clean horizontal pill bars */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Studio 壳子根节点；所有全局尺寸/背景/滚动条都限制在这里，避免污染旧布局 */
+.studio-root {
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  color: #0f172a;
+}
+html.dark .studio-root {
+  background-color: #0c0e14;
+  color: #f8fafc;
+}
+
+/* Solid Clean Light Canvas with Subtle Dot Grid */
+.stitch-dot-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: #fbfcfd;
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.16) 1px, transparent 1px);
+  background-size: 24px 24px;
+  transition: background-color 0.2s ease;
+}
+html.dark .stitch-dot-canvas {
+  background-color: #0c0e14;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+}
+
+/* Precision Pointer Highlight */
+.stitch-dot-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.6) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(circle 140px at var(--mx, -500px) var(--my, -500px), black 0%, rgba(0,0,0,0.3) 45%, transparent 100%);
+  mask-image: radial-gradient(circle 140px at var(--mx, -500px) var(--my, -500px), black 0%, rgba(0,0,0,0.3) 45%, transparent 100%);
+  transition: opacity 0.2s ease-out;
+  opacity: 0.75;
+}
+html.dark .stitch-dot-highlight {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.7) 1.2px, transparent 1.2px);
+}
+
+/* Crisp Clean Popovers and Menus (Solid surface with subtle drop shadow) */
+.glass-panel {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+html.dark .glass-panel {
+  background: #151822;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Custom Slim Scrollbars */
+.studio-root ::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.studio-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.studio-root ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 9999px;
+}
+html.dark .studio-root ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 界面缩放：只包住 UI 外壳，画布容器不使用该类 */
+.ui-scale-chrome {
+  zoom: var(--ui-scale, 1);
+}
+
+/* 根字号来自设计令牌（index.css 的 --type-*），不再用 CSS 逐条改写 text-* 类。
+   UI-27 的 11 条字号覆盖已删除：全站字号由 tailwind.config.js 的 6 档令牌统一管控。 */
+.studio-root {
+  font-size: var(--type-body);
+}
+
+/* 交互尺寸下限：图标最小 13px、点击区最小 30px。
+   这不是字号补丁，是可用性规范；值同样来自 index.css 的 --icon-* / --tap-*。 */
+.studio-root :is(svg.w-2\.5) { width: var(--icon-2xs); height: var(--icon-2xs); }
+.studio-root :is(svg.w-3) { width: var(--icon-xs); height: var(--icon-xs); }
+.studio-root :is(svg.w-3\.5) { width: var(--icon-sm); height: var(--icon-sm); }
+.studio-root :is(svg.w-4) { width: var(--icon-md); height: var(--icon-md); }
+.studio-root :is(svg.w-5) { width: var(--icon-lg); height: var(--icon-lg); }
+.studio-root button.h-6 { min-height: var(--tap-sm); }
+.studio-root button.h-7 { min-height: var(--tap-md); }
+.studio-root button.w-6.h-6 { width: var(--tap-sm); height: var(--tap-sm); }
+.studio-root button.h-\[26px\] { min-height: var(--tap-sm); }
+.studio-root button.h-\[28px\] { min-height: var(--tap-md); }
+
+/* 触屏/窄窗下限 */
+@media (max-width: 960px) {
+  .studio-root .ui-scale-chrome { max-width: 100%; }
+}
+
+

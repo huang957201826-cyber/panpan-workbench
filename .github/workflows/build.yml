@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build frontend
+        run: npm run build
+      - name: Test frontend
+        run: npm test
+      # 单独门禁：真实事件顺序（pointerdown → mousedown → click）下的下拉选项必须可写回，
+      # 防止「下拉能弹出但选项点不动」这类 P0 交互缺陷再次只被纯函数单测放过。
+      - name: Test UI interactions
+        run: npm run test:interaction
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml

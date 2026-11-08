@@ -1,0 +1,14 @@
+/* Noto Sans SC 的 OFL 1.1 子集衍生版（scripts/build-noto-subset.py 生成）。
+   字符集：ASCII + 中文/全角标点 + GB2312 一级汉字(3755) + 项目源码/文档中的非 ASCII 字符。
+   主文件为变量字体，保留 wght 轴 100-900：单个 @font-face 用 font-weight: 100 900
+   即可真实呈现 Regular(400)/Medium(500)/Bold(700)，无需 font-synthesis。
+   按 OFL 第 3 条 / RFN 要求改用派生族名；原字体版权声明与许可全文见
+   src/assets/third-party-notices.txt 的 "Noto Sans SC Subset 字体" 段落。
+   静态实例 NotoSansSC-Subset-Medium.woff2 / -Bold.woff2 一并产出备查，本表不引用。 */
+@font-face {
+  font-family: "Noto Sans SC Subset";
+  src: url('./NotoSansSC-Subset-Regular.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

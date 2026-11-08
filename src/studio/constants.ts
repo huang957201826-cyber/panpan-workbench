@@ -1,0 +1,228 @@
+import type { Artboard, GenerationParams, ProjectFolder, ReferenceImage, LocalModelItem } from './types.ts';
+
+export const DEFAULT_GENERATION_PARAMS: GenerationParams = {
+  model: 'gpt-image-2.5',
+  dimension: '2560×1440',
+  quality: 'auto',
+  count: 1,
+  format: 'PNG',
+  transparent: false,
+  filter: 'auto',
+  sampler: 'Euler a',
+  steps: 28,
+  cfgScale: 7.0,
+};
+
+export const INITIAL_ARTBOARD_1: Artboard = {
+  id: 'artboard-1',
+  title: '20261031-生图1 · 现代化无人机中转站商业配套',
+  model: 'gpt-image-2.5',
+  aspectRatio: '16:9',
+  resolution: '2560 × 1440',
+  renderTime: '3.2s',
+  imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAvtxDrFHCyC9IncEulsQcAklvFBSRW-mFDVjwQvnD6cPLNK0nT9qWnfWKBiv9pNJ9M-ur_SXQUxpBG8ob6e1DjJTTrXB9TBfc2u03gN-xbFpzlTP0OWecEKyKDSmvFP1dRjlY8b67tUeRWzUMg5NvZH1bvqI7Q_4A0a2qoTfpUvWusXyG8pjWj-tj3GmLF9sZFdzdH9RqKWx50jA7XjTLa7GawcAIFZh4Q33fPQWv_9gt5Eik8Ovx-',
+  x: 120,
+  y: 60,
+  width: 700,
+  height: 430,
+  isLocked: false,
+  prompt: '烤区，右侧为自助啤酒区，左右面积比例保持不变；顶部中间保留一块大型 LED 屏幕，四周保留无人机升降平台结构。整体空间属于现代化无人机中转站商业配套，强调科技感、现代感、干净清爽和高级商业氛围。\n1、[image 1]，\n2、[image 1]图1是该场景的人视视角模型截面图，我需要你在理解我图一所表达内容的基础上，在图1的图片基础上进行细化设计。需要严格在图1的基础上进行细化设计，不要改变图1的视角及空间结构，不要改变图1中烧烤区和自助啤酒区的占比，也不要改变无人机升降台和中间LED屏幕的位置，严格按照图1进行生成。\n3、图2部分[image 2]为该空中无人机中转站的其他项目实拍图，部分材质及质感可进行参考，但不要影响到下面的商铺设计\n4、商铺的两个模块中，自助啤酒区的自动打酒装置可见图3[image 3]部分，烧烤区可见图4[image 4]部分，需要注意的是，该项目是一个整体，颜色可选红色调，要往科技现代的方向进行靠拢。要重点强调珠江啤酒这个品牌，去不去，可以增设一些 logo，要求整体高级感，有科技感，\n5、将整个场景进行真实化的渲染及设计，并增加少量的人，营造商业氛围。',
+  seed: 84920412,
+  quality: 'auto',
+  format: 'png',
+  transparent: false,
+  filter: 'auto',
+  count: 1,
+  createdAt: '2026/10/31 22:45:42',
+  duration: '00:47',
+  taskId: 'mvwijwydce0d1',
+  imageId: '4f44ff11cbd5cf7a3ea9ffd5d88dbce712f8de527d98b1',
+  isStarred: true,
+};
+
+export const INITIAL_ARTBOARD_2: Artboard = {
+  id: 'artboard-2',
+  title: '20261031-生图2 · 珠江啤酒交易所夜经济滨江微醺露台',
+  model: 'gpt-image-2.5',
+  aspectRatio: '16:9',
+  resolution: '2560 × 1440',
+  renderTime: '2.8s',
+  imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDG0F3KLXT4r9tknUy8VBAM-9fZwkgrp3UOZy3wk5370mtvrCOb_zMMSaV1jvHLM0nK1PsneZPQ1Esj65PCisQsAHAni4T6cxrRlMfzBwxdGMjyOe9Bbld5TOifKSPAugA3I5TeY9Om1GX4MUazhRulEaJ0jUqs1kMj3x_tZDn7ilIempUR-ZHjsbnzoh7u7mYRl_eG69m39ZfeoddKRfJ_PGfk_UxOClNfRajZsdTvNfXEAyKhxZNq',
+  x: 860,
+  y: 60,
+  width: 700,
+  height: 430,
+  isLocked: false,
+  prompt: '珠江啤酒交易所滨水夜市动线设计，原石栏杆与微风露台，木质长椅、露营天幕与暖色地灯，远眺广州塔，细腻水波倒影与质感光影。',
+  seed: 39501831,
+  quality: 'auto',
+  format: 'png',
+  transparent: false,
+  filter: 'auto',
+  count: 1,
+  createdAt: '2026/10/31 23:12:15',
+  duration: '00:38',
+  taskId: 'nk910alxk9e82',
+  imageId: '8c919fae214bc910a9f1938fe710aefb1947cbfa120',
+  isStarred: false,
+};
+
+export const INITIAL_REFERENCE_IMAGES: ReferenceImage[] = [
+  {
+    id: 'ref-1',
+    url: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=600&auto=format&fit=crop&q=80',
+    name: '人视视角模型截面',
+    tagNumber: 1,
+    weight: 0.85,
+    role: 'structure',
+  },
+  {
+    id: 'ref-2',
+    url: 'https://images.unsplash.com/photo-1541888946425-d0fbb186c5f7?w=600&auto=format&fit=crop&q=80',
+    name: '项目实拍与美新塑木材质',
+    tagNumber: 2,
+    weight: 0.75,
+    role: 'style',
+  },
+  {
+    id: 'ref-3',
+    url: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&auto=format&fit=crop&q=80',
+    name: '珠江啤酒烧烤与夜市灯光',
+    tagNumber: 3,
+    weight: 0.65,
+    role: 'ref',
+  },
+  {
+    id: 'ref-4',
+    url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=600&auto=format&fit=crop&q=80',
+    name: '无人机升降台钢构细节',
+    tagNumber: 4,
+    weight: 0.7,
+    role: 'structure',
+  },
+];
+
+export const INITIAL_LOCAL_MODELS: LocalModelItem[] = [
+  {
+    id: 'model-flux-dev',
+    name: 'FLUX.1-Dev',
+    type: 'checkpoint',
+    size: '11.9 GB',
+    baseModel: 'FLUX.1',
+    filename: 'flux1-dev-fp8.safetensors',
+    isActive: true,
+  },
+  {
+    id: 'model-sdxl-base',
+    name: 'SDXL Base 1.0',
+    type: 'checkpoint',
+    size: '6.62 GB',
+    baseModel: 'SDXL',
+    filename: 'sd_xl_base_1.0.safetensors',
+    isActive: false,
+  },
+  {
+    id: 'model-sd15-arch',
+    name: 'Realistic Vision V6.0 B1',
+    type: 'checkpoint',
+    size: '3.97 GB',
+    baseModel: 'SD1.5',
+    filename: 'realisticVisionV60B1_v51VAE.safetensors',
+    isActive: false,
+  },
+  {
+    id: 'lora-arch-night',
+    name: '建筑水岸冷暖夜景漫射光 LoRA',
+    type: 'lora',
+    size: '144 MB',
+    baseModel: 'FLUX.1',
+    filename: 'Architectural_Night_Glow_v2.safetensors',
+    triggerWords: ['night scene', 'diffuse warm amber', 'water reflection'],
+    isActive: true,
+    weight: 0.8,
+  },
+  {
+    id: 'lora-wood-material',
+    name: '美新科技户外塑木材质增强 LoRA',
+    type: 'lora',
+    size: '128 MB',
+    baseModel: 'FLUX.1',
+    filename: 'Outdoor_Wood_Plastic_Detail.safetensors',
+    triggerWords: ['textured composite wood', 'durable grain'],
+    isActive: true,
+    weight: 0.75,
+  },
+  {
+    id: 'lora-film-texture',
+    name: '富士胶片细腻微颗粒调色 LoRA',
+    type: 'lora',
+    size: '160 MB',
+    baseModel: 'SDXL',
+    filename: 'Fuji_Natural_FilmGrain_XL.safetensors',
+    triggerWords: ['film grain', 'editorial photo'],
+    isActive: false,
+    weight: 0.5,
+  },
+];
+
+export const INITIAL_PROJECT_FOLDERS: ProjectFolder[] = [
+  {
+    id: 'folder-1',
+    name: '空中无人机中转站设计',
+    isExpanded: true,
+    schemes: [
+      {
+        id: 'scheme-1',
+        title: '方案 1 · 商业配套与珠江啤酒联名广告墙',
+        prompt: `我现在在进行生图任务，我需要你根据以下我的要求进行生成：
+1、基于参考 进行真实化渲染与细化设计，严格保持参考 @图1 的人视视角、空间结构、透视关系和整体布局，不改变场景中各功能区的位置与占比。画面主体为空中无人机中转站下方的商业商铺空间，中间红色墙部分是美新科技x珠江啤酒联名的广告墙，重点强调美新型塑木的户外塑木耐久材料，助力珠江啤酒什么什么的。右侧是珠江啤酒烧烤区，顶部四周保留无人机升降平台结构。整体空间属于现代化无人机中转站商业配套，强调科技感、现代感、干净清爽和高级商业氛围。
+2、@图1 图1是该场景的人视视角模型截图，我需要你在理解我图一所表达内容的基础上，在图1的图片基础上进行细化设计。需要严格在图1的基础上进行细化设计，不要改变图1的视角及空间结构，不要改变图1中烧烤区的占比，也不要改变无人机升降台和中间LED屏幕的位置，严格按照图1进行生成。
+3、@图2 为该空中无人机中转站的其他项目实拍图，部分材质及质感可进行参考，但不要影响到下面的商铺设计`,
+        updatedAt: '今天 10:15',
+        params: { ...DEFAULT_GENERATION_PARAMS },
+        artboards: [INITIAL_ARTBOARD_1],
+        referenceImages: INITIAL_REFERENCE_IMAGES,
+      },
+      {
+        id: 'scheme-2',
+        title: '方案 2 · 顶层起降停机坪与流媒体LED大屏',
+        prompt: `空中无人机智能中转站顶层起降平台设计。
+中岛配有升降停机坪与高清流媒体曲面LED屏幕，金属流线造型，带有指示灯带与科技感防滑地面材质。参考 @图4 结构。`,
+        updatedAt: '昨天 17:40',
+        params: { ...DEFAULT_GENERATION_PARAMS, dimension: '2560×1440' },
+        artboards: [INITIAL_ARTBOARD_2],
+      },
+    ],
+  },
+  {
+    id: 'folder-2',
+    name: '珠江啤酒交易所夜经济消费场地',
+    isExpanded: false,
+    schemes: [
+      {
+        id: 'scheme-3',
+        title: '方案 A · 环形穹顶与水岸微醺烟火气',
+        prompt: `以珠江啤酒交易所滨水沿线为核心的露天微醺夜市动线设计。
+保留江畔原石栏杆与微风露台，设置木质长椅、露营遮阳天幕与暖色地灯，远眺广州塔天际线。`,
+        updatedAt: '10/28',
+        params: { ...DEFAULT_GENERATION_PARAMS, model: 'gpt-image-2.5' },
+        artboards: [INITIAL_ARTBOARD_2],
+      },
+    ],
+  },
+  {
+    id: 'folder-3',
+    name: '太古仓码头商业外立面概念',
+    isExpanded: false,
+    schemes: [
+      {
+        id: 'scheme-4',
+        title: '方案 1 · 红砖工业遗存改造落地',
+        prompt: `历史红砖码头仓库改造为多功能艺术商业空间，高挑空钢架屋梁，大面积落地黑框玻璃幕墙，夜间投光漫射。`,
+        updatedAt: '10/24',
+        params: { ...DEFAULT_GENERATION_PARAMS },
+        artboards: [INITIAL_ARTBOARD_1],
+      },
+    ],
+  },
+];

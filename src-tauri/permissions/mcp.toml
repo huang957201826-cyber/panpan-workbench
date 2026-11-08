@@ -1,0 +1,10 @@
+[[permission]]
+identifier = "mcp"
+description = "允许主窗口配置本机 MCP 服务、读取审计日志并回执写入确认"
+commands.allow = [
+  "mcp_status",
+  "mcp_configure",
+  "mcp_rotate_token",
+  "mcp_recent_calls",
+  "mcp_write_response",
+]
