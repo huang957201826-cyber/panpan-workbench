@@ -182,6 +182,12 @@ export default function AboutSettingsTab({ onOpenFontLicenses }: { onOpenFontLic
         />
       </Section>
 
+      <Section title="赞助">
+        <div className="px-4 py-3 text-body-sm leading-relaxed text-ink-2">
+          如果这个工作台帮到了你，可以通过开发者提供的渠道赞助支持。本版不包含返利、推荐链接或任何分成入口。
+        </div>
+      </Section>
+
       <Section title="开源协议">
         <Row
           icon={<Scale size={15} />}

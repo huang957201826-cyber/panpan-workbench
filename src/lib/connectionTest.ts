@@ -1,4 +1,5 @@
-import type { ApiProfile } from '../types'
+import type { ApiProfile, ApiProvider } from '../types'
+import { DEFAULT_GEMINI_BASE_URL } from './apiProfiles'
 import { normalizeBaseUrl } from './devProxy'
 import { apiFetch } from './platform'
 
@@ -23,25 +24,50 @@ export function getTestedModel(profile: Pick<ApiProfile, 'model' | 'selectedMode
   return profile.selectedModel?.trim() || profile.model.split(',')[0]?.trim() || ''
 }
 
+interface TestableProfile extends Pick<ApiProfile, 'baseUrl' | 'apiKey' | 'model' | 'selectedModel'> {
+  provider?: ApiProvider
+}
+
+function buildGoogleModelsRequest(profile: TestableProfile) {
+  const raw = normalizeBaseUrl(profile.baseUrl?.trim() || DEFAULT_GEMINI_BASE_URL).replace(/\/+$/, '')
+  const base = raw.replace(/\/v1beta$/, '')
+  return {
+    url: `${base}/v1beta/models`,
+    headers: profile.apiKey ? { 'x-goog-api-key': profile.apiKey } : undefined,
+  }
+}
+
+function parseGoogleModels(data: unknown) {
+  const record = data as { models?: Array<{ name?: unknown }> }
+  if (!Array.isArray(record?.models)) return []
+  return record.models
+    .map((item) => typeof item?.name === 'string' ? item.name.replace(/^models\//, '') : '')
+    .filter(Boolean)
+}
+
+function parseOpenAIModels(data: unknown) {
+  const record = data as { data?: Array<{ id?: unknown }> }
+  return Array.isArray(record?.data)
+    ? record.data.map((item) => typeof item?.id === 'string' ? item.id : '').filter(Boolean)
+    : []
+}
+
 /** GET /models 校验 baseUrl 与模型是否存在，返回可展示的中文结果 */
 export async function testApiConnection(
-  profile: Pick<ApiProfile, 'baseUrl' | 'apiKey' | 'model' | 'selectedModel'>,
+  profile: TestableProfile,
   fetcher: typeof apiFetch = apiFetch,
 ): Promise<ConnectionTestResult> {
   const base = normalizeBaseUrl(profile.baseUrl)
   if (!base) return { ok: false, message: '请先填写 API URL', models: [] }
-  const url = base.endsWith('/') ? `${base}models` : `${base}/models`
+  const google = profile.provider === 'google'
+  const request = google
+    ? buildGoogleModelsRequest(profile)
+    : { url: base.endsWith('/') ? `${base}models` : `${base}/models`, headers: profile.apiKey ? { Authorization: `Bearer ${profile.apiKey}` } : undefined }
   try {
-    const response = await fetcher(url, {
-      headers: profile.apiKey ? { Authorization: `Bearer ${profile.apiKey}` } : undefined,
-    })
+    const response = await fetcher(request.url, { headers: request.headers })
     if (!response.ok) return { ok: false, message: `连接失败：HTTP ${response.status}`, models: [] }
     const data: unknown = await response.json().catch(() => null)
-    const models = Array.isArray((data as { data?: unknown })?.data)
-      ? ((data as { data: Array<{ id?: unknown }> }).data)
-        .map((item) => typeof item?.id === 'string' ? item.id : '')
-        .filter(Boolean)
-      : []
+    const models = google ? parseGoogleModels(data) : parseOpenAIModels(data)
     if (!models.length) return { ok: false, message: '已连接，但接口没有返回模型列表', models }
     const model = getTestedModel(profile)
     if (model && !models.includes(model)) {

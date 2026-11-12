@@ -110,6 +110,7 @@ export function normalizePromptSkill(value: unknown): PromptSkill | null {
     ...(typeof record.author === 'string' && record.author.trim() ? { author: record.author.trim().slice(0, 40) } : {}),
     createdAt,
     updatedAt: typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt) ? record.updatedAt : createdAt,
+    kind: 'prompt',
   }
 }
 
@@ -157,6 +158,7 @@ export function createPromptSkill(seed: SkillSeed, now = Date.now()): PromptSkil
     ...(seed.author?.trim() ? { author: seed.author.trim().slice(0, 40) } : {}),
     createdAt: now,
     updatedAt: now,
+    kind: 'prompt',
   }
 }
 

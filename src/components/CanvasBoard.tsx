@@ -1,5 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createInputImageFromFile, removeMultipleTasks, useStore, updateTaskCanvas, withInputPending } from '../store'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceAround,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceAround,
+  Columns3,
+  Grid2X2,
+  Rows3,
+  Undo2,
+} from 'lucide-react'
+import { createInputImageFromFile, useStore, updateTaskCanvas, withInputPending } from '../store'
 import type { CanvasImageNode, TaskRecord } from '../types'
 import { useVisibleTasks } from '../hooks/usePrivacyMode'
 import { useCanvasViewStore } from '../lib/canvasViewStore'
@@ -8,9 +22,14 @@ import { fitNodesViewport, nodeInView, screenToWorld, zoomAtPoint } from '../lib
 import { isUiModalOpen } from '../lib/uiLayers'
 import { ensureImageCached } from '../lib/imageCache'
 import { downloadImage } from '../lib/downloadImage'
+import { getDownloadErrorMessage } from '../lib/downloadImages'
 import { useWorkspaceStore } from '../lib/workspaceStore'
-import { addCanvasImageNode, createCanvasImageNode, fitCanvasImageNodeSize, removeCanvasImageNodes } from '../lib/canvasImageNodes'
+import { addCanvasImageNode, createCanvasImageNode, fitCanvasImageNodeSize } from '../lib/canvasImageNodes'
+import { assertCanvasUndoActive, createCanvasUndoEntry, getCanvasUndoDepth, isCanvasUndoing, pushCanvasUndo, runCanvasUndo, subscribeCanvasUndo } from '../lib/canvasUndo'
 import { pruneTaskSelection } from '../lib/taskSelection'
+import { deleteSelection } from '../lib/taskActions'
+import { useCanvasSelectionStore } from '../lib/canvasSelectionStore'
+import { clearAllSelection } from '../lib/selection'
 import CanvasTaskNode from './CanvasTaskNode'
 import { InteractiveDotGrid } from './InteractiveDotGrid'
 
@@ -18,7 +37,22 @@ const AUTO_GAP = 48
 const MAX_RENDER = 500
 const EMPTY_NODES: CanvasImageNode[] = []
 
-export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvasId = '', selectionCommand, onSelectionChange, pickMode = false, onPickImage, onCancelPick }: { tasks?: TaskRecord[]; allTaskCount?: number; canvasId?: string; selectionCommand?: { type: 'all' | 'clear'; nonce: number } | null; onSelectionChange?: (taskIds: string[]) => void; pickMode?: boolean; onPickImage?: (imageId: string) => void; onCancelPick?: () => void } = {}) {
+interface PositionSnapshot {
+  tasks: Record<string, { x: number; y: number; w?: number; h?: number; userSized?: boolean }>
+  nodes: Record<string, { x: number; y: number; w?: number; h?: number }>
+}
+
+interface GroupDragState {
+  startX: number
+  startY: number
+  dx: number
+  dy: number
+  moved: boolean
+  tasks: Array<{ id: string; x: number; y: number; w?: number; h?: number; userSized?: boolean }>
+  nodes: Array<{ id: string; x: number; y: number; w?: number; h?: number }>
+}
+
+export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvasId = '', pickMode = false, onPickImage, onCancelPick, rightInset = 0 }: { tasks?: TaskRecord[]; allTaskCount?: number; canvasId?: string; pickMode?: boolean; onPickImage?: (imageId: string) => void; onCancelPick?: () => void; rightInset?: number } = {}) {
   const visibleTasks = useVisibleTasks()
   const tasks = providedTasks ?? visibleTasks
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
@@ -29,8 +63,27 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   const setSize = useCanvasViewStore((s) => s.setSize)
   const bottomInset = useCanvasViewStore((s) => s.bottomInset)
   const setBottomInset = useCanvasViewStore((s) => s.setBottomInset)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
+  const selectedTaskIdsState = useStore((s) => s.selectedTaskIds)
+  const setSelectedTaskIdsState = useStore((s) => s.setSelectedTaskIds)
+  const selectedIds = useMemo(() => new Set(selectedTaskIdsState), [selectedTaskIdsState])
+  const setSelectedIds = (updater: Set<string> | ((previous: Set<string>) => Set<string>)) => {
+    setSelectedTaskIdsState((previous) => {
+      const previousSet = new Set(previous)
+      const next = typeof updater === 'function' ? updater(previousSet) : updater
+      return next === previousSet ? previous : [...next]
+    })
+  }
+  const selectedNodeIdsState = useCanvasSelectionStore((s) => s.selectedNodeIds)
+  const setSelectedNodeIdsState = useCanvasSelectionStore((s) => s.setSelectedNodeIds)
+  const selectedImageIds = useMemo(() => new Set(selectedNodeIdsState), [selectedNodeIdsState])
+  const setSelectedImageIds = (updater: Set<string> | ((previous: Set<string>) => Set<string>)) => {
+    setSelectedNodeIdsState((previous) => {
+      const previousSet = new Set(previous)
+      const next = typeof updater === 'function' ? updater(previousSet) : updater
+      return next === previousSet ? previous : new Set(next)
+    })
+  }
+  const selectionClearNonce = useCanvasSelectionStore((s) => s.selectionClearNonce)
   const imageNodes = useWorkspaceStore((s) => s.canvases.find((canvas) => canvas.id === canvasId)?.imageNodes ?? EMPTY_NODES)
   const updateCanvas = useWorkspaceStore((s) => s.updateCanvas)
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
@@ -38,6 +91,18 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   const imagePreviewRef = useRef<Record<string, CanvasImageNode>>({})
   const [imageDrag, setImageDrag] = useState<{ id: string; mode: 'move' | 'resize'; startX: number; startY: number; origin: CanvasImageNode } | null>(null)
   const [imageMenu, setImageMenu] = useState<{ x: number; y: number; node: CanvasImageNode } | null>(null)
+  const [groupDrag, setGroupDrag] = useState<GroupDragState | null>(null)
+  const groupDragRef = useRef<GroupDragState | null>(null)
+  const undoDepth = useSyncExternalStore(
+    (onStoreChange) => subscribeCanvasUndo(canvasId, onStoreChange),
+    () => getCanvasUndoDepth(canvasId),
+    () => 0,
+  )
+  const undoing = useSyncExternalStore(
+    (onStoreChange) => subscribeCanvasUndo(canvasId, onStoreChange),
+    () => isCanvasUndoing(canvasId),
+    () => false,
+  )
   const imageNodesRef = useRef(imageNodes)
   imageNodesRef.current = imageNodes
   const [box, setBox] = useState<{ startX: number; startY: number; x: number; y: number } | null>(null)
@@ -134,11 +199,12 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   useEffect(() => {
     didFitRef.current = false
     userInteractedRef.current = false
-    setSelectedIds(new Set())
-    setSelectedImageIds(new Set())
-    setImageMenu(null)
     setBox(null)
   }, [canvasId])
+
+  useEffect(() => {
+    setImageMenu(null)
+  }, [selectionClearNonce])
 
   useEffect(() => {
     let cancelled = false
@@ -151,6 +217,69 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
     }
     return () => { cancelled = true }
   }, [imageNodes, imageUrls])
+
+  const capturePositions = (): PositionSnapshot => {
+    const tasks: PositionSnapshot['tasks'] = {}
+    for (const node of nodes) {
+      if (!selectedIds.has(node.task.id)) continue
+      tasks[node.task.id] = {
+        x: node.x,
+        y: node.y,
+        w: node.width,
+        h: node.height,
+        userSized: node.task.canvas?.userSized,
+      }
+    }
+    const imagePositions: PositionSnapshot['nodes'] = {}
+    for (const node of imageNodesRef.current) {
+      if (!selectedImageIds.has(node.id)) continue
+      imagePositions[node.id] = { x: node.x, y: node.y, w: node.w, h: node.h }
+    }
+    return { tasks, nodes: imagePositions }
+  }
+
+  const pushPositionUndo = (snapshot: PositionSnapshot) => {
+    if (!canvasId) return
+    if (!Object.keys(snapshot.tasks).length && !Object.keys(snapshot.nodes).length) return
+    pushCanvasUndo(canvasId, createCanvasUndoEntry('position', '移动、缩放或排列', ({ isActive }) => applyPositions(snapshot, isActive)))
+  }
+
+  const applyPositions = async (snapshot: PositionSnapshot, isActive: () => boolean) => {
+    const results = await Promise.all(Object.entries(snapshot.tasks).map(([id, position]) => {
+      const canvas = position.userSized && position.w != null && position.h != null
+        ? { x: position.x, y: position.y, w: position.w, h: position.h, userSized: true }
+        : { x: position.x, y: position.y }
+      return updateTaskCanvas(id, canvas, { silent: true })
+    }))
+    if (results.some((saved) => !saved)) throw new Error('画布位置保存失败')
+    assertCanvasUndoActive(isActive)
+    if (!canvasId || !Object.keys(snapshot.nodes).length) return
+    const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId)
+    if (!canvas) return
+    updateCanvas(canvasId, {
+      imageNodes: (canvas.imageNodes ?? []).map((node) => {
+        const position = snapshot.nodes[node.id]
+        return position
+          ? { ...node, x: position.x, y: position.y, w: position.w ?? node.w, h: position.h ?? node.h }
+          : node
+      }),
+    })
+  }
+
+  const undoPositions = async () => {
+    const result = await runCanvasUndo(
+      canvasId,
+      undefined,
+      () => useWorkspaceStore.getState().canvases.some((canvas) => canvas.id === canvasId),
+    )
+    if (result.error) {
+      useStore.getState().showToast(`撤销失败：${result.error}，已保留撤销记录`, 'error')
+      return
+    }
+    if (result.entry?.kind === 'position') {
+      useStore.getState().showToast(`已撤销${result.entry.label}`, 'success')
+    }
+  }
 
   useEffect(() => {
     if (!imageDrag) return
@@ -170,6 +299,13 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       setImagePreview({})
       setImageDrag(null)
       if (!preview || !canvasId) return
+      const origin = imageDrag.origin
+      const changed = preview.x !== origin.x || preview.y !== origin.y || preview.w !== origin.w || preview.h !== origin.h
+      if (!changed) return
+      pushPositionUndo({
+        tasks: {},
+        nodes: { [origin.id]: { x: origin.x, y: origin.y, w: origin.w, h: origin.h } },
+      })
       updateCanvas(canvasId, {
         imageNodes: imageNodesRef.current.map((node) => node.id === preview.id ? preview : node),
       })
@@ -189,18 +325,6 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   const setNodes = (next: CanvasImageNode[]) => {
     if (!canvasId) return
     updateCanvas(canvasId, { imageNodes: next })
-  }
-
-  const removeImageNodesByIds = (ids: string[]) => {
-    if (!canvasId) return
-    const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId)
-    if (!canvas) return
-    const removedNodes = (canvas.imageNodes ?? []).filter((node) => ids.includes(node.id))
-    const removedImageIds = [...new Set([...(canvas.removedImageIds ?? []), ...removedNodes.map((node) => node.imageId)])]
-    updateCanvas(canvasId, {
-      imageNodes: removeCanvasImageNodes(canvas.imageNodes ?? [], ids),
-      removedImageIds,
-    })
   }
 
   const clearRemovedImageId = (imageId: string) => {
@@ -247,10 +371,6 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }
 
   useEffect(() => {
-    onSelectionChange?.([...selectedIds])
-  }, [selectedIds, onSelectionChange])
-
-  useEffect(() => {
     const isEditable = (target: EventTarget | null) => {
       const el = target as HTMLElement | null
       return Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
@@ -276,6 +396,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault()
         setSelectedIds(new Set(nodeRects.map((node) => node.id)))
+        setSelectedImageIds(new Set())
       }
       if (event.key === 'Delete' && (selectedIds.size || selectedImageIds.size)) {
         event.preventDefault()
@@ -288,17 +409,13 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
           cancelText: '取消',
           tone: 'danger',
           action: () => {
-            if (imageNodeIds.length) removeImageNodesByIds(imageNodeIds)
-            if (taskIds.length) void removeMultipleTasks(taskIds)
-            setSelectedIds(new Set())
-            setSelectedImageIds(new Set())
+            void deleteSelection({ taskIds, nodeIds: imageNodeIds, canvasId })
+            clearAllSelection()
           },
         })
       }
       if (event.key === 'Escape') {
-        setSelectedIds(new Set())
-        setSelectedImageIds(new Set())
-        setImageMenu(null)
+        clearAllSelection()
       }
     }
     const onKeyUp = (event: KeyboardEvent) => {
@@ -384,6 +501,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
         event.stopPropagation()
         if (pickMode && pickTaskImage(task)) return
         setSelectedIds(new Set([task.id]))
+        setSelectedImageIds(new Set())
         userInteractedRef.current = true
         const k = Math.max(0.5, Math.min(1, viewport.k))
         setViewport({
@@ -419,8 +537,13 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       const w = Math.max(1, node.width * viewport.k)
       const h = Math.max(1, node.height * viewport.k)
       if (x + w < 0 || y + h < 0 || x > width || y > height) continue
+      const running = node.task.status === 'running'
+      ctx.filter = running ? 'blur(6px)' : 'none'
+      ctx.globalAlpha = running ? 0.55 : 1
       ctx.fillRect(x, y, w, h)
     }
+    ctx.filter = 'none'
+    ctx.globalAlpha = 1
     ctx.fillStyle = dark ? 'rgba(255,255,255,0.2)' : 'rgba(15,23,42,0.14)'
     for (const node of imageNodesRef.current) {
       const x = node.x * viewport.k + viewport.x
@@ -459,12 +582,6 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
     return () => cancelAnimationFrame(raf)
   }, [showPerf])
 
-  useEffect(() => {
-    if (!selectionCommand) return
-    setSelectedIds(selectionCommand.type === 'all' ? new Set(nodeRects.map((node) => node.id)) : new Set())
-    setSelectedImageIds(new Set())
-  }, [selectionCommand])
-
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.button !== 1) return
     const panWithPointer = event.button === 1 || spaceDown
@@ -494,13 +611,173 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
     setViewport({ ...pan.base, x: pan.base.x + event.clientX - pan.startX, y: pan.base.y + event.clientY - pan.startY })
   }
 
+  const selectionCount = selectedIds.size + selectedImageIds.size
+
+  const commitGroupDrag = (drag: GroupDragState) => {
+    const before: PositionSnapshot = {
+      tasks: Object.fromEntries(drag.tasks.map((task) => [task.id, {
+        x: task.x,
+        y: task.y,
+        w: task.w,
+        h: task.h,
+        userSized: task.userSized,
+      }])),
+      nodes: Object.fromEntries(drag.nodes.map((node) => [node.id, {
+        x: node.x,
+        y: node.y,
+        w: node.w,
+        h: node.h,
+      }])),
+    }
+    pushPositionUndo(before)
+    for (const task of drag.tasks) {
+      const next = task.userSized && task.w != null && task.h != null
+        ? { x: task.x + drag.dx, y: task.y + drag.dy, w: task.w, h: task.h, userSized: true }
+        : { x: task.x + drag.dx, y: task.y + drag.dy }
+      void updateTaskCanvas(task.id, next)
+    }
+    if (canvasId && drag.nodes.length) {
+      const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId)
+      if (canvas) {
+        const offsets = new Map(drag.nodes.map((node) => [node.id, node]))
+        updateCanvas(canvasId, {
+          imageNodes: (canvas.imageNodes ?? []).map((node) => {
+            const origin = offsets.get(node.id)
+            return origin ? { ...node, x: origin.x + drag.dx, y: origin.y + drag.dy } : node
+          }),
+        })
+      }
+    }
+  }
+
+  const alignSelection = (mode: 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom' | 'space-x' | 'space-y' | 'row' | 'column' | 'grid') => {
+    if (selectionCount < 2) return
+    const items = [
+      ...nodes.filter((node) => selectedIds.has(node.task.id)).map((node) => ({ kind: 'task' as const, id: node.task.id, x: node.x, y: node.y, w: node.width, h: node.height })),
+      ...imageNodesRef.current.filter((node) => selectedImageIds.has(node.id)).map((node) => ({ kind: 'node' as const, id: node.id, x: node.x, y: node.y, w: node.w, h: node.h })),
+    ]
+    if (items.length < 2) return
+    const before = capturePositions()
+    const minX = Math.min(...items.map((item) => item.x))
+    const maxRight = Math.max(...items.map((item) => item.x + item.w))
+    const minY = Math.min(...items.map((item) => item.y))
+    const maxBottom = Math.max(...items.map((item) => item.y + item.h))
+    const updates = new Map<string, { x: number; y: number }>()
+    if (mode === 'row' || mode === 'column' || mode === 'grid') {
+      const gap = 24
+      if (mode === 'grid') {
+        const maxW = Math.max(...items.map((item) => item.w))
+        const maxH = Math.max(...items.map((item) => item.h))
+        const cols = Math.max(1, Math.ceil(Math.sqrt(items.length)))
+        items.forEach((item, index) => {
+          updates.set(`${item.kind}:${item.id}`, {
+            x: minX + (index % cols) * (maxW + gap),
+            y: minY + Math.floor(index / cols) * (maxH + gap),
+          })
+        })
+      } else {
+        const horizontal = mode === 'row'
+        const sorted = [...items].sort((a, b) => horizontal ? a.x - b.x : a.y - b.y)
+        let cursor = horizontal ? minX : minY
+        for (const item of sorted) {
+          updates.set(`${item.kind}:${item.id}`, horizontal
+            ? { x: cursor, y: minY }
+            : { x: minX, y: cursor })
+          cursor += (horizontal ? item.w : item.h) + gap
+        }
+      }
+    } else if (mode === 'space-x' || mode === 'space-y') {
+      const horizontal = mode === 'space-x'
+      const sorted = [...items].sort((a, b) => horizontal ? a.x - b.x : a.y - b.y)
+      const start = horizontal ? minX : minY
+      const end = horizontal ? maxRight : maxBottom
+      const totalSize = sorted.reduce((sum, item) => sum + (horizontal ? item.w : item.h), 0)
+      const gap = sorted.length > 1 ? (end - start - totalSize) / (sorted.length - 1) : 0
+      let cursor = start
+      for (const item of sorted) {
+        updates.set(`${item.kind}:${item.id}`, horizontal ? { x: cursor, y: item.y } : { x: item.x, y: cursor })
+        cursor += (horizontal ? item.w : item.h) + gap
+      }
+    } else {
+      for (const item of items) {
+        const x = mode === 'left' ? minX : mode === 'right' ? maxRight - item.w : (minX + maxRight) / 2 - item.w / 2
+        const y = mode === 'top' ? minY : mode === 'bottom' ? maxBottom - item.h : (minY + maxBottom) / 2 - item.h / 2
+        updates.set(`${item.kind}:${item.id}`, {
+          x: mode === 'left' || mode === 'center-x' || mode === 'right' ? x : item.x,
+          y: mode === 'top' || mode === 'center-y' || mode === 'bottom' ? y : item.y,
+        })
+      }
+    }
+    pushPositionUndo(before)
+    for (const [key, position] of updates) {
+      const [kind, id] = key.split(':')
+      if (kind === 'task') void updateTaskCanvas(id, position)
+    }
+    if (canvasId) {
+      const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId)
+      if (canvas) {
+        updateCanvas(canvasId, {
+          imageNodes: (canvas.imageNodes ?? []).map((node) => {
+            const position = updates.get(`node:${node.id}`)
+            return position ? { ...node, x: position.x, y: position.y } : node
+          }),
+        })
+      }
+    }
+    useStore.getState().showToast('已对齐', 'success')
+  }
+
+  const handleGroupPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || spaceDown || pickMode || selectionCount < 2) return
+    const target = event.target as HTMLElement
+    if (target.closest('button, input, textarea, select, [data-no-group-drag]')) return
+    const taskId = target.closest('[data-canvas-node]')?.getAttribute('data-task-id')
+    const nodeId = target.closest('[data-canvas-image-node]')?.getAttribute('data-image-node-id')
+    if (!(taskId && selectedIds.has(taskId)) && !(nodeId && selectedImageIds.has(nodeId))) return
+    const snapshot = capturePositions()
+    const tasks = Object.entries(snapshot.tasks).map(([id, position]) => ({ id, ...position }))
+    const imageNodes = Object.entries(snapshot.nodes).map(([id, position]) => ({ id, ...position }))
+    if (tasks.length + imageNodes.length < 2) return
+    const drag: GroupDragState = { startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, moved: false, tasks, nodes: imageNodes }
+    groupDragRef.current = drag
+    setGroupDrag(drag)
+    const onMove = (moveEvent: PointerEvent) => {
+      const current = groupDragRef.current
+      if (!current) return
+      const dx = (moveEvent.clientX - current.startX) / Math.max(0.05, viewportRef.current.k)
+      const dy = (moveEvent.clientY - current.startY) / Math.max(0.05, viewportRef.current.k)
+      const next = {
+        ...current,
+        dx,
+        dy,
+        moved: current.moved || Math.abs(moveEvent.clientX - current.startX) + Math.abs(moveEvent.clientY - current.startY) > 3,
+      }
+      groupDragRef.current = next
+      setGroupDrag(next)
+    }
+    const onUp = () => {
+      const final = groupDragRef.current
+      if (final?.moved) commitGroupDrag(final)
+      groupDragRef.current = null
+      setGroupDrag(null)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    event.stopPropagation()
+    event.preventDefault()
+  }
+
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     if (box) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       const rect = event.currentTarget.getBoundingClientRect()
       const moved = Math.abs(box.x - box.startX) + Math.abs(box.y - box.startY) > 4
       if (!moved) {
-        setSelectedIds(new Set())
+        clearAllSelection()
         setBox(null)
         return
       }
@@ -624,6 +901,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       data-canvas-root
       className={`relative h-full w-full overflow-hidden bg-[#fbfcfd] dark:bg-[#0c0e14] ${spaceDown ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
       style={{ touchAction: 'none' }}
+      onPointerDownCapture={handleGroupPointerDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -644,6 +922,63 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       ) : (
         <InteractiveDotGrid pan={{ x: viewport.x, y: viewport.y }} spacing={Math.max(16, 24 * viewport.k)} />
       )}
+      <div className="absolute left-4 top-4 z-30" onPointerDown={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          onClick={undoPositions}
+          disabled={undoDepth === 0 || undoing}
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 bg-white/95 text-slate-600 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-35 dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300"
+          title={undoing ? '正在撤销…' : '撤销上一步移动/缩放/排列/删除'}
+          aria-label="撤销"
+        >
+          <Undo2 size={15} />
+        </button>
+      </div>
+
+      {selectionCount >= 2 && !pickMode && (
+        <div className="absolute right-4 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-0.5 rounded-xl border border-black/10 bg-white/95 p-1 text-caption shadow-lg backdrop-blur dark:border-white/10 dark:bg-[#161822]/95" onPointerDown={(event) => event.stopPropagation()}>
+          <span className="px-1 py-0.5 text-center text-[10px] text-slate-400">已选 {selectionCount}</span>
+          {([
+            ['left', '左对齐', <AlignStartVertical key="left" size={14} />],
+            ['center-x', '水平居中', <AlignCenterVertical key="center-x" size={14} />],
+            ['right', '右对齐', <AlignEndVertical key="right" size={14} />],
+            ['top', '上对齐', <AlignStartHorizontal key="top" size={14} />],
+            ['center-y', '垂直居中', <AlignCenterHorizontal key="center-y" size={14} />],
+            ['bottom', '下对齐', <AlignEndHorizontal key="bottom" size={14} />],
+            ['space-x', '水平等距', <AlignHorizontalSpaceAround key="space-x" size={14} />],
+            ['space-y', '垂直等距', <AlignVerticalSpaceAround key="space-y" size={14} />],
+          ] as const).map(([mode, title, icon]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => alignSelection(mode)}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-600 transition hover:bg-black/[0.06] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+              title={title}
+              aria-label={title}
+            >
+              {icon}
+            </button>
+          ))}
+          <div className="my-0.5 h-px bg-black/[0.06] dark:bg-white/[0.08]" />
+          {([
+            ['row', '横排', <Rows3 key="row" size={13} />],
+            ['column', '纵排', <Columns3 key="column" size={13} />],
+            ['grid', '网格', <Grid2X2 key="grid" size={13} />],
+          ] as const).map(([mode, title, icon]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => alignSelection(mode)}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-600 transition hover:bg-black/[0.06] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+              title={title}
+              aria-label={title}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
+      )}
+
       {lowZoom && (
         <canvas
           ref={placeholderCanvasRef}
@@ -657,6 +992,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
             event.stopPropagation()
             if (pickMode && pickTaskImage(hit.task)) return
             setSelectedIds(new Set([hit.task.id]))
+            setSelectedImageIds(new Set())
             focusNode(hit)
           }}
         />
@@ -676,8 +1012,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
               <div
                 key={node.id}
                 data-canvas-image-node
+                data-image-node-id={node.id}
                 className={`group absolute select-none overflow-visible rounded-lg border bg-white dark:bg-[#161822] ${selected ? 'z-20 border-black/30 ring-2 ring-black dark:border-white/40 dark:ring-white' : 'border-black/10 dark:border-white/10'}`}
-                style={{ left: view.x, top: view.y, width: view.w, height: view.h }}
+                style={{ left: view.x + (selected && groupDrag ? groupDrag.dx : 0), top: view.y + (selected && groupDrag ? groupDrag.dy : 0), width: view.w, height: view.h }}
                 onPointerDown={(event) => {
                   if (event.button !== 0) return
                   event.stopPropagation()
@@ -719,8 +1056,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()
-                    void downloadImage(node.imageId, nodeLabel).then((ok) => {
-                      if (!ok) useStore.getState().showToast('图片读取失败，下载未开始', 'error')
+                    void downloadImage(node.imageId, nodeLabel).then((result) => {
+                      if (result.canceled || result.successCount) return
+                      useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
                     })
                   }}
                 >
@@ -739,16 +1077,20 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
               </div>
             )
           })}
-          {renderedNodes.map(({ task, x, y, width, height }) => (
+          {renderedNodes.map(({ task, x, y, width, height }) => {
+            const selected = selectedIds.has(task.id)
+            const offsetX = selected && groupDrag ? groupDrag.dx : 0
+            const offsetY = selected && groupDrag ? groupDrag.dy : 0
+            return (
             <CanvasTaskNode
               key={task.id}
               task={task}
-              x={x}
-              y={y}
+              x={x + offsetX}
+              y={y + offsetY}
               width={width}
               height={height}
               scale={viewport.k}
-              selected={selectedIds.has(task.id)}
+              selected={selected}
               compact={compact}
               spaceDown={spaceDown}
               now={now}
@@ -768,12 +1110,29 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
               onOpen={setDetailTaskId}
               onMove={(id, nextX, nextY) => {
                 userInteractedRef.current = true
+                if (Math.abs(nextX - x) + Math.abs(nextY - y) < 0.5) return
                 const meta = task.canvas
-                void updateTaskCanvas(id, meta?.userSized ? { ...meta, x: nextX, y: nextY } : { x: nextX, y: nextY })
+                pushPositionUndo({
+                  tasks: { [id]: { x, y, w: width, h: height, userSized: meta?.userSized } },
+                  nodes: {},
+                })
+                const next = meta?.userSized && meta.w != null && meta.h != null
+                  ? { ...meta, x: nextX, y: nextY }
+                  : { x: nextX, y: nextY }
+                void updateTaskCanvas(id, next)
               }}
-              onResize={(id, rect) => { userInteractedRef.current = true; void updateTaskCanvas(id, { x: rect.x, y: rect.y, w: rect.width, h: rect.height, userSized: true }) }}
+              onResize={(id, rect) => {
+                userInteractedRef.current = true
+                if (Math.abs(rect.x - x) + Math.abs(rect.y - y) + Math.abs(rect.width - width) + Math.abs(rect.height - height) < 0.5) return
+                pushPositionUndo({
+                  tasks: { [id]: { x, y, w: width, h: height, userSized: task.canvas?.userSized } },
+                  nodes: {},
+                })
+                void updateTaskCanvas(id, { x: rect.x, y: rect.y, w: rect.width, h: rect.height, userSized: true })
+              }}
             />
-          ))}
+            )
+          })}
           {placeholderElements}
         </div>
       )}
@@ -824,7 +1183,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
             type="button"
             className="flex w-full items-center px-3 py-1.5 text-left text-red-500 hover:bg-red-500/10"
             onClick={() => {
-              removeImageNodesByIds([imageMenu.node.id])
+              void deleteSelection({ nodeIds: [imageMenu.node.id], canvasId })
               setSelectedImageIds(new Set())
               setImageMenu(null)
             }}
@@ -835,8 +1194,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       )}
 
       <div
-        className="absolute right-4 z-10 flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 text-body-sm text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300"
-        style={{ bottom: bottomInset > 0 ? bottomInset + 4 : 16 }}
+        data-canvas-zoom-controls
+        className="absolute bottom-4 z-10 flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 text-body-sm text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300"
+        style={{ right: 16 + rightInset }}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
       >

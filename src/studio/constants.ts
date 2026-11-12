@@ -13,6 +13,9 @@ export const DEFAULT_GENERATION_PARAMS: GenerationParams = {
   cfgScale: 7.0,
 };
 
+/** 输入框可选输出格式；GIF/SVG 只在本地转换，API 仍只收到 PNG/JPEG/WebP */
+export const STUDIO_FORMATS: GenerationParams['format'][] = ['PNG', 'WebP', 'JPEG', 'GIF', 'SVG'];
+
 export const INITIAL_ARTBOARD_1: Artboard = {
   id: 'artboard-1',
   title: '20261031-生图1 · 现代化无人机中转站商业配套',

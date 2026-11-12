@@ -67,6 +67,32 @@ fn check_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 保存对话框返回的路径缺少扩展名时，按请求文件名补回；用户已写扩展名则保留用户选择。
+/// 补扩展名后目标文件可能已存在，但用户只确认过原名，不能静默覆盖。
+/// 默认目录、单图、多图与 ZIP 最终都经 save_file 进入写入阶段，共用这一处逻辑。
+fn restore_extension(path: PathBuf, requested_name: &str) -> Result<PathBuf, String> {
+    let has_extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| !ext.is_empty());
+    if has_extension {
+        return Ok(path);
+    }
+    let Some(ext) = Path::new(requested_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.is_empty())
+    else {
+        return Ok(path);
+    };
+    let mut restored = path;
+    restored.set_extension(ext);
+    if restored.exists() {
+        return Err("同名文件已存在，请重新选择".into());
+    }
+    Ok(restored)
+}
+
 const IN_DATA_DIR: &str = "不能选择应用数据目录。";
 
 /// 目录可能尚不存在：规范化最近的已存在上级，再接上其余部分
@@ -232,6 +258,7 @@ pub async fn save_file(
     let Some(path) = picked else {
         return Ok(None);
     };
+    let path = restore_extension(path, &name)?;
     let data_dir = data_root(&state);
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     tokio::task::block_in_place(|| {
@@ -857,6 +884,46 @@ mod tests {
         ] {
             assert!(!is_plain_file_name(name), "{name}");
         }
+    }
+
+    #[test]
+    fn restores_missing_extension_from_requested_name() {
+        let cases = [
+            (r"D:\out\a", "收藏 图片.png", r"D:\out\a.png"),
+            (r"D:\out\a.", "任务.jpg", r"D:\out\a.jpg"),
+            (r"D:\out\a.PNG", "任务.jpg", r"D:\out\a.PNG"),
+            (r"D:\out\a.tar.gz", "任务.jpg", r"D:\out\a.tar.gz"),
+            (r"D:\out\a", "noext", r"D:\out\a"),
+            (r"D:\out\a", "", r"D:\out\a"),
+        ];
+        for (picked, requested, expected) in cases {
+            assert_eq!(
+                restore_extension(PathBuf::from(picked), requested).unwrap(),
+                PathBuf::from(expected),
+                "{picked} / {requested}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_to_overwrite_existing_file_after_adding_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("a.png");
+        fs::write(&existing, b"keep").unwrap();
+        // 用户在对话框里只输入了 a，只确认过 a；补成 a.png 后目标已存在，必须拒绝
+        let err = restore_extension(dir.path().join("a"), "a.png").unwrap_err();
+        assert_eq!(err, "同名文件已存在，请重新选择");
+        assert_eq!(fs::read(&existing).unwrap(), b"keep");
+        // 用户已经写了扩展名时沿用对话框的覆盖确认
+        assert_eq!(
+            restore_extension(existing.clone(), "a.png").unwrap(),
+            existing
+        );
+        // 补扩展名后目标不存在时允许写入
+        assert_eq!(
+            restore_extension(dir.path().join("b"), "b.jpg").unwrap(),
+            dir.path().join("b.jpg")
+        );
     }
 
     fn entries(dir: &Path) -> Vec<String> {

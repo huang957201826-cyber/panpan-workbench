@@ -4,12 +4,13 @@ import {
   BookmarkPlus, Copy, Download, ImagePlus, Info, MoreHorizontal, RefreshCw, RotateCcw, Trash2, Wand2,
 } from 'lucide-react'
 import type { TaskRecord } from '../types'
-import { editOutputs, removeTask, reuseConfig, retryTask, useStore } from '../store'
-import { ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
+import { useStore } from '../store'
+import { addTaskAsReference, deleteTask as removeTaskAction, editTaskOutputs, retryTaskAction, reuseTaskConfig, saveTaskAsSkill } from '../lib/taskActions'
+import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { resizeNodeFromCorner } from '../lib/canvasNodes'
-import { downloadImage } from '../lib/downloadImage'
-import { skillParamsFromTask } from '../lib/promptSkills'
-import { useSkillStore } from '../lib/skillStore'
+import { downloadTaskImages } from '../lib/taskExport'
+import { getDownloadErrorMessage } from '../lib/downloadImages'
+import { classifyApiError } from '../lib/apiErrorClassification'
 import { Menu, MenuItem, Tooltip } from '../ui'
 
 export const CANVAS_NODE_WIDTH = 360
@@ -74,8 +75,10 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
     setDownloading(true)
     setDownloadMenu(false)
     try {
-      const ok = await downloadImage(id, task.prompt, task.outputImages.length > 1 ? index : undefined)
-      if (!ok) useStore.getState().showToast('图片读取失败，下载未开始', 'error')
+      const result = await downloadTaskImages(task, [id], { fileNameBase: task.prompt })
+      if (!result.canceled && !result.successCount) {
+        useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
+      }
     } finally {
       setDownloading(false)
     }
@@ -85,6 +88,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
     ? Math.max(0, Math.floor((now - (task.startedAt ?? task.createdAt)) / 1000))
     : Math.max(0, Math.floor(((task.finishedAt ?? task.startedAt ?? task.createdAt) - (task.startedAt ?? task.createdAt)) / 1000))
   const timer = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`
+  const errorInfo = task.status === 'error' ? classifyApiError(task.error) : null
 
   useEffect(() => {
     if (!contextMenu) return
@@ -98,32 +102,26 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
   }, [contextMenu])
 
   const setAsReference = async () => {
-    const imageId = task.outputImages[0] ?? task.inputImageIds[0]
-    if (!imageId) {
+    const result = await addTaskAsReference(task)
+    if (result === 'missing') {
       useStore.getState().showToast('这条任务还没有可用的图片', 'error')
       return
     }
-    if (useStore.getState().inputImages.some((image) => image.id === imageId)) {
+    if (result === 'exists') {
       useStore.getState().showToast('该图片已在参考图中', 'info')
       return
     }
-    const dataUrl = await ensureImageCached(imageId)
-    if (!dataUrl) {
-      useStore.getState().showToast('图片读取失败', 'error')
-      return
-    }
-    useStore.getState().addInputImage({ id: imageId, dataUrl })
     useStore.getState().showToast('已加入参考图', 'success')
   }
 
-  const deleteTask = () => {
+  const confirmDeleteTask = () => {
     useStore.getState().setConfirmDialog({
       title: '删除任务',
       message: `将删除整条任务及其 ${task.outputImages.length} 张输出图，删除后无法恢复。`,
       confirmText: '删除任务',
       cancelText: '取消',
       tone: 'danger',
-      action: () => { void removeTask(task) },
+      action: () => { void removeTaskAction(task) },
     })
   }
 
@@ -138,19 +136,17 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
 
   /** 右键菜单与“更多”菜单共用同一份动作，避免两处能力不一致 */
   const actions = [
-    { label: '复用参数', icon: <RotateCcw className="h-3 w-3 stroke-[1.6]" />, run: () => { void reuseConfig(task) } },
-    { label: '保存为技能', icon: <BookmarkPlus className="h-3 w-3 stroke-[1.6]" />, run: () => useSkillStore.getState().openNewSkill({
-      title: task.prompt.trim().split(/\r?\n/)[0]?.slice(0, 40),
-      prompt: task.prompt,
-      params: skillParamsFromTask(task),
-      sourceTaskId: task.id,
-    }) },
+    { label: '复用参数', icon: <RotateCcw className="h-3 w-3 stroke-[1.6]" />, run: () => { void reuseTaskConfig(task) } },
+    { label: '保存为技能', icon: <BookmarkPlus className="h-3 w-3 stroke-[1.6]" />, run: () => {
+      const skill = saveTaskAsSkill(task)
+      useStore.getState().showToast(`已保存技能「${skill.name}」`, 'success')
+    } },
     { label: '设为参考图', icon: <ImagePlus className="h-3 w-3 stroke-[1.6]" />, run: () => { void setAsReference() } },
     { label: '复制提示词', icon: <Copy className="h-3 w-3 stroke-[1.6]" />, run: () => { void copyPrompt() } },
-    { label: '编辑输出图', icon: <Wand2 className="h-3 w-3 stroke-[1.6]" />, run: () => { void editOutputs(task) } },
-    { label: '重新生成', icon: <RefreshCw className="h-3 w-3 stroke-[1.6]" />, run: () => { void retryTask(task) } },
+    { label: '编辑输出图', icon: <Wand2 className="h-3 w-3 stroke-[1.6]" />, run: () => { void editTaskOutputs(task) } },
+    { label: '重新生成', icon: <RefreshCw className="h-3 w-3 stroke-[1.6]" />, run: () => { void retryTaskAction(task) } },
     { label: '详情', icon: <Info className="h-3 w-3 stroke-[1.6]" />, run: () => onOpen(task.id) },
-    { label: '删除', icon: <Trash2 className="h-3 w-3 stroke-[1.6]" />, run: deleteTask, danger: true },
+    { label: '删除', icon: <Trash2 className="h-3 w-3 stroke-[1.6]" />, run: confirmDeleteTask, danger: true },
   ]
 
   useEffect(() => {
@@ -256,6 +252,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
     return (
       <div
         data-canvas-node
+        data-task-id={task.id}
         className={`group absolute select-none overflow-hidden rounded-lg border bg-white dark:bg-[#161822] ${selected ? 'border-transparent ring-2 ring-brand' : 'border-black/10 dark:border-white/10'}`}
         style={{
           left: resized?.x ?? x,
@@ -273,10 +270,15 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
         onContextMenu={handleContextMenu}
       >
         {thumb ? (
-          <img src={thumb} alt="" draggable={false} className="h-full w-full object-contain" />
+          <img src={thumb} alt="" draggable={false} className={`h-full w-full object-contain ${task.status === 'running' ? 'scale-105 opacity-80 blur-md' : ''}`} />
         ) : (
           <div className={`flex h-full items-center justify-center text-body-sm ${task.status === 'error' ? 'bg-red-500/20 text-red-500' : 'text-gray-500'}`}>
             {task.status === 'running' ? '生成中' : task.status === 'error' ? '失败' : '无图'}
+          </div>
+        )}
+        {task.status === 'running' && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/20 dark:bg-black/20">
+            <span className="rounded-full bg-blue-500/90 px-1.5 py-0.5 text-caption text-white">生成中</span>
           </div>
         )}
         {label && (
@@ -291,6 +293,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
   return (
     <div
       data-canvas-node
+      data-task-id={task.id}
       className={`group absolute select-none overflow-visible rounded-xl border bg-white dark:bg-[#161822] shadow-lg ${selected ? 'z-30 border-transparent ring-2 ring-brand' : 'border-black/10 dark:border-white/10'}`}
       style={{
         left: resized?.x ?? x,
@@ -336,7 +339,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
             <button
               type="button"
               onPointerDown={stop}
-              onClick={(event) => { event.stopPropagation(); void retryTask(task) }}
+              onClick={(event) => { event.stopPropagation(); void retryTaskAction(task) }}
               className="flex h-14 w-14 items-center justify-center rounded-full bg-red-600/85 text-4xl leading-none shadow-[0_0_28px_rgba(239,68,68,0.55)] transition hover:scale-105"
               title="重试"
               aria-label="重试"
@@ -344,7 +347,8 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
               ×
             </button>
             <div className="mt-2 max-w-[85%] text-center text-caption leading-snug opacity-0 transition-opacity group-hover:opacity-100">
-              <p className="line-clamp-2 rounded bg-black/45 px-2 py-1">{task.error || '生成失败'}</p>
+              <p className="rounded bg-black/45 px-2 py-1 font-medium">{errorInfo?.title ?? '生成失败'}</p>
+              {errorInfo?.hint && <p className="mt-0.5 line-clamp-2 rounded bg-black/35 px-2 py-0.5 opacity-90">{errorInfo.hint}</p>}
               <button
                 type="button"
                 onPointerDown={stop}
@@ -383,7 +387,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
           <Tooltip label="复用参数">
             <button
               type="button"
-              onClick={(event) => { event.stopPropagation(); void reuseConfig(task) }}
+              onClick={(event) => { event.stopPropagation(); void reuseTaskConfig(task) }}
               onDoubleClick={(event) => event.stopPropagation()}
               className={NODE_ACTION_CLASS}
               aria-label="复用参数"

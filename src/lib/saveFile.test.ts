@@ -45,6 +45,18 @@ describe('saveFile（客户端）', () => {
     expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual(['disk_free_space', 'save_file'])
   })
 
+  it('保存前补齐图片扩展名，jpeg 统一成 jpg', async () => {
+    invoke.mockImplementation(async (cmd: string) => cmd === 'disk_free_space' ? Number.MAX_SAFE_INTEGER : null)
+    await saveFile(new Blob(['x'], { type: 'image/jpeg' }), 'photo')
+    await saveFile(new Blob(['x'], { type: 'image/png' }), 'photo.jpeg')
+    await saveFile(new Blob(['zip'], { type: 'application/zip' }), 'backup')
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'save_file').map(([, args]) => args)).toEqual([
+      { name: 'photo.jpg' },
+      { name: 'photo.jpg' },
+      { name: 'backup' },
+    ])
+  })
+
   it('写入失败时丢弃临时文件并抛出原因', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'disk_free_space') return Number.MAX_SAFE_INTEGER

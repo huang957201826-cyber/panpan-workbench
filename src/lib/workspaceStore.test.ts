@@ -91,6 +91,34 @@ describe('workspaceStore persistence', () => {
     expect(useWorkspaceStore.getState().activeCanvasId).toBe(DEFAULT_CANVAS_ID)
   })
 
+  it('removing the active middle canvas switches to the adjacent canvas', async () => {
+    const { useWorkspaceStore } = await import('./workspaceStore')
+    const project = useWorkspaceStore.getState().createProject('三画布')
+    const second = useWorkspaceStore.getState().createCanvas(project.projectId, '画布 2')
+    const third = useWorkspaceStore.getState().createCanvas(project.projectId, '画布 3')
+    useWorkspaceStore.getState().setActiveCanvas(second)
+    useWorkspaceStore.getState().removeCanvas(second)
+    expect(useWorkspaceStore.getState().activeCanvasId).toBe(third)
+    useWorkspaceStore.getState().removeCanvas(third)
+    expect(useWorkspaceStore.getState().activeCanvasId).toBe(project.canvasId)
+  })
+
+  it('duplicating a canvas copies its layout with fresh image node ids', async () => {
+    const { useWorkspaceStore } = await import('./workspaceStore')
+    const project = useWorkspaceStore.getState().createProject('复制画布')
+    useWorkspaceStore.getState().updateCanvas(project.canvasId, {
+      imageNodes: [{ id: 'node-1', imageId: 'image-1', x: 10, y: 20, w: 100, h: 80 }],
+      promptDraft: '原始提示词',
+    })
+    const copyId = useWorkspaceStore.getState().duplicateCanvas(project.canvasId)
+    const copy = useWorkspaceStore.getState().canvases.find((canvas) => canvas.id === copyId)
+    expect(useWorkspaceStore.getState().activeCanvasId).toBe(copyId)
+    expect(copy?.name).toBe('画布 1 副本')
+    expect(copy?.promptDraft).toBe('原始提示词')
+    expect(copy?.imageNodes?.[0]).toMatchObject({ imageId: 'image-1', x: 10, y: 20 })
+    expect(copy?.imageNodes?.[0].id).not.toBe('node-1')
+  })
+
   it('allows removing default and last projects/canvases without auto-recreating', async () => {
     const { useWorkspaceStore } = await import('./workspaceStore')
     useWorkspaceStore.getState().removeCanvas(DEFAULT_CANVAS_ID)

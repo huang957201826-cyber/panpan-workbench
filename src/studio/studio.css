@@ -49,7 +49,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
+  background-color: #f3f4f8;
   color: #0f172a;
 }
 html.dark .studio-root {
@@ -62,7 +62,7 @@ html.dark .studio-root {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-color: #fbfcfd;
+  background-color: #f3f4f8;
   background-image: radial-gradient(circle, rgba(15, 23, 42, 0.16) 1px, transparent 1px);
   background-size: 24px 24px;
   transition: background-color 0.2s ease;

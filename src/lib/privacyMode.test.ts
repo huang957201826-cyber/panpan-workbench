@@ -32,6 +32,8 @@ function sourceState() {
   return {
     appMode: 'gallery' as const,
     prompt: 'secret',
+    activeSkillId: 'skill-1',
+    skillSlotValues: { style: '极简' },
     inputImages: [imageA],
     maskDraft: null,
     maskEditorImageId: 'image-a',
@@ -97,6 +99,8 @@ describe('restorePrivacyInputState', () => {
     const restored = restorePrivacyInputState(privacy.inputSnapshot, { appMode: 'gallery', activeAgentConversationId: 'c-new' })
     expect(restored).toMatchObject({
       prompt: 'secret',
+      activeSkillId: 'skill-1',
+      skillSlotValues: { style: '极简' },
       inputImages: [imageA],
       maskEditorImageId: null,
       reusedTaskApiProfileId: 'profile',

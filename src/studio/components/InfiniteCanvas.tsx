@@ -498,7 +498,7 @@ export const InfiniteCanvas: React.FC<InfiniteCanvasProps> = ({
           isRightDockOpen ? 'right-4 md:right-5' : 'right-3'
         } z-30 pointer-events-auto flex items-center gap-2 transition-all duration-200`}
       >
-        {/* View Switcher: [ ⊞ 无限画布 | ▦ 九宫格 ] */}
+        {/* View Switcher: [ ⊞ 无限画布 | ▦ 卡片视图 ] */}
         {onSelectViewMode && (
           <div className="h-[28px] p-0.5 rounded-full bg-white/95 dark:bg-[#161822]/95 backdrop-blur-xl border border-black/[0.08] dark:border-white/[0.08] shadow-sm flex items-center gap-0.5 text-body-sm">
             <button
@@ -525,7 +525,7 @@ export const InfiniteCanvas: React.FC<InfiniteCanvasProps> = ({
                   ? 'bg-black text-white dark:bg-white dark:text-black shadow-xs'
                   : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
               }`}
-              title="切换至九宫格矩阵模式"
+              title="切换至卡片视图"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
                 <rect x="1" y="1" width="2.5" height="2.5" rx="0.5" />
@@ -538,7 +538,7 @@ export const InfiniteCanvas: React.FC<InfiniteCanvasProps> = ({
                 <rect x="4.75" y="8.5" width="2.5" height="2.5" rx="0.5" />
                 <rect x="8.5" y="8.5" width="2.5" height="2.5" rx="0.5" />
               </svg>
-              <span>九宫格</span>
+              <span>卡片</span>
             </button>
           </div>
         )}

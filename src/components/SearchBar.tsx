@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { clearFailedTasks, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { clearFailedTasks, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery, type AppState } from '../store'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
 import { isPrivacyHiddenTask } from '../lib/privacyMode'
 import { useTooltip } from '../hooks/useTooltip'
@@ -125,7 +125,7 @@ export default function SearchBar() {
     })
   }
 
-  const handleStatusChange = (val: any) => {
+  const handleStatusChange = (val: AppState['filterStatus']) => {
     if (val === filterStatus) return
     setFilterStatus(val)
     clearSelection()

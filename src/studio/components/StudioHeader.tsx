@@ -12,27 +12,13 @@ interface StudioHeaderProps {
   children: ReactNode
 }
 
-/** 工作台主区头部：画布与九宫格共用同一条，固定 48px、不浮动、不随内容滚动 */
-export function StudioHeader({ title, projectName, count, runningCount, children }: StudioHeaderProps) {
+/** 浮动工具条：不再显示面包屑、数量与运行状态，只保留右侧操作 */
+export function StudioHeader({ children }: StudioHeaderProps) {
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface px-4">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        {projectName && (
-          <>
-            <span className="hidden max-w-[120px] truncate text-body-sm text-ink-3 lg:inline">{projectName}</span>
-            <span className="text-body-sm text-ink-3">/</span>
-          </>
-        )}
-        <h1 className="min-w-0 truncate text-title text-ink-1">{title}</h1>
-        <span className="rounded-chip bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-ink-3">{count}</span>
-        {runningCount > 0 && (
-          <span className="flex items-center gap-1 rounded-chip bg-brand-soft px-1.5 py-0.5 text-caption text-brand">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
-            生成中 {runningCount}
-          </span>
-        )}
+    <header className="pointer-events-none absolute right-3 top-14 z-30 flex justify-end">
+      <div className="pointer-events-auto flex max-w-[calc(100vw-340px)] items-center gap-1 overflow-x-auto rounded-full border border-black/[0.04] bg-white/90 px-2 py-1 text-body-sm shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl no-scrollbar dark:border-white/[0.06] dark:bg-[#141620]/90">
+        {children}
       </div>
-      <div className="ml-auto flex min-w-0 max-w-[70%] shrink-0 items-center justify-end gap-1.5">{children}</div>
     </header>
   )
 }

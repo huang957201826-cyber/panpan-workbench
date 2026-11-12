@@ -1,4 +1,4 @@
-import type { AgentConversation, AgentInputDraft, AppMode, BatchProgress, InputImage, MaskDraft, TaskRecord } from '../types'
+import type { AgentConversation, AgentInputDraft, AppMode, BatchProgress, InputImage, MaskDraft, SkillSlotValue, TaskRecord } from '../types'
 import { isEmptyAgentConversation } from './agentConversationState'
 import { restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft } from './inputDraftState'
 
@@ -6,6 +6,8 @@ import { restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveA
 export interface PrivacyInputSnapshot {
   appMode: AppMode
   prompt: string
+  activeSkillId: string | null
+  skillSlotValues: Record<string, SkillSlotValue>
   inputImages: InputImage[]
   maskDraft: MaskDraft | null
   maskEditorImageId: string | null
@@ -39,6 +41,8 @@ export function createPrivacyModeState(state: PrivacySourceState, now: number): 
     inputSnapshot: {
       appMode: state.appMode,
       prompt: state.prompt,
+      activeSkillId: state.activeSkillId,
+      skillSlotValues: state.skillSlotValues,
       inputImages: state.inputImages,
       maskDraft: state.maskDraft,
       // 退出时不重新打开遮罩编辑器
@@ -83,6 +87,8 @@ export function restorePrivacyInputState(snapshot: PrivacyInputSnapshot, current
     ...(current.appMode === 'gallery'
       ? restoreGalleryInputDraftState(galleryInputDraft)
       : restoreAgentInputDraftState(agentInputDrafts, current.activeAgentConversationId)),
+    activeSkillId: snapshot.activeSkillId,
+    skillSlotValues: snapshot.skillSlotValues,
     maskEditorImageId: null,
     reusedTaskApiProfileId: snapshot.reusedTaskApiProfileId,
     reusedTaskApiProfileName: snapshot.reusedTaskApiProfileName,

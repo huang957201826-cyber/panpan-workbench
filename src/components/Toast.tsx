@@ -1,9 +1,23 @@
+import { useSyncExternalStore } from 'react'
 import { useStore } from '../store'
+import { isCanvasUndoing, isCanvasUndoEntryAlive, subscribeCanvasUndo } from '../lib/canvasUndo'
 
 export default function Toast() {
   const toast = useStore((s) => s.toast)
+  const undoCanvasId = toast?.action?.undoCanvasId ?? ''
+  const undoEntryId = toast?.action?.undoEntryId ?? ''
+  const undoAlive = useSyncExternalStore(
+    (onStoreChange) => subscribeCanvasUndo(undoCanvasId, onStoreChange),
+    () => !undoEntryId || isCanvasUndoEntryAlive(undoCanvasId, undoEntryId),
+    () => true,
+  )
+  const undoing = useSyncExternalStore(
+    (onStoreChange) => subscribeCanvasUndo(undoCanvasId, onStoreChange),
+    () => isCanvasUndoing(undoCanvasId),
+    () => false,
+  )
 
-  if (!toast) return null
+  if (!toast || !undoAlive) return null
 
   const getIcon = () => {
     switch (toast.type) {
@@ -42,11 +56,12 @@ export default function Toast() {
         {toast.action && (
           <button
             type="button"
+            disabled={undoing}
             onClick={() => {
               toast.action?.run()
               useStore.setState({ toast: null })
             }}
-            className="pointer-events-auto shrink-0 rounded-full bg-black/[0.06] px-2.5 py-1 text-body-sm font-medium text-blue-600 hover:bg-blue-500/10 dark:bg-white/[0.1] dark:text-blue-400"
+            className="pointer-events-auto shrink-0 rounded-full bg-black/[0.06] px-2.5 py-1 text-body-sm font-medium text-blue-600 hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white/[0.1] dark:text-blue-400"
           >
             {toast.action.label}
           </button>

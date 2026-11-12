@@ -60,17 +60,11 @@ const presetText = read(args.presets)
 errors.push(...scanPresetJson(presetText, args.presets))
 const presets = parseJsonWithBom(presetText, args.presets)
 const profileIds = (presets.profiles ?? []).map((profile) => profile.id)
-if (profileIds.length !== 2 || !profileIds.includes('gpt_image_playground-default-openai') || !profileIds.includes('tehui-api')) {
-  errors.push(`预置必须只包含默认 + 特惠 API，当前：${profileIds.join(', ')}`)
+if (profileIds.length !== 1 || !profileIds.includes('gpt_image_playground-default-openai')) {
+  errors.push(`预置只应包含默认接口，当前：${profileIds.join(', ')}`)
 }
 if ((presets.customProviders ?? []).length > 0) errors.push('预置不应再包含 customProviders')
-const tehui = (presets.profiles ?? []).find((profile) => profile.id === 'tehui-api')
-if (tehui) {
-  if (tehui.baseUrl !== 'https://api.tehui.xyz/v1') errors.push('特惠 API baseUrl 不正确')
-  if (tehui.model !== 'gpt-image-2.5') errors.push('特惠 API model 不正确')
-  if (!String(tehui.description ?? '').includes('https://api.tehui.xyz/sign-up?aff=rf9W')) errors.push('特惠 API 缺少注册链接')
-  if (tehui.apiKey) errors.push('特惠 API Key 必须留空')
-}
+if (/\baff=|返利|推荐链接|特惠 API/.test(presetText)) errors.push('预置不应包含返利/推荐内容')
 
 if (!args.skipDist) {
   if (!existsSync(resolve(args.dist))) errors.push(`构建产物不存在：${args.dist}`)

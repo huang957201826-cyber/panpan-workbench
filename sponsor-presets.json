@@ -6,18 +6,9 @@
       "name": "默认",
       "provider": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "model": "gpt-image-2.5-sunburst",
+      "model": "gpt-image-2.6-sunburst",
       "apiMode": "images",
       "isDefault": true
-    },
-    {
-      "id": "tehui-api",
-      "name": "特惠 API",
-      "description": "[特惠 API](https://api.tehui.xyz/sign-up?aff=rf9W) 注册送 10 美元额度。baseUrl 已填好，保存后填入你的 Key 即可使用。",
-      "provider": "openai",
-      "baseUrl": "https://api.tehui.xyz/v1",
-      "model": "gpt-image-2.5",
-      "apiMode": "images"
     }
   ]
 }

@@ -15,7 +15,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'sb2api-async' | 'fal' | 'google'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -288,6 +288,9 @@ export interface ProjectCanvas {
   imageNodes?: CanvasImageNode[]
   /** 已从画布删除、但输入框仍保留选择的素材 */
   removedImageIds?: string[]
+  /** 当前画布选用的能力技能与槽位值；与 promptDraft 同生命周期 */
+  activeSkillId?: string | null
+  skillSlotValues?: Record<string, SkillSlotValue>
   createdAt: number
   updatedAt: number
 }
@@ -331,6 +334,64 @@ export interface PromptSkill {
   author?: string
   createdAt: number
   updatedAt: number
+  /** 固定为 prompt；能力技能单独存放，不混入此数组 */
+  kind?: 'prompt'
+}
+
+export type SkillSlotType = 'text' | 'enum' | 'multi' | 'number' | 'bool' | 'image' | 'multi-image'
+export type SkillSlotValue = string | string[] | number | boolean
+
+export interface SkillSlot {
+  key: string
+  label: string
+  type: SkillSlotType
+  placeholder?: string
+  defaultValue?: SkillSlotValue
+  options?: string[]
+  required?: boolean
+}
+
+/** 图片槽与技能输入的绑定，min/max 为该槽允许的图片数 */
+export interface SkillRequiredImages {
+  slotKey: string
+  min: number
+  max: number
+  roles?: string[]
+}
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  category: string
+  coverColor: string
+  coverImageId?: string
+  /** 主图之外的参考图/示例图，按顺序展示 */
+  referenceImageIds?: string[]
+  basePrompt: string
+  slots: SkillSlot[]
+  negativePrompt?: string
+  params?: PromptSkillParams
+  requiredImages?: SkillRequiredImages[]
+  examples?: string[]
+  source: 'builtin' | 'mine'
+  /** 适用模型；空表示通用 */
+  model?: string
+  /** 收藏只影响筛选，不改变排序 */
+  favorite?: boolean
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface TaskSkillContext {
+  id: string
+  name: string
+  basePrompt: string
+  slots: SkillSlot[]
+  slotValues: Record<string, SkillSlotValue>
+  userPrompt: string
+  version: number
 }
 
 export interface WorkspaceState {
@@ -367,7 +428,11 @@ export interface TaskCanvasMeta {
 export interface TaskRecord {
   id: string
   prompt: string
+  /** 使用能力技能时的原始上下文；prompt 保存合并后的最终文本 */
+  skillContext?: TaskSkillContext
   params: TaskParams
+  /** 用户选择的本地导出格式；GIF/SVG 不发给 API，下载时本地转换 */
+  localExportFormat?: 'gif' | 'svg'
   /** 生成时使用的 Provider 类型 */
   apiProvider?: ApiProvider
   /** 生成时使用的 API 配置 ID */
@@ -679,4 +744,8 @@ export interface ExportData {
   }>
   /** 技能库配方（P4）；可选字段，v4 旧备份无此字段时导入行为不变 */
   skills?: PromptSkill[]
+  /** 能力技能（B04B）；保持 version 4，旧版忽略此字段 */
+  capabilitySkills?: Skill[]
+  /** 内置技能的收藏/封面/模型覆盖层；与 capabilitySkills 分开 */
+  capabilityOverrides?: Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
 }

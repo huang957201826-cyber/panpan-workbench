@@ -13,6 +13,8 @@ import {
   createDefaultOpenAIProfile,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
+  DEFAULT_GEMINI_BASE_URL,
+  DEFAULT_GEMINI_MODEL,
   DEFAULT_IMAGES_MODEL,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
@@ -41,6 +43,7 @@ import {
 } from '../lib/presetConfig'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createCustomProfileImportUrl } from '../lib/profileImportUrl'
+import { findExistingPpConfigProfile, type ParsedPpConfig } from '../lib/ppConfig'
 import { getProfileImportBaseUrl, handledImportLinks } from '../lib/importLink'
 import { requestBrowserNotificationPermission, type BrowserNotificationPermissionResult } from '../lib/browserNotification'
 import { DEFAULT_STREAM_PARTIAL_IMAGES, REASONING_EFFORT_VALUES, type ApiProfile, type AppSettings, type CustomProviderDefinition, type ReasoningEffort, type ZipDownloadRoute } from '../types'
@@ -74,6 +77,7 @@ import SkillSettingsSection from './settings/SkillSettingsSection'
 import FontLicensesModal from './settings/FontLicensesModal'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
+import PpConfigImportPanel from './settings/PpConfigImportPanel'
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
 import StorageInfoSection from './settings/StorageInfoSection'
 import AboutSettingsTab from './settings/AboutSettingsTab'
@@ -190,7 +194,8 @@ export default function SettingsModal() {
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
   const [showApiKey, setShowApiKey] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
-  const [connectionResult, setConnectionResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [connectionResult, setConnectionResult] = useState<{ ok: boolean; message: string; models: string[] } | null>(null)
+  const [modelQuery, setModelQuery] = useState('')
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
@@ -201,7 +206,8 @@ export default function SettingsModal() {
   const [customProviderImportError, setCustomProviderImportError] = useState<string | null>(null)
   const [profileImportUrlTooltipVisible, setProfileImportUrlTooltipVisible] = useState(false)
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [apiGuideTooltipVisible, setApiGuideTooltipVisible] = useState(false)
+  const [activeTab, setActiveTab] = useState<SettingsTab>('api')
   const [exportConfig, setExportConfig] = useState(true)
   const [exportTasks, setExportTasks] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
@@ -262,26 +268,39 @@ export default function SettingsModal() {
     setConnectionResult(null)
     try {
       const result = await testApiConnection(activeProfile)
-      setConnectionResult({ ok: result.ok, message: result.message })
+      setConnectionResult({ ok: result.ok, message: result.message, models: result.models })
+      setModelQuery('')
       showToast(result.message, result.ok ? 'success' : 'error')
     } finally {
       setTestingConnection(false)
     }
   }
-  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const pickTestedModel = (modelId: string) => {
+    const current = activeProfile.model.split(',').map((item) => item.trim()).filter(Boolean)
+    if (current.includes(modelId)) return
+    updateActiveProfile({ model: [...current, modelId].join(', ') }, true)
+  }
+  const testedModels = connectionResult?.models ?? []
+  const filteredModels = testedModels
+    .filter((item) => !modelQuery.trim() || item.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+    .slice(0, 50)
+  const activeModelList = activeProfile.model.split(',').map((item) => item.trim()).filter(Boolean)
+
+  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal' || activeProfile.provider === 'google'
   const activeCustomProvider = getCustomProviderDefinition(draft, activeProfile.provider)
   const activeCustomProviderSupportsNativeTransparentBackground = !activeCustomProvider || customProviderSupportsNativeTransparentBackground(activeCustomProvider)
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'sb2api-async', 'fal', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'sb2api-async', 'fal', 'google', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
     { label: 'sub2api（异步）', value: 'sb2api-async', draggable: true },
     { label: 'fal.ai', value: 'fal', draggable: true },
+    { label: 'Google Gemini', value: 'google', draggable: true },
     ...draft.customProviders.map((provider) => {
       const actions = [
         ...(!presetConfigOnly && !isPresetProviderLocked(provider.id) ? [{ label: '编辑', onClick: () => openEditCustomProvider(provider) }] : []),
@@ -872,7 +891,7 @@ export default function SettingsModal() {
   }
 
   const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'sb2api-async', 'fal', ...draft.customProviders.map(p => p.id)]
+    const currentOrder = draft.providerOrder || ['openai', 'sb2api-async', 'fal', 'google', ...draft.customProviders.map(p => p.id)]
     const sourceIndex = currentOrder.indexOf(String(sourceValue))
     const targetIndex = currentOrder.indexOf(String(targetValue))
     if (sourceIndex < 0 || targetIndex < 0) return
@@ -1045,6 +1064,28 @@ export default function SettingsModal() {
     }
   }
 
+  const handlePpConfigImport = (config: ParsedPpConfig) => {
+    if (presetConfigOnly) throw new Error('当前为预置配置模式，不能导入配置码')
+    const current = normalizeSettings(draft)
+    const profiles = config.profiles.map((profile) => {
+      const existing = findExistingPpConfigProfile(current, profile)
+      // 配置码不含 Key；更新本机已有连接时沿用本机 Key，避免导入把 Key 清空
+      return existing ? { ...profile, id: existing.id, apiKey: existing.apiKey } : profile
+    })
+    const mergedDraft = mergeImportedSettings(current, { customProviders: config.providers, profiles })
+    const importedProfile = profiles[0]
+      ? mergedDraft.profiles.find((profile) => profile.id === profiles[0].id) ?? null
+      : null
+    const nextDraft = normalizeSettings({
+      ...mergedDraft,
+      activeProfileId: importedProfile?.id ?? mergedDraft.activeProfileId,
+    })
+    for (const provider of config.providers) restorePresetProvider(provider.id)
+    commitSettings(nextDraft)
+    setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
+    showToast('配置码已导入，请手动填写 API Key', 'success')
+  }
+
   return (
         <div
           data-no-drag-select
@@ -1059,12 +1100,12 @@ export default function SettingsModal() {
       />
       <div
         ref={settingsScrollBoundaryRef}
-        className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[85vh] sm:h-[600px] flex-col overflow-hidden"
+        className="relative z-10 flex h-[85vh] w-full max-w-[660px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-[#181a24] dark:ring-white/10 sm:h-[600px]"
       >
         {/* Header */}
         <div className="flex items-center justify-between shrink-0 p-5 border-b border-gray-100 dark:border-white/[0.08]">
-          <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-            <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <h3 className="flex items-center gap-2 text-[14px] font-semibold tracking-tight text-slate-900 dark:text-white">
+            <svg className="h-4 w-4 text-slate-900 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
@@ -1084,11 +1125,20 @@ export default function SettingsModal() {
 
         <div className="flex flex-1 min-h-0 flex-col sm:flex-row">
           {/* Sidebar */}
-          <div className="w-full sm:w-48 shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-gray-100 dark:border-white/[0.08] bg-gray-50/50 dark:bg-white/[0.02]">
+          <div className="flex w-full shrink-0 flex-col border-b border-gray-100 bg-slate-50/50 dark:border-white/[0.08] dark:bg-black/20 sm:w-[170px] sm:border-b-0 sm:border-r">
             <nav className="flex-1 overflow-x-auto sm:overflow-y-auto custom-scrollbar p-3 space-x-1 sm:space-x-0 sm:space-y-1 flex sm:flex-col">
               <button
+                onClick={() => setActiveTab('api')}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'api' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                API
+              </button>
+              <button
                 onClick={() => setActiveTab('general')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'general' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'general' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
@@ -1097,7 +1147,7 @@ export default function SettingsModal() {
               </button>
               <button
                 onClick={() => setActiveTab('appearance')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'appearance' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'appearance' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
@@ -1106,23 +1156,14 @@ export default function SettingsModal() {
               </button>
               <button
                 onClick={() => setActiveTab('skill')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'skill' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'skill' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
                 <SparklesIcon className="w-4 h-4" />
-                技能
-              </button>
-              <button
-                onClick={() => setActiveTab('api')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'api' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                </svg>
-                API
+                AI 工具集成
               </button>
               <button
                 onClick={() => setActiveTab('data')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'data' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'data' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
@@ -1131,7 +1172,7 @@ export default function SettingsModal() {
               </button>
               <button
                 onClick={() => setActiveTab('about')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'about' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-body rounded-xl transition-colors ${activeTab === 'about' ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1162,6 +1203,28 @@ export default function SettingsModal() {
 
             {activeTab === 'api' && (
               <div className="space-y-4">
+                <div className="flex items-start gap-2 rounded-xl border border-black/[0.06] bg-black/[0.02] px-3 py-2.5 text-body-sm leading-relaxed text-gray-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400">
+                  <span className="min-w-0 flex-1">接口地址、模型和 Key 需与所选供应商一致。</span>
+                  <span className="relative inline-flex shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setApiGuideTooltipVisible((value) => !value)}
+                      onMouseEnter={() => setApiGuideTooltipVisible(true)}
+                      onMouseLeave={() => setApiGuideTooltipVisible(false)}
+                      onFocus={() => setApiGuideTooltipVisible(true)}
+                      onBlur={() => setApiGuideTooltipVisible(false)}
+                      className="flex h-5 w-5 items-center justify-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                      aria-label="查看接口配置说明"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </button>
+                    <ViewportTooltip visible={apiGuideTooltipVisible} className="max-w-sm whitespace-normal leading-relaxed">
+                      接口地址填写服务商的 API Base URL；模型名、Key 和接口模式需与所选供应商一致。OpenAI 兼容接口使用 /v1 路径，fal 使用 FAL_KEY。
+                    </ViewportTooltip>
+                  </span>
+                </div>
                 <div>
                   <div className="mb-1.5 flex items-center gap-1.5">
                     <span className="block text-body text-gray-600 dark:text-gray-300">当前配置</span>
@@ -1360,6 +1423,10 @@ export default function SettingsModal() {
                   )}
                 </div>
 
+              {!presetConfigOnly && (
+                <PpConfigImportPanel draft={draft} onImport={handlePpConfigImport} />
+              )}
+
               {/* 1. 配置名称 */}
               <label className="block">
                 <span className="mb-1.5 block text-body text-gray-600 dark:text-gray-300">配置名称</span>
@@ -1398,7 +1465,7 @@ export default function SettingsModal() {
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
                     disabled={apiProxyEnabled || activeProfileLocked}
-                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
+                    placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : activeProfile.provider === 'google' ? DEFAULT_GEMINI_BASE_URL : DEFAULT_SETTINGS.baseUrl}
                     className={`w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-body text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-body-sm text-gray-500 dark:text-gray-500">
@@ -1406,6 +1473,8 @@ export default function SettingsModal() {
                       <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
+                    ) : activeProfile.provider === 'google' ? (
+                      <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_GEMINI_BASE_URL}</code>；请求走 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1beta/models/&lt;模型&gt;:generateContent</code>。</span>
                     ) : (
                       <span>末尾带 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/</code> 时直接使用该地址拼接接口，不补 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1</code> 前缀；支持通过链接参数导入（打开时会先确认）：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>。</span>
                     )}
@@ -1425,6 +1494,39 @@ export default function SettingsModal() {
                           {connectionResult.message}
                         </span>
                       )}
+                    </div>
+                  )}
+                  {testedModels.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-black/[0.06] bg-black/[0.02] p-2 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-1.5">
+                        <span className="text-body-sm text-gray-500 dark:text-gray-400">接口返回 {testedModels.length} 个模型，点击加入模型列表</span>
+                        <input
+                          value={modelQuery}
+                          onChange={(event) => setModelQuery(event.target.value)}
+                          placeholder="搜索模型"
+                          className="h-7 w-40 rounded-lg border border-black/[0.08] bg-white px-2 text-body-sm outline-none focus:border-blue-300 dark:border-white/[0.1] dark:bg-black/20 dark:focus:border-blue-500/50"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto">
+                        {filteredModels.map((modelId) => {
+                          const added = activeModelList.includes(modelId)
+                          return (
+                            <button
+                              key={modelId}
+                              type="button"
+                              onClick={() => pickTestedModel(modelId)}
+                              className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-body-sm text-gray-700 transition hover:bg-black/[0.05] disabled:opacity-50 dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                              disabled={added}
+                              title={added ? '已在模型列表中' : '加入模型列表'}
+                            >
+                              <span className="truncate font-mono">{modelId}</span>
+                              <span className="shrink-0 text-caption text-gray-400">{added ? '已加入' : '加入'}</span>
+                            </button>
+                          )
+                        })}
+                        {!filteredModels.length && <p className="px-2 py-1.5 text-body-sm text-gray-400">没有匹配的模型</p>}
+                      </div>
+                      {testedModels.length > 50 && <p className="px-2 pt-1 text-caption text-gray-400">仅显示前 50 个，继续输入可筛选。</p>}
                     </div>
                   )}
                 </label>
@@ -1464,7 +1566,7 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
+                    placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : activeProfile.provider === 'google' ? 'Google API Key' : activeProfile.provider === 'custom' ? '自定义服务商 Key' : 'sk-...'}
                     className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 pr-10 text-body text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                   <button
@@ -1527,7 +1629,7 @@ export default function SettingsModal() {
                   onBlur={(e) => commitActiveProfilePatch({ model: e.target.value })}
                   type="text"
                   disabled={activeProfileLocked}
-                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
+                  placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_MODEL : activeProfile.provider === 'google' ? DEFAULT_GEMINI_MODEL : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)}
                   className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-body text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
                   <div data-selectable-text className="mt-1.5 text-body-sm text-gray-500 dark:text-gray-500">
@@ -1535,8 +1637,11 @@ export default function SettingsModal() {
                     <>
                       当前支持：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2</code>{' '}
                       <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/sunburst</code>{' '}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/flare</code>。
+                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.5/flare</code>{' '}
+                      <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">openai/gpt-image-2.6/sunburst</code>。
                     </>
+                  ) : activeProfile.provider === 'google' ? (
+                    <>Gemini 图像模型例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_GEMINI_MODEL}</code>；Nano Banana Pro 可用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">gemini-3-pro-image-preview</code>。支持 1K/2K/4K 与参考图。</>
                   ) : activeCustomProvider ? (
                     <>当前使用 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{activeCustomProvider.name}</code>。</>
                   ) : (activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode) === 'responses' ? (
@@ -1641,6 +1746,16 @@ export default function SettingsModal() {
                 </div>
               )}
 
+              <details className="group rounded-xl border border-transparent bg-black/[0.03] px-3 py-2.5 dark:bg-white/[0.04]">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-body text-gray-600 dark:text-gray-300">
+                  <span>高级选项</span>
+                  <span className="flex items-center gap-2 text-body-sm text-gray-400">
+                    <span className="group-open:hidden">透明背景、Base64、Codex CLI、超时</span>
+                    <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                  </span>
+                </summary>
+                <div className="space-y-4 pt-4">
+
               {/* 9. 透明背景实现方式 */}
               <div className="block">
                 <div className="mb-1.5 flex items-center justify-between gap-3">
@@ -1727,6 +1842,8 @@ export default function SettingsModal() {
                   />
                 </label>
               )}
+                </div>
+              </details>
             </div>
             )}
             

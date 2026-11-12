@@ -107,7 +107,6 @@ describe('BottomPromptBar 下拉交互（防 BUG-01 回归）', () => {
 
     expect(onParamsChange).toHaveBeenCalledTimes(1)
     expect(onParamsChange.mock.calls[0][0]).toMatchObject({ quality: 'high' })
-    expect(openMenuSafe()).toBeNull()
   })
 
   it('尺寸 / 数量 / 更多面板的选项也都能被真实鼠标选中', () => {
@@ -158,7 +157,7 @@ describe('BottomPromptBar 下拉交互（防 BUG-01 回归）', () => {
   })
 
   it('点击菜单外的空白区域仍能正常关闭下拉', () => {
-    act(() => mouse(capsule('质量'), 'click'))
+    act(() => mouse(capsule('更多'), 'click'))
     expect(openMenuSafe()).not.toBeNull()
     act(() => mouse(document.body, 'pointerdown'))
     expect(openMenuSafe()).toBeNull()

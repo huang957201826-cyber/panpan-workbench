@@ -5,6 +5,9 @@ dev-proxy.config.json
 .env.local
 .env.*.local
 .claude/
+artifacts/
+docs/execution/REVIEW-PACKET.md
+public/skill-kit/
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/dev-data/

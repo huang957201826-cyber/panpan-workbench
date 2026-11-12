@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ensureDiskSpace } from './diskSpace'
+import { ensureImageFileExtension, normalizeImageFileName } from './exportFileName'
 import { isTauri } from './platform'
 import { throwIfAborted } from './serverSentEvents'
 
@@ -43,6 +44,12 @@ function triggerDownload(blob: Blob, fileName: string) {
 // 整个文件作为一次 IPC 请求体时，WebView2 浏览器进程会为 260 MB 的分卷短暂占用 3~5 GB 内存，改为分块传输
 const CHUNK_SIZE = 8 * 1024 * 1024
 
+/** 图片保存前统一扩展名：缺失时按 MIME 补，jpeg 统一成 jpg；ZIP/文本等非图片名字保持原样 */
+function normalizeImageSaveName(fileName: string, data: Blob | Uint8Array) {
+  if (!(data instanceof Blob)) return fileName
+  return normalizeImageFileName(ensureImageFileExtension(fileName, data.type))
+}
+
 /**
  * 把内容分块写入 Rust 侧在目标目录中打开的临时文件，全部写完后提交（改名为目标文件），返回实际写入的完整路径。
  * 任一步失败或取消时丢弃临时文件，不留下写了一半的文件
@@ -73,14 +80,15 @@ async function writeInChunks(id: number, data: Blob | Uint8Array, opts?: SaveOpt
  * 返回保存位置（网页版为文件名），用户取消时返回 null
  */
 export async function saveFile(data: Blob | Uint8Array, fileName: string, opts?: SaveOptions): Promise<string | null> {
+  const name = normalizeImageSaveName(fileName, data)
   if (!isTauri) {
-    triggerDownload(data instanceof Blob ? data : new Blob([data as BlobPart]), fileName)
-    return fileName
+    triggerDownload(data instanceof Blob ? data : new Blob([data as BlobPart]), name)
+    return name
   }
   if (beforeSave && !(await beforeSave())) return null
-  if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, fileName, opts)
+  if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, name, opts)
   await ensureDiskSpace('保存文件')
-  const id = await invoke<number | null>('save_file', { name: fileName })
+  const id = await invoke<number | null>('save_file', { name })
   if (id === null) return null
   return await writeInChunks(id, data, opts)
 }
@@ -97,7 +105,8 @@ export async function pickSaveDir() {
 /** 仅客户端：写入 pickSaveDir 选定的目录，已有同名文件时自动加序号，返回实际写入的完整路径 */
 export async function saveFileToDir(dir: SaveDir, data: Blob | Uint8Array, fileName: string, opts?: SaveOptions) {
   await ensureDiskSpace('保存文件')
-  return await writeInChunks(await invoke<number>('save_dir_begin', { token: dir.token, name: fileName }), data, opts)
+  const name = normalizeImageSaveName(fileName, data)
+  return await writeInChunks(await invoke<number>('save_dir_begin', { token: dir.token, name }), data, opts)
 }
 
 /** 仅客户端：默认保存地址，用于在设置中显示 */

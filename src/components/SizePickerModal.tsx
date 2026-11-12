@@ -178,7 +178,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
   return (
     <div
       data-no-drag-select
-      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      className="pointer-events-auto fixed inset-0 z-[70] flex items-center justify-center p-4"
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
     >

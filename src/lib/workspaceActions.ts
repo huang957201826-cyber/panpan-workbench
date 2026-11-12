@@ -6,6 +6,7 @@ import { useCanvasViewStore } from './canvasViewStore'
 import { useWorkspaceStore } from './workspaceStore'
 import { DEFAULT_CANVAS_ID, DEFAULT_PROJECT_ID } from './workspaceState'
 import { FAVORITES_PROJECT_ID, isFavoritesCanvas } from './favorites'
+import { clearAllSelection } from './selection'
 
 const EMPTY_VIEWPORT = { x: 0, y: 0, k: 1 }
 let switchGeneration = 0
@@ -19,6 +20,8 @@ export function saveActiveCanvasSnapshot() {
   const state = useStore.getState()
   workspace.updateCanvas(canvasId, {
     promptDraft: state.prompt,
+    activeSkillId: state.activeSkillId,
+    skillSlotValues: state.skillSlotValues,
     paramsDraft: state.params,
     referenceImageIds: state.inputImages.map((image) => image.id),
     maskDraft: state.maskDraft,
@@ -41,11 +44,13 @@ async function restoreCanvasSnapshot(canvasId: string, generation: number) {
   const store = useStore.getState()
   store.setInputImages(images)
   store.setPrompt(canvas.promptDraft ?? '')
+  store.setActiveSkillId(canvas.activeSkillId ?? null)
+  store.setSkillSlotValues(canvas.skillSlotValues ?? {})
   if (canvas.paramsDraft) store.setParams({ ...DEFAULT_PARAMS, ...store.params, ...canvas.paramsDraft })
   if (canvas.maskDraft) store.setMaskDraft(canvas.maskDraft)
   else store.clearMaskDraft()
   store.setMaskEditorImageId(null)
-  store.clearSelection()
+  clearAllSelection()
   store.setDetailTaskId(null)
   useCanvasViewStore.getState().setViewport(canvas.viewport ?? EMPTY_VIEWPORT)
 }
@@ -64,7 +69,7 @@ async function doSwitchCanvas(canvasId: string) {
     switchGeneration++
     useWorkspaceStore.setState({ activeCanvasId: canvasId, activeProjectId: FAVORITES_PROJECT_ID })
     const store = useStore.getState()
-    store.clearSelection()
+    clearAllSelection()
     store.setDetailTaskId(null)
     return
   }
@@ -140,6 +145,10 @@ export async function deleteCanvas(canvasId: string, mode: 'move' | 'delete') {
   const workspace = useWorkspaceStore.getState()
   const canvas = workspace.canvases.find((item) => item.id === canvasId)
   if (!canvas) return
+  if (workspace.canvases.filter((item) => item.projectId === canvas.projectId).length <= 1) {
+    useStore.getState().showToast('至少保留一个画布，最后一个画布不能删除', 'info')
+    return
+  }
   const tasks = getCanvasTasks(canvasId)
   let snapshot: string | null = null
   try {
@@ -184,7 +193,7 @@ export async function deleteCanvas(canvasId: string, mode: 'move' | 'delete') {
   saveActiveCanvasSnapshot()
   useWorkspaceStore.getState().removeCanvas(canvasId)
   await restoreActiveCanvasSnapshot()
-  useStore.getState().clearSelection()
+  clearAllSelection()
   if (snapshot) {
     useStore.getState().showToast(`已删除画布「${canvas.name}」`, 'success', { label: '查看快照', run: () => useStore.getState().setShowSettings(true, 'data') })
   } else {
@@ -246,11 +255,13 @@ export async function deleteProject(projectId: string, mode: 'move' | 'delete') 
   }
   saveActiveCanvasSnapshot()
   useWorkspaceStore.getState().removeProject(projectId)
-  if (useWorkspaceStore.getState().activeProjectId === projectId) {
+  if (!useWorkspaceStore.getState().projects.length) {
+    useWorkspaceStore.getState().createProject('默认项目')
+  } else if (useWorkspaceStore.getState().activeProjectId === projectId) {
     useWorkspaceStore.getState().setActiveProject(DEFAULT_PROJECT_ID)
   }
   await restoreActiveCanvasSnapshot()
-  useStore.getState().clearSelection()
+  clearAllSelection()
   if (snapshot) {
     useStore.getState().showToast(`已删除项目「${project.name}」`, 'success', { label: '查看快照', run: () => useStore.getState().setShowSettings(true, 'data') })
   } else {

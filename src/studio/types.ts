@@ -1,12 +1,12 @@
 export type CanvasTool = 'select' | 'hand' | 'draw' | 'comment';
-export type ActiveActivity = 'projects' | 'workflow' | 'skills' | 'models' | 'engine';
+export type ActiveActivity = 'home' | 'projects' | 'workflow' | 'lovart' | 'skills' | 'models' | 'engine';
 
 export interface GenerationParams {
   model: string;
   dimension: string;
   quality: string;
   count: number;
-  format: 'PNG' | 'WebP' | 'JPEG';
+  format: 'PNG' | 'WebP' | 'JPEG' | 'GIF' | 'SVG';
   transparent: boolean;
   compression?: number | null;
   filter: 'auto' | 'standard' | 'strict';

@@ -5,9 +5,9 @@ import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from '
 import ViewportTooltip from './ViewportTooltip'
 import { useTooltip } from '../hooks/useTooltip'
 
-interface Option {
+interface Option<T extends string | number = string | number> {
   label: string
-  value: string | number
+  value: T
   /** 选项文字的样式，如用对应字体渲染字体名 */
   style?: CSSProperties
   variant?: 'action' | 'danger'
@@ -19,11 +19,11 @@ interface Option {
   }>
 }
 
-interface SelectProps {
-  value: string | number
-  onChange: (value: any) => void
+interface SelectProps<T extends string | number = string | number> {
+  value: T
+  onChange: (value: T) => void
   onReorder?: (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => void
-  options: Option[]
+  options: Array<Option<T>>
   disabled?: boolean
   className?: string
   onOpenChange?: (isOpen: boolean) => void
@@ -34,7 +34,7 @@ interface SelectProps {
   menuClassName?: string
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className, onOpenChange, showValueTooltips = false, prefix, menuClassName }: SelectProps) {
+export default function Select<T extends string | number = string | number>({ value, onChange, onReorder, options, disabled, className, onOpenChange, showValueTooltips = false, prefix, menuClassName }: SelectProps<T>) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')

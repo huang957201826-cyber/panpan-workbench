@@ -12,6 +12,10 @@ import {
 } from 'lucide-react';
 import type { Artboard, ReferenceImage } from '../types.ts';
 import { INITIAL_REFERENCE_IMAGES } from '../constants.ts';
+import { downloadImage } from '../../lib/downloadImage';
+import { downloadTaskImages } from '../../lib/taskExport';
+import { getDownloadErrorMessage } from '../../lib/downloadImages';
+import { useStore } from '../../store';
 
 interface ImageDetailModalProps {
   artboard: Artboard;
@@ -51,13 +55,17 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
     setTimeout(() => setCopiedField(null), 1800);
   };
 
-  const handleDownload = () => {
-    const a = document.createElement('a');
-    a.href = artboard.imageUrl;
-    a.download = `${artboard.title || 'panpan-artwork'}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const handleDownload = async () => {
+    const ref = artboard.imageId || artboard.imageUrl;
+    if (!ref) return;
+    const tasks = useStore.getState().tasks;
+    const task = tasks.find((item) => item.id === artboard.taskId)
+      ?? tasks.find((item) => artboard.imageId && item.outputImages.includes(artboard.imageId));
+    const result = task && artboard.imageId
+      ? await downloadTaskImages(task, [artboard.imageId], { fileNameBase: artboard.title || 'panpan-artwork' })
+      : await downloadImage(ref, artboard.title || 'panpan-artwork', artboard.imageIndex);
+    if (result.canceled || result.successCount) return;
+    useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error');
   };
 
   const refImages: ReferenceImage[] = artboard.referenceImages?.length
@@ -97,6 +105,7 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
               onClick={handleDownload}
               className="w-7 h-7 rounded bg-black/60 hover:bg-black/85 text-white flex items-center justify-center backdrop-blur-md transition cursor-pointer pointer-events-auto shadow-sm"
               title="下载原图"
+              aria-label="下载原图"
             >
               <Download className="w-3.5 h-3.5 stroke-[1.7]" />
             </button>

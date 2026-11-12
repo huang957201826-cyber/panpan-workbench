@@ -56,9 +56,6 @@ function CanvasTopBar() {
 function CanvasDock() {
   return (
     <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-[#3a3a3a] bg-[#242424]/95 p-1 text-body-sm text-gray-400 shadow-lg backdrop-blur">
-      <button type="button" className="rounded-md bg-[#3a3a3a] px-3 py-1.5 text-white">选择</button>
-      <button type="button" className="rounded-md px-3 py-1.5 hover:bg-white/10 hover:text-gray-200">评论</button>
-      <button type="button" className="rounded-md px-3 py-1.5 hover:bg-white/10 hover:text-gray-200">涂抹</button>
       <button
         type="button"
         onClick={() => document.getElementById('panpan-prompt')?.focus()}

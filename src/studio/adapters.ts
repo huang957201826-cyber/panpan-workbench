@@ -2,13 +2,33 @@ import { useMemo } from 'react'
 import type { CanvasImageNode, InputImage, TaskParams, TaskRecord } from '../types'
 import type { Artboard, GenerationParams, ReferenceImage } from './types'
 import { getCachedImage } from '../lib/imageCache'
+import { getSupportedSizeTiers } from '../lib/imageModelCapabilities'
+import type { SizeTier } from '../lib/size'
 
-export const STUDIO_SIZE_OPTIONS = [
-  { label: '自动', res: 'auto' },
-  { label: '1K 16:9 · 1280×720', res: '1280x720' },
-  { label: '1K 9:16 · 720×1280', res: '720x1280' },
-  { label: '2K 16:9 · 2560×1440', res: '2560x1440' },
-]
+const SIZE_OPTIONS_BY_TIER: Record<SizeTier, Array<{ label: string; res: string }>> = {
+  '1K': [
+    { label: '1K 1:1 · 1024×1024', res: '1024x1024' },
+    { label: '1K 16:9 · 1280×720', res: '1280x720' },
+    { label: '1K 9:16 · 720×1280', res: '720x1280' },
+  ],
+  '2K': [
+    { label: '2K 1:1 · 2048×2048', res: '2048x2048' },
+    { label: '2K 16:9 · 2560×1440', res: '2560x1440' },
+    { label: '2K 9:16 · 1440×2560', res: '1440x2560' },
+  ],
+  '4K': [
+    { label: '4K 16:9 · 3840×2160', res: '3840x2160' },
+    { label: '4K 9:16 · 2160×3840', res: '2160x3840' },
+  ],
+}
+
+/** 尺寸选项按模型能力表收口，未知模型只保留 1K */
+export function getStudioSizeOptions(model: string): Array<{ label: string; res: string }> {
+  return [
+    { label: '自动', res: 'auto' },
+    ...getSupportedSizeTiers(model).flatMap((tier) => SIZE_OPTIONS_BY_TIER[tier]),
+  ]
+}
 
 const SIZE_RATIOS: Record<string, string> = {
   '1024x1024': '1:1',
@@ -19,7 +39,10 @@ const SIZE_RATIOS: Record<string, string> = {
   '1152x2048': '9:16',
   '1280x720': '16:9',
   '720x1280': '9:16',
+  '1440x2560': '9:16',
   '2560x1440': '16:9',
+  '2160x3840': '9:16',
+  '3840x2160': '16:9',
 }
 
 export function getAspectRatio(size: string) {
@@ -70,12 +93,13 @@ export function getGenerationParams(params: TaskParams, model: string): Generati
 }
 
 export function toTaskParams(params: GenerationParams): Partial<TaskParams> {
+  const localOnly = params.format === 'GIF' || params.format === 'SVG'
   return {
     size: params.dimension,
     quality: params.quality as TaskParams['quality'],
     n: params.count,
     output_format: params.format === 'JPEG' ? 'jpeg' : params.format === 'WebP' ? 'webp' : 'png',
-    output_compression: params.format === 'PNG' ? null : params.compression ?? null,
+    output_compression: params.format === 'PNG' || localOnly ? null : params.compression ?? null,
     transparent_output: params.transparent,
     moderation: params.filter === 'standard' ? 'low' : 'auto',
   }

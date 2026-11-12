@@ -20,6 +20,7 @@ const pathModes = new Set([
   'slow',
   'stream-error-object',
   'stream-failed-event',
+  'stream-hold',
   'stream-invalid-json',
   'stream-no-data',
   'stream-no-final',
@@ -386,6 +387,23 @@ async function handleApi(req, res, url) {
   if (wantsStream) {
     const streamPrefix = url.pathname.endsWith('/v1/images/edits') ? 'image_edit' : 'image_generation'
     if (await maybeSendStreamFailure(res, mode, streamPrefix)) return
+    if (mode === 'stream-hold') {
+      const events = createImagesStreamEvents(req, mode, n, url.pathname.endsWith('/v1/images/edits'))
+        .filter((event) => event.type.includes('partial'))
+      res.writeHead(200, appendCors({
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+      }))
+      for (const event of events) {
+        res.write(`data: ${JSON.stringify(event)}\n\n`)
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60_000))
+      res.write('data: [DONE]\n\n')
+      res.end()
+      return
+    }
     await sendSse(res, createImagesStreamEvents(req, mode, n, url.pathname.endsWith('/v1/images/edits')))
     return
   }
@@ -585,6 +603,18 @@ const server = http.createServer(async (req, res) => {
 
     if (isCustomAsyncPollPath(url.pathname)) {
       handleCustomAsyncPoll(req, res, url)
+      return
+    }
+
+    if (url.pathname.endsWith('/models')) {
+      sendJson(res, 200, {
+        data: [
+          { id: 'gpt-image-2.5' },
+          { id: 'gpt-image-2' },
+          { id: 'mock-image-model' },
+          { id: 'mock-fast-model' },
+        ],
+      })
       return
     }
 

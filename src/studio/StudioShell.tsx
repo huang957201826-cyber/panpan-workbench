@@ -1,21 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { removeMultipleTasks, removeTask, retryTask, reuseConfig, stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPending } from '../store'
+import { stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPending } from '../store'
+import { deleteTask, deleteTasks, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCanvasTasks } from '../hooks/useCanvasTasks'
 import { isTauri } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
 import { addImageFileToCanvas } from '../lib/canvasImageInput'
-import { downloadImage } from '../lib/downloadImage'
+import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
+import { downloadTasksImages } from '../lib/taskExport'
+import { pickSaveDir, type SaveDir } from '../lib/saveFile'
 import { pickSelectedTasks } from '../lib/taskSelection'
 import { useCanvasViewStore } from '../lib/canvasViewStore'
 import { removedInputImageIds } from '../lib/canvasImageNodes'
 import { filterStudioTasks } from '../lib/studioGrid'
 import { deleteCanvas, deleteProject, enqueueWorkspaceAction, getCanvasTasks, getProjectTasks, getRunningTasks, restoreActiveCanvasSnapshot, saveActiveCanvasSnapshot, stopTasks, switchCanvas } from '../lib/workspaceActions'
+import { clearAllSelection } from '../lib/selection'
+import { clearCanvasUndo, retainCanvasUndo } from '../lib/canvasUndo'
+import { composeSkillPrompt, loadBuiltinSkills, skillCoverColor } from '../lib/capabilitySkills'
+import { migratePromptSkills } from '../lib/migratePromptSkills'
+import { useSkillStore } from '../lib/skillStore'
+import { useCapabilitySkillStore } from '../lib/capabilitySkillStore'
+import { MAX_PROMPT_LENGTH } from '../lib/promptLimits'
 import { useWorkspaceStore } from '../lib/workspaceStore'
 import CanvasBoard from '../components/CanvasBoard'
 import DragUploadOverlay from '../components/input/dragUploadOverlay'
 import { MAX_INPUT_IMAGES } from '../types'
+import type { Skill, TaskSkillContext } from '../types'
 import type { ActiveActivity } from './types'
 import type { ProjectFolder, ProjectScheme } from './types'
 import { AppSidebar } from './components/AppSidebar'
@@ -25,13 +36,15 @@ import { DeleteWorkspaceDialog } from './components/DeleteWorkspaceDialog'
 import { RightGeneratorDrawer } from './components/RightGeneratorDrawer'
 import { TitleBar } from './components/TitleBar'
 import { StudioHeader } from './components/StudioHeader'
-import { createFavoritesEntries, isFavoritesCanvas, isFavoritesProject } from '../lib/favorites'
-import { REPO_ISSUES_URL } from '../lib/repoLinks'
+import { createFavoritesEntries, FAVORITES_CANVAS_ID, isFavoritesCanvas, isFavoritesProject } from '../lib/favorites'
 import { StudioViewToolbar, selectAllTaskIds, type StudioStatusFilter } from './components/StudioViewToolbar'
-import { SkillLibraryView } from './components/SkillLibraryView'
-import { SkillEditorModal } from './components/SkillEditorModal'
-import { useSkillStore } from '../lib/skillStore'
-import { STUDIO_SIZE_OPTIONS, getGenerationParams, toReferenceImages, toTaskParams, useArtboards } from './adapters'
+import { CanvasCapsuleBar } from './components/CanvasCapsuleBar'
+import type { SidebarProject } from './components/AppSidebar'
+import { CapabilitySkillLibrary } from './components/CapabilitySkillLibrary'
+import { HomeHubView } from './components/HomeHubView'
+import { WorkflowView } from './components/WorkflowView'
+
+import { getStudioSizeOptions, getGenerationParams, toReferenceImages, toTaskParams, useArtboards } from './adapters'
 import './studio.css'
 
 export default function StudioShell() {
@@ -46,7 +59,7 @@ export default function StudioShell() {
   const showToast = useStore((s) => s.showToast)
   const addInputImage = useStore((s) => s.addInputImage)
   const clearInputImages = useStore((s) => s.clearInputImages)
-  const openNewSkill = useSkillStore((s) => s.openNewSkill)
+
 
   const workspace = useWorkspaceStore()
   const favoritesEntries = useMemo(() => createFavoritesEntries(), [])
@@ -61,9 +74,10 @@ export default function StudioShell() {
   const batchProgress = useStore((s) => s.batchProgress)
   const maskDraft = useStore((s) => s.maskDraft)
 
-  const [activeActivity, setActiveActivity] = useState<ActiveActivity>('projects')
+  const [activeActivity, setActiveActivity] = useState<ActiveActivity>(() =>
+    localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
+  )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
-  const [sidebarWidth, setSidebarWidth] = useState(230)
   const [narrow, setNarrow] = useState(() => window.innerWidth < 1100)
   const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
@@ -73,18 +87,57 @@ export default function StudioShell() {
   const [statusFilter, setStatusFilter] = useState<StudioStatusFilter>('all')
   const [favoriteOnly, setFavoriteOnly] = useState(false)
   const [modelFilter, setModelFilter] = useState('')
+  const [cardSort, setCardSort] = useState<'newest' | 'oldest' | 'prompt'>('newest')
   const [selectionMode, setSelectionMode] = useState(false)
-  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
-  const [selectedCanvasTaskId, setSelectedCanvasTaskId] = useState<string | null>(null)
-  const [canvasSelectionCommand, setCanvasSelectionCommand] = useState<{ type: 'all' | 'clear'; nonce: number } | null>(null)
+  const [editingCanvasId, setEditingCanvasId] = useState<string | null>(null)
+  const [localExportFormat, setLocalExportFormat] = useState<'gif' | 'svg' | null>(() => {
+    const saved = localStorage.getItem('panpan-local-export-format')
+    return saved === 'gif' || saved === 'svg' ? saved : null
+  })
+  const lastCanvasByProjectRef = useRef<Map<string, string>>(new Map())
+  const lastUndoCanvasRef = useRef('')
+  useEffect(() => {
+    if (localExportFormat) localStorage.setItem('panpan-local-export-format', localExportFormat)
+    else localStorage.removeItem('panpan-local-export-format')
+  }, [localExportFormat])
+  const selectedTaskIdsState = useStore((s) => s.selectedTaskIds)
+  const setSelectedTaskIdsState = useStore((s) => s.setSelectedTaskIds)
+  const selectedTaskIds = useMemo(() => new Set(selectedTaskIdsState), [selectedTaskIdsState])
+  const setSelectedTaskIds = (updater: Set<string> | ((previous: Set<string>) => Set<string>)) => {
+    setSelectedTaskIdsState((previous) => {
+      const previousSet = new Set(previous)
+      const next = typeof updater === 'function' ? updater(previousSet) : updater
+      return next === previousSet ? previous : [...next]
+    })
+  }
+  const selectedCanvasTaskId = selectedTaskIdsState[0] ?? null
   const [canvasPickMode, setCanvasPickMode] = useState(false)
   const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ done: number; total: number } | null>(null)
-  const [showCanvasHint, setShowCanvasHint] = useState(() => localStorage.getItem('panpan-canvas-use-hint') !== '1')
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
-  const filteredTasks = useMemo(
-    () => filterStudioTasks(tasks, { query, status: statusFilter, favoriteOnly, model: modelFilter || undefined }),
-    [tasks, query, statusFilter, favoriteOnly, modelFilter],
-  )
+  const clearSkillChip = useStore((s) => s.clearSkillChip)
+  const mineCapabilitySkills = useCapabilitySkillStore((s) => s.mine)
+  const legacyPromptSkills = useSkillStore((s) => s.skills)
+  const [builtinCapabilitySkills, setBuiltinCapabilitySkills] = useState<Skill[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void loadBuiltinSkills()
+      .then((skills) => { if (!cancelled) setBuiltinCapabilitySkills(skills) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const count = migratePromptSkills()
+    if (count > 0) showToast(`已把 ${count} 个旧提示词迁移到技能库`, 'success')
+  }, [legacyPromptSkills.length, showToast])
+  const filteredTasks = useMemo(() => {
+    const list = filterStudioTasks(tasks, { query, status: statusFilter, favoriteOnly, model: modelFilter || undefined })
+    if (cardSort === 'oldest') return [...list].sort((a, b) => a.createdAt - b.createdAt)
+    if (cardSort === 'prompt') return [...list].sort((a, b) => a.prompt.localeCompare(b.prompt, 'zh-CN'))
+    return [...list].sort((a, b) => b.createdAt - a.createdAt)
+  }, [tasks, query, statusFilter, favoriteOnly, modelFilter, cardSort])
+  // 画布视图不再常驻搜索/筛选，避免过滤条件把画布节点藏起来；卡片视图继续使用筛选结果
+  const tasksInView = workspace.viewMode === 'grid' ? filteredTasks : tasks
   const taskModelOptions = useMemo(() => {
     const models = new Set<string>()
     for (const task of tasks) {
@@ -126,7 +179,8 @@ export default function StudioShell() {
     const el = bottomBarRef.current
     if (!el) return
     const update = () => {
-      const clearance = el.offsetHeight
+      // 输入台固定在画布底部上方 64px，避让区要把这段空白一起算入
+      const clearance = el.offsetHeight + 64
       document.documentElement.style.setProperty('--input-bar-clearance', `${clearance}px`)
       useCanvasViewStore.getState().setBottomInset(clearance)
     }
@@ -146,13 +200,31 @@ export default function StudioShell() {
     return () => clearTimeout(timer)
   }, [activeCanvas?.id, canvasViewport])
 
+  // 项目上次画布只放内存：重启回到项目第一张画布
   useEffect(() => {
-    setSelectedTaskIds(new Set())
+    const canvas = workspace.canvases.find((item) => item.id === workspace.activeCanvasId)
+    if (canvas) lastCanvasByProjectRef.current.set(canvas.projectId, canvas.id)
+  }, [workspace.activeCanvasId, workspace.canvases])
+
+  // 切换画布清掉原画布撤销栈；画布被删除后也清掉对应栈
+  useEffect(() => {
+    const canvasId = activeCanvas?.id ?? ''
+    const previous = lastUndoCanvasRef.current
+    if (previous && previous !== canvasId) clearCanvasUndo(previous)
+    lastUndoCanvasRef.current = canvasId
+  }, [activeCanvas?.id])
+
+  useEffect(() => {
+    retainCanvasUndo(workspace.canvases.map((canvas) => canvas.id))
+  }, [workspace.canvases])
+
+  useEffect(() => {
+    clearAllSelection()
     setSelectionMode(false)
   }, [activeCanvas?.id])
 
   useEffect(() => {
-    const visible = new Set(filteredTasks.map((task) => task.id))
+    const visible = new Set(tasksInView.map((task) => task.id))
     setSelectedTaskIds((previous) => {
       let changed = false
       const next = new Set<string>()
@@ -162,7 +234,7 @@ export default function StudioShell() {
       }
       return changed ? next : previous
     })
-  }, [filteredTasks])
+  }, [tasksInView])
 
   useEffect(() => () => saveActiveCanvasSnapshot(), [])
 
@@ -270,14 +342,19 @@ export default function StudioShell() {
       .map((item) => ({ id: item, label: item })),
     [activeProfile.id, activeProfile.model, settings.profiles],
   )
-  const generationParams = useMemo(() => getGenerationParams(params, model), [params, model])
-  const sizeOptions = useMemo(
-    () => STUDIO_SIZE_OPTIONS.some((option) => option.res === params.size)
-      ? STUDIO_SIZE_OPTIONS
+  const generationParams = useMemo(() => {
+    const base = getGenerationParams(params, model)
+    return localExportFormat
+      ? { ...base, format: localExportFormat === 'gif' ? 'GIF' as const : 'SVG' as const }
+      : base
+  }, [params, model, localExportFormat])
+  const sizeOptions = useMemo(() => {
+    const options = getStudioSizeOptions(model)
+    return options.some((option) => option.res === params.size)
+      ? options
       // 自定义尺寸直接显示数值，别用「当前」这种看不出结果的占位文案（BUG-05）
-      : [{ label: params.size || '自定义尺寸', res: params.size }, ...STUDIO_SIZE_OPTIONS],
-    [params.size],
-  )
+      : [{ label: params.size || '自定义尺寸', res: params.size }, ...options]
+  }, [model, params.size])
 
   const folders = useMemo<ProjectFolder[]>(() => {
     const favoriteScheme: ProjectScheme = {
@@ -291,7 +368,7 @@ export default function StudioShell() {
     const list: ProjectFolder[] = workspace.projects.map((project) => ({
     id: project.id,
     name: project.name,
-    isExpanded: !collapsedFolders.has(project.id),
+    isExpanded: true,
     schemes: workspace.canvases
       .filter((canvas) => canvas.projectId === project.id)
       .map<ProjectScheme>((canvas) => ({
@@ -306,10 +383,21 @@ export default function StudioShell() {
     return [{
       id: favoritesEntries.project.id,
       name: favoritesEntries.project.name,
-      isExpanded: !collapsedFolders.has(favoritesEntries.project.id),
+      isExpanded: true,
       schemes: [favoriteScheme],
     }, ...list]
-  }, [workspace.projects, workspace.canvases, params, model, collapsedFolders, generationParams, favoritesEntries])
+  }, [workspace.projects, workspace.canvases, params, model, generationParams, favoritesEntries])
+
+  const sidebarProjects = useMemo<SidebarProject[]>(() => [{
+    id: favoritesEntries.project.id,
+    name: favoritesEntries.project.name,
+    canvasCount: 1,
+    isFavorites: true,
+  }, ...workspace.projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    canvasCount: workspace.canvases.filter((canvas) => canvas.projectId === project.id).length,
+  }))], [workspace.projects, workspace.canvases, favoritesEntries])
 
   const currentScheme = useMemo<ProjectScheme>(() => ({
     id: activeCanvas?.id ?? '',
@@ -321,11 +409,30 @@ export default function StudioShell() {
   }), [activeCanvas?.id, activeCanvas?.name, prompt, generationParams])
 
   const selectScheme = (folderId: string, scheme: ProjectScheme) => {
+    if (folderId) lastCanvasByProjectRef.current.set(folderId, scheme.id)
     void switchCanvas(scheme.id)
     setSelectedArtboardId(null)
   }
 
+  const selectProject = (projectId: string) => {
+    if (isFavoritesProject(projectId)) {
+      setActiveActivity('projects')
+      void switchCanvas(FAVORITES_CANVAS_ID)
+      return
+    }
+    const canvases = useWorkspaceStore.getState().canvases.filter((canvas) => canvas.projectId === projectId)
+    if (!canvases.length) {
+      showToast('这个项目还没有画布', 'info')
+      return
+    }
+    const remembered = lastCanvasByProjectRef.current.get(projectId)
+    const target = canvases.find((canvas) => canvas.id === remembered) ?? canvases[0]
+    setActiveActivity('projects')
+    void switchCanvas(target.id)
+  }
+
   const handleParamsChange = (next: typeof generationParams) => {
+    setLocalExportFormat(next.format === 'GIF' ? 'gif' : next.format === 'SVG' ? 'svg' : null)
     if (next.model !== model) {
       setSettings({
         profiles: settings.profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, selectedModel: next.model } : profile),
@@ -335,11 +442,28 @@ export default function StudioShell() {
   }
 
   const savePromptAsSkill = () => {
-    openNewSkill({
-      title: prompt.trim().split(/\r?\n/)[0]?.slice(0, 40),
-      prompt,
+    if (!prompt.trim()) {
+      showToast('提示词为空，无法保存为技能', 'info')
+      return
+    }
+    const now = Date.now()
+    const id = `mine:${crypto.randomUUID()}`
+    useCapabilitySkillStore.getState().addMine({
+      id,
+      name: prompt.trim().split(/\r?\n/)[0]?.slice(0, 40) || '未命名技能',
+      description: '从当前提示词保存',
+      category: '我的',
+      coverColor: skillCoverColor(id),
+      basePrompt: prompt.trim(),
+      slots: [],
       params: { size: params.size, quality: params.quality, model, n: params.n },
+      source: 'mine',
+      favorite: false,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
     })
+    showToast('已保存为技能', 'success')
   }
 
   const handleGenerate = async (promptText: string, nextParams: typeof generationParams) => {
@@ -352,21 +476,55 @@ export default function StudioShell() {
       showToast('参考图正在加入，请稍候再提交。', 'info')
       return
     }
-    if (!promptText.trim()) {
-      showToast('请输入提示词', 'error')
+    const liveState = useStore.getState()
+    const liveSkill = [...mineCapabilitySkills, ...builtinCapabilitySkills].find((item) => item.id === liveState.activeSkillId) ?? null
+    const liveSlotValues = liveState.skillSlotValues
+    if (!promptText.trim() && !liveSkill) {
+      showToast('请输入提示词或先选用技能', 'error')
       return
     }
     setPrompt(promptText)
     handleParamsChange(nextParams)
+    const skill = liveSkill
+    let finalPrompt = promptText
+    let skillContext: TaskSkillContext | undefined
+    if (skill) {
+      if (/\n\s*\n/.test(promptText)) {
+        showToast('技能暂不支持批量提交，请先关闭批量或只保留一条提示词', 'info')
+        return
+      }
+      finalPrompt = composeSkillPrompt(skill, liveSlotValues, promptText)
+      if (finalPrompt.length > MAX_PROMPT_LENGTH) {
+        showToast(`技能与输入合并后超过 ${MAX_PROMPT_LENGTH} 字上限，请精简后再试`, 'error')
+        return
+      }
+      skillContext = {
+        id: skill.id,
+        name: skill.name,
+        basePrompt: skill.basePrompt,
+        slots: skill.slots,
+        slotValues: liveSlotValues,
+        userPrompt: promptText,
+        version: skill.version,
+      }
+    }
     setSubmitting(true)
     try {
       const canvas = workspace.canvases.find((item) => item.id === activeCanvas?.id)
-      await submitTask({
+      const pending = submitTask({
         projectId: activeProject?.id,
         canvasId: activeCanvas?.id,
         viewport: canvas?.viewport,
         anchorTaskId: selectedCanvasTaskId ?? undefined,
+        promptOverride: finalPrompt,
+        skillContext,
+        localExportFormat: nextParams.format === 'GIF' ? 'gif' : nextParams.format === 'SVG' ? 'svg' : undefined,
       })
+      const taskIds = await pending
+      if (taskIds.length && useStore.getState().settings.clearInputAfterSubmit) {
+        setPrompt('')
+        clearSkillChip()
+      }
     } finally {
       setSubmitting(false)
     }
@@ -392,22 +550,41 @@ export default function StudioShell() {
   const batchDownload = async () => {
     if (batchDownloadProgress || !selectedTasks.length) return
     const total = selectedTasks.reduce((sum, task) => sum + task.outputImages.length, 0)
+    if (!total) return
+    let dir: SaveDir | null = null
+    if (isTauri) {
+      try {
+        dir = await pickSaveDir()
+      } catch (err) {
+        showToast(getDownloadErrorMessage(err), 'error')
+        return
+      }
+      if (!dir) return
+    }
     setBatchDownloadProgress({ done: 0, total })
+    const useZip = useStore.getState().settings.zipDownloadRoutes.includes('task-selection')
     let failed = 0
     let done = 0
+    let location: string | undefined
+    let error: string | undefined
     try {
-      for (const task of selectedTasks) {
-        for (const [index, imageId] of task.outputImages.entries()) {
-          const ok = await downloadImage(imageId, task.prompt, task.outputImages.length > 1 ? index : undefined)
-          if (!ok) failed += 1
-          done += 1
-          setBatchDownloadProgress({ done, total })
-        }
-      }
+      const result = await downloadTasksImages(selectedTasks, {
+        zip: useZip,
+        zipFileNameBase: `batch-${Date.now()}`,
+        dir,
+        onProgress: (nextDone) => setBatchDownloadProgress({ done: nextDone, total }),
+      })
+      if (result.canceled) return
+      done = total
+      failed = result.failCount
+      location = result.location
+      error = result.error
+      setBatchDownloadProgress({ done, total })
     } finally {
       setBatchDownloadProgress(null)
     }
-    if (failed) showToast(`有 ${failed} 张图片读取失败，下载未完成`, 'error')
+    if (failed) showToast(`有 ${failed} 张图片下载失败${error ? `：${error}` : ''}`, 'error')
+    else if (location) showToast(withSaveLocation('下载完成', location), 'success')
   }
 
   const batchDelete = () => {
@@ -419,32 +596,18 @@ export default function StudioShell() {
       cancelText: '取消',
       tone: 'danger',
       action: () => {
-        void removeMultipleTasks(selectedTasks.map((task) => task.id)).then(() => setSelectedTaskIds(new Set()))
+        void deleteTasks(selectedTasks.map((task) => task.id)).then(() => clearAllSelection())
       },
     })
   }
 
   const selectAllTasks = () => {
-    if (workspace.viewMode === 'canvas') {
-      setCanvasSelectionCommand({ type: 'all', nonce: Date.now() })
-      setSelectedTaskIds(selectAllTaskIds(filteredTasks))
-    } else {
-      setSelectedTaskIds(selectAllTaskIds(filteredTasks))
-    }
+    setSelectedTaskIds(selectAllTaskIds(filteredTasks))
   }
 
   const clearTaskSelection = () => {
-    setSelectedTaskIds(new Set())
-    if (workspace.viewMode === 'canvas') setCanvasSelectionCommand({ type: 'clear', nonce: Date.now() })
+    clearAllSelection()
   }
-
-  const handleCanvasSelectionChange = useCallback((ids: string[]) => {
-    setSelectedTaskIds((previous) => {
-      if (previous.size === ids.length && ids.every((id) => previous.has(id))) return previous
-      return new Set(ids)
-    })
-    setSelectedCanvasTaskId(ids[0] ?? null)
-  }, [])
 
   const addArtboardImage = async (artboard: { taskId?: string; imageId?: string }) => {
     if (!artboard.imageId) return
@@ -497,14 +660,16 @@ export default function StudioShell() {
       confirmText: '删除任务',
       cancelText: '取消',
       tone: 'danger',
-      action: () => { void removeTask(task) },
+      action: () => { void deleteTask(task) },
     })
   }
 
   const createStudioProject = () => {
+    setActiveActivity('projects')
     void enqueueWorkspaceAction(async () => {
       saveActiveCanvasSnapshot()
-      useWorkspaceStore.getState().createProject()
+      const project = useWorkspaceStore.getState().createProject()
+      lastCanvasByProjectRef.current.set(project.projectId, project.canvasId)
       await restoreActiveCanvasSnapshot()
     })
   }
@@ -516,14 +681,35 @@ export default function StudioShell() {
     }
     void enqueueWorkspaceAction(async () => {
       saveActiveCanvasSnapshot()
-      useWorkspaceStore.getState().createCanvas(projectId || useWorkspaceStore.getState().activeProjectId)
+      const targetProjectId = projectId || useWorkspaceStore.getState().activeProjectId
+      const canvasId = useWorkspaceStore.getState().createCanvas(targetProjectId)
+      lastCanvasByProjectRef.current.set(targetProjectId, canvasId)
+      setEditingCanvasId(canvasId)
       await restoreActiveCanvasSnapshot()
     })
   }
 
+  const duplicateStudioCanvas = (canvasId: string) => {
+    void enqueueWorkspaceAction(async () => {
+      saveActiveCanvasSnapshot()
+      const copyId = useWorkspaceStore.getState().duplicateCanvas(canvasId)
+      if (!copyId) return
+      const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === copyId)
+      if (canvas) lastCanvasByProjectRef.current.set(canvas.projectId, canvas.id)
+      await restoreActiveCanvasSnapshot()
+      showToast('已复制画布（含布局、参考图、草稿、参数与技能上下文；任务不复制）', 'success')
+    })
+  }
+
   const requestDeleteCanvas = (canvasId: string) => {
-    const target = useWorkspaceStore.getState().canvases.find((canvas) => canvas.id === canvasId)
+    const workspaceState = useWorkspaceStore.getState()
+    const target = workspaceState.canvases.find((canvas) => canvas.id === canvasId)
     if (!target) return
+    if (workspaceState.canvases.filter((canvas) => canvas.projectId === target.projectId).length <= 1) {
+      showToast('至少保留一个画布，最后一个画布不能删除', 'info')
+      return
+    }
+    if (editingCanvasId === canvasId) setEditingCanvasId(null)
     const tasks = getCanvasTasks(canvasId)
     const running = getRunningTasks(tasks)
     const openDialog = () => setDeleteTarget({ kind: 'canvas', id: canvasId, name: target.name, taskCount: tasks.length })
@@ -630,39 +816,44 @@ export default function StudioShell() {
           </div>
         )}
         <AppSidebar
-          folders={folders}
-          activeFolderId={activeProject?.id ?? ''}
-          activeSchemeId={activeCanvas?.id ?? ''}
-          onSelectScheme={selectScheme}
-          onToggleFolder={(folderId) => setCollapsedFolders((previous) => {
-            const next = new Set(previous)
-            if (next.has(folderId)) next.delete(folderId)
-            else next.add(folderId)
-            return next
-          })}
-          onNewScheme={(folderId) => { if (folderId) createStudioCanvas(folderId) }}
-          onNewFolder={createStudioProject}
-          onRenameFolder={(folderId, name) => useWorkspaceStore.getState().renameProject(folderId, name)}
-          onDeleteFolder={requestDeleteProject}
-          onRenameScheme={(folderId, schemeId, name) => useWorkspaceStore.getState().renameCanvas(schemeId, name)}
-          onDeleteScheme={requestDeleteCanvas}
+          projects={sidebarProjects}
+          activeProjectId={activeProject?.id ?? ''}
+          onSelectProject={selectProject}
+          onNewProject={createStudioProject}
+          onRenameProject={(projectId, name) => useWorkspaceStore.getState().renameProject(projectId, name)}
+          onDeleteProject={requestDeleteProject}
+          onCollapse={() => setSidebarCollapsed(true)}
           activeActivity={activeActivity}
           onSelectActivity={setActiveActivity}
           onOpenSettings={() => setShowSettings(true)}
-          isCollapsed={sidebarCollapsed || activeActivity === 'skills'}
-          width={sidebarWidth}
-          onWidthChange={setSidebarWidth}
-          enabledActivities={['projects', 'workflow', 'skills']}
+          isCollapsed={sidebarCollapsed || activeActivity === 'home' || activeActivity === 'skills' || activeActivity === 'workflow'}
+          enabledActivities={['home', 'projects', 'workflow', 'skills']}
           canManageProjects={true}
         />
 
         <div className="relative flex flex-1 overflow-hidden">
           <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {activeActivity === 'projects' && activeCanvas && (
+          {sidebarCollapsed && (
+            <div className="absolute left-4 top-14 z-40">
+              <button
+                type="button"
+                onClick={() => {
+                  setSidebarCollapsed(false)
+                  if (activeActivity !== 'projects') setActiveActivity('projects')
+                }}
+                className="flex h-[34px] items-center gap-1.5 rounded-full border border-black/[0.04] bg-white/90 px-3 text-[11.5px] font-medium text-slate-700 shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl transition hover:text-black dark:border-white/[0.06] dark:bg-[#141620]/90 dark:text-slate-200 dark:hover:text-white"
+                title="展开方案抽屉"
+              >
+                <span className="text-[13px]">▤</span>
+                <span>展开方案</span>
+              </button>
+            </div>
+          )}
+          {activeActivity === 'projects' && activeCanvas && workspace.viewMode === 'grid' && (
             <StudioHeader
               title={activeCanvas.name}
               projectName={activeProject?.name}
-              count={workspace.viewMode === 'grid' ? artboards.length : filteredTasks.length}
+              count={artboards.length}
               runningCount={runningCount}
             >
               <StudioViewToolbar
@@ -673,7 +864,7 @@ export default function StudioShell() {
                 models={taskModelOptions}
                 selectionMode={selectionMode}
                 selectedCount={selectedTaskIds.size}
-                viewMode={workspace.viewMode}
+                sort={cardSort}
                 onQueryChange={setQuery}
                 onStatusChange={setStatusFilter}
                 onModelChange={setModelFilter}
@@ -688,12 +879,29 @@ export default function StudioShell() {
                 onBatchDownload={() => void batchDownload()}
                 batchDownloadProgress={batchDownloadProgress}
                 onBatchDelete={batchDelete}
-                onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
+                onSortChange={setCardSort}
               />
             </StudioHeader>
           )}
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {activeActivity === 'projects' ? (
+            {activeActivity === 'home' ? (
+              <HomeHubView
+                modelOptions={modelOptions}
+                params={generationParams}
+                sizeOptions={sizeOptions}
+                countOptions={[1, 2, 4]}
+                onParamsChange={handleParamsChange}
+                onGenerate={(text, nextParams) => {
+                  if (!activeCanvas) {
+                    showToast('请先新建项目和画布', 'info')
+                    return
+                  }
+                  setActiveActivity('projects')
+                  void handleGenerate(text, nextParams)
+                }}
+                isGenerating={submitting || pendingInputs > 0}
+              />
+            ) : activeActivity === 'projects' ? (
               !workspace.projects.length ? (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-[#fbfcfd] text-center dark:bg-[#0c0e14]">
                   <div>
@@ -714,115 +922,92 @@ export default function StudioShell() {
                     新建画布
                   </button>
                 </div>
-              ) : workspace.viewMode === 'grid' ? (
-                <CardGridView
-                  artboards={artboards}
-                  currentScheme={currentScheme}
-                  onSendToCanvas={(artboard) => {
-                    if (artboard.taskId) focusTask(artboard.taskId)
-                  }}
-                  onSetAsReference={(artboard) => void addArtboardImage(artboard)}
-                  onRecallPrompt={(artboard) => {
-                    const task = findTask(artboard.taskId)
-                    if (task) void reuseConfig(task)
-                  }}
-                  onDeleteArtboard={confirmDeleteArtboard}
-                  onToggleStar={(id) => {
-                    const task = findTask(id.split(':')[0])
-                    if (task) updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
-                  }}
-                  onInspectArtboard={(artboard) => useStore.getState().setDetailTaskId(artboard.taskId ?? null)}
-                  onRetryTask={(taskId) => {
-                    const task = findTask(taskId)
-                    if (task) void retryTask(task)
-                  }}
-                  isGenerating={runningCount > 0}
-                  emptyTitle={isFavoritesCanvas(activeCanvas?.id) ? '还没有收藏' : undefined}
-                  emptyDescription={isFavoritesCanvas(activeCanvas?.id) ? '在任意图片上点星标，收藏的内容会汇总到这里。' : undefined}
-                  runningCount={runningCount}
-                  selectionMode={selectionMode}
-                  selectedTaskIds={selectedTaskIds}
-                  onToggleTaskSelection={toggleTaskSelection}
-                />
               ) : (
-                <div className="relative w-full h-full overflow-hidden">
-                  <div className="absolute inset-0 stitch-dot-canvas opacity-50 dark:opacity-35 pointer-events-none" />
-                  <CanvasBoard
-                    tasks={filteredTasks}
-                    allTaskCount={tasks.length}
-                    canvasId={activeCanvas?.id ?? ''}
-                    selectionCommand={canvasSelectionCommand}
-                    onSelectionChange={handleCanvasSelectionChange}
-                    pickMode={canvasPickMode}
-                    onCancelPick={() => setCanvasPickMode(false)}
-                    onPickImage={(imageId) => {
-                      void withInputPending(async () => {
-                        const dataUrl = await ensureImageCached(imageId)
-                        if (!dataUrl) {
-                          showToast('读取画布图片失败，未加入参考图。', 'error')
-                          return
-                        }
-                        addInputImage({ id: imageId, dataUrl })
-                        const added = useStore.getState().inputImages.some((image) => image.id === imageId)
-                        if (!added) return
-                        setCanvasPickMode(false)
-                        showToast('已加入参考图')
-                      })
-                    }}
-                  />
-                </div>
+                <>
+                  {!isFavoritesCanvas(activeCanvas?.id) && (
+                    <CanvasCapsuleBar
+                      canvases={workspace.canvases.filter((canvas) => canvas.projectId === activeProject?.id && !isFavoritesCanvas(canvas.id))}
+                      activeCanvasId={activeCanvas?.id ?? ''}
+                      editingCanvasId={editingCanvasId}
+                      onEditingChange={setEditingCanvasId}
+                      onSwitch={(canvasId) => void switchCanvas(canvasId)}
+                      onCreate={() => { if (activeProject) createStudioCanvas(activeProject.id) }}
+                      onRename={(canvasId, name) => useWorkspaceStore.getState().renameCanvas(canvasId, name)}
+                      onDuplicate={duplicateStudioCanvas}
+                      onDelete={requestDeleteCanvas}
+                    />
+                  )}
+                  {workspace.viewMode === 'grid' ? (
+                    <CardGridView
+                      artboards={artboards}
+                      currentScheme={currentScheme}
+                      onSendToCanvas={(artboard) => {
+                        if (artboard.taskId) focusTask(artboard.taskId)
+                      }}
+                      onSetAsReference={(artboard) => void addArtboardImage(artboard)}
+                      onRecallPrompt={(artboard) => {
+                        const task = findTask(artboard.taskId)
+                        if (task) void reuseTaskConfig(task)
+                      }}
+                      onDeleteArtboard={confirmDeleteArtboard}
+                      onToggleStar={(id) => {
+                        const task = findTask(id.split(':')[0])
+                        if (task) updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
+                      }}
+                      onInspectArtboard={(artboard) => useStore.getState().setDetailTaskId(artboard.taskId ?? null)}
+                      onRetryTask={(taskId) => {
+                        const task = findTask(taskId)
+                        if (task) void retryTaskAction(task)
+                      }}
+                      isGenerating={runningCount > 0}
+                      emptyTitle={isFavoritesCanvas(activeCanvas?.id) ? '还没有收藏' : undefined}
+                      emptyDescription={isFavoritesCanvas(activeCanvas?.id) ? '在任意图片上点星标，收藏的内容会汇总到这里。' : undefined}
+                      runningCount={runningCount}
+                      selectionMode={selectionMode}
+                      selectedTaskIds={selectedTaskIds}
+                      onToggleTaskSelection={toggleTaskSelection}
+                    />
+                  ) : (
+                    <div className="relative w-full h-full overflow-hidden">
+                      <div className="absolute inset-0 stitch-dot-canvas opacity-50 dark:opacity-35 pointer-events-none" />
+                      <CanvasBoard
+                        tasks={tasksInView}
+                        allTaskCount={tasks.length}
+                        canvasId={activeCanvas?.id ?? ''}
+                        rightInset={narrow && workspace.inputDockPosition === 'right' ? 360 : 0}
+                        pickMode={canvasPickMode}
+                        onCancelPick={() => setCanvasPickMode(false)}
+                        onPickImage={(imageId) => {
+                          void withInputPending(async () => {
+                            const dataUrl = await ensureImageCached(imageId)
+                            if (!dataUrl) {
+                              showToast('读取画布图片失败，未加入参考图。', 'error')
+                              return
+                            }
+                            addInputImage({ id: imageId, dataUrl })
+                            const added = useStore.getState().inputImages.some((image) => image.id === imageId)
+                            if (!added) return
+                            setCanvasPickMode(false)
+                            showToast('已加入参考图')
+                          })
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
               )
             ) : activeActivity === 'skills' ? (
-              <SkillLibraryView onUsed={() => setActiveActivity('projects')} />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-[#fbfcfd] dark:bg-[#0c0e14]">
-                <div className="rounded-2xl border border-black/[0.06] bg-white/80 px-8 py-10 text-center shadow-sm dark:border-white/[0.08] dark:bg-[#141620]/80">
-                  <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-100">工作流</p>
-                  <p className="mt-2 text-body text-slate-500 dark:text-slate-400">该模块仍在规划中，项目已开源</p>
-                  <div className="mt-4 flex items-center justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveActivity('projects')}
-                      className="rounded-full bg-black px-4 py-1.5 text-body text-white dark:bg-white dark:text-black"
-                    >
-                      返回项目
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => window.open(REPO_ISSUES_URL, '_blank', 'noopener')}
-                      className="rounded-full border border-black/10 px-4 py-1.5 text-body text-slate-600 dark:border-white/15 dark:text-slate-300"
-                    >
-                      到 GitHub 提建议
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          {showCanvasHint && activeActivity === 'projects' && activeCanvas && workspace.viewMode === 'canvas' && (
-            <div className="ui-scale-chrome absolute left-4 top-4 z-30 max-w-xs rounded-card border border-line bg-surface/95 p-3 text-body-sm leading-relaxed text-ink-2 shadow-e1 backdrop-blur-xl">
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 text-brand">✦</span>
-                <p className="flex-1">把图片拖进画布，画布节点与输入台参考图会同时出现；常用提示词可在左侧“技能库”保存。</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.setItem('panpan-canvas-use-hint', '1')
-                    setShowCanvasHint(false)
-                  }}
-                  className="rounded-chip px-1 text-ink-3 transition-colors duration-fast hover:bg-surface-3 hover:text-ink-1"
-                  aria-label="关闭使用提示"
-                >×</button>
-              </div>
-            </div>
-          )}
-
+              <CapabilitySkillLibrary onUsed={() => setActiveActivity('projects')} />
+            ) : activeActivity === 'workflow' ? (
+              <WorkflowView onBack={() => setActiveActivity('projects')} />
+            ) : null}
           </div>
 
           {workspace.inputDockPosition === 'bottom' && activeActivity === 'projects' && activeCanvas && (
             <div
               ref={bottomBarRef}
               data-input-bar
-              className="ui-scale-chrome absolute bottom-1.5 left-0 right-0 z-30 pointer-events-none flex justify-center"
+              className="ui-scale-chrome absolute bottom-16 left-0 right-0 z-30 pointer-events-none flex justify-center"
             >
               <BottomPromptBar
                 prompt={prompt}
@@ -853,6 +1038,8 @@ export default function StudioShell() {
                 canvasPickActive={canvasPickMode}
                 onSaveAsSkill={savePromptAsSkill}
                 onManageModels={() => setShowSettings(true, 'api')}
+                viewMode={workspace.viewMode}
+                onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
               />
             </div>
           )}
@@ -860,7 +1047,7 @@ export default function StudioShell() {
           </div>
 
           {workspace.inputDockPosition === 'right' && activeActivity === 'projects' && activeCanvas && (
-            <div className={`ui-scale-chrome h-full ${narrow ? 'absolute right-0 top-0 bottom-0 z-30 shadow-2xl' : ''}`}>
+            <div data-right-drawer className={`ui-scale-chrome h-full ${narrow ? 'absolute right-0 top-0 bottom-0 z-30 shadow-2xl' : ''}`}>
               <RightGeneratorDrawer
                 prompt={prompt}
                 onPromptChange={setPrompt}
@@ -889,7 +1076,7 @@ export default function StudioShell() {
                 onSetAsReference={(artboard) => void addArtboardImage(artboard)}
                 onRecallPrompt={(artboard) => {
                   const task = findTask(artboard.taskId)
-                  if (task) void reuseConfig(task)
+                  if (task) void reuseTaskConfig(task)
                 }}
                 onCloseOrDockBottom={() => useWorkspaceStore.getState().setInputDockPosition('bottom')}
                 modelOptions={modelOptions}
@@ -906,6 +1093,8 @@ export default function StudioShell() {
                 canvasPickActive={canvasPickMode}
                 onSaveAsSkill={savePromptAsSkill}
                 onManageModels={() => setShowSettings(true, 'api')}
+                viewMode={workspace.viewMode}
+                onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
               />
             </div>
           )}
@@ -936,7 +1125,6 @@ export default function StudioShell() {
         />
       )}
 
-      <SkillEditorModal />
       <DragUploadOverlay visible={isDraggingFiles} atImageLimit={inputImages.length >= MAX_INPUT_IMAGES} maxImages={MAX_INPUT_IMAGES} />
     </div>
   )

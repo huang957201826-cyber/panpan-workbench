@@ -18,9 +18,11 @@ import type {
   SketchBoardRequest,
   TaskRecord,
   TaskCanvasMeta,
+  TaskSkillContext,
   ViewportTransform,
   FavoriteCollection,
   ResponsesOutputItem,
+  SkillSlotValue,
   StoredImage,
   StoredImageThumbnail,
 } from './types'
@@ -70,7 +72,8 @@ import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, delete
 import { migrateImagesToBlob } from './lib/imageBlob'
 import { hasActiveDataOperations, isCustomRecoverableTask, isFalRecoverableTask } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
-import { buildExportZip, collectSkillCoverImageIds, createExportBlob, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, mergeImportedSkills, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
+import { buildExportZip, collectCapabilityCoverImageIds, collectCapabilityOverrideCoverIds, collectSkillCoverImageIds, createExportBlob, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, mergeImportedCapabilitySkills, mergeImportedSkills, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
+import { useCapabilitySkillStore } from './lib/capabilitySkillStore'
 import { collectReferencedImageIds } from './lib/exportReferences'
 import { getExportImageSizes, readExportImages } from './lib/exportImages'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPath, isEmptyAgentConversation, normalizeAgentConversations, remapAgentRoundMentionsForPathChange, uniqueIds } from './lib/agentConversationState'
@@ -175,7 +178,12 @@ function waitForTaskWrites(taskId: string) {
 }
 
 /** 所有任务写库都串行进入同一条队列；执行时重新读取最新内存任务并合并 patch */
-function enqueueTaskWrite(taskId: string, patch: TaskWritePatch, expectEpoch?: number): Promise<TaskWriteOutcome> {
+function enqueueTaskWrite(
+  taskId: string,
+  patch: TaskWritePatch,
+  expectEpoch?: number,
+  options: { silent?: boolean } = {},
+): Promise<TaskWriteOutcome> {
   const state = getTaskWriteState(taskId)
   const run = async (): Promise<TaskWriteOutcome> => {
     if (state.blocked) return 'superseded'
@@ -194,7 +202,7 @@ function enqueueTaskWrite(taskId: string, patch: TaskWritePatch, expectEpoch?: n
       await putTask(next)
     } catch (err) {
       if (expectEpoch !== undefined && state.epoch !== expectEpoch) return 'superseded'
-      reportTaskPersistError(err)
+      if (!options.silent) reportTaskPersistError(err)
       return 'failed'
     }
     if (expectEpoch !== undefined && state.epoch !== expectEpoch) return 'superseded'
@@ -474,7 +482,7 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
 
 // ===== Store 类型 =====
 
-interface AppState {
+export interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
@@ -499,6 +507,12 @@ interface AppState {
   // 输入
   prompt: string
   setPrompt: (p: string) => void
+  /** 当前选用的能力技能；prompt 仍只存用户文字 */
+  activeSkillId: string | null
+  skillSlotValues: Record<string, SkillSlotValue>
+  setActiveSkillId: (id: string | null) => void
+  setSkillSlotValues: (values: Record<string, SkillSlotValue>) => void
+  clearSkillChip: () => void
   /**
    * 输入框最后一次的选区（可见文本偏移），供画板等外部入口插入胶囊并覆盖选中内容；未聚焦过时为 null。
    * 同时记下当时的提示词，提示词被其他途径替换后选区即失效，使用前需比对。
@@ -622,8 +636,8 @@ interface AppState {
   dismissSupportPrompt: () => void
 
   // Toast
-  toast: { message: string; type: ToastType; action?: { label: string; run: () => void } } | null
-  showToast: (message: string, type?: ToastType, action?: { label: string; run: () => void }) => void
+  toast: { message: string; type: ToastType; action?: { label: string; run: () => void; undoCanvasId?: string; undoEntryId?: string } } | null
+  showToast: (message: string, type?: ToastType, action?: { label: string; run: () => void; undoCanvasId?: string; undoEntryId?: string }) => void
 
   // Confirm dialog
   confirmDialog: {
@@ -932,6 +946,11 @@ export const useStore = create<AppState>()(
       // Input
       prompt: '',
       setPrompt: (prompt) => set((s) => syncActiveInputDraft(s, { prompt })),
+      activeSkillId: null,
+      skillSlotValues: {},
+      setActiveSkillId: (activeSkillId) => set({ activeSkillId }),
+      setSkillSlotValues: (skillSlotValues) => set({ skillSlotValues }),
+      clearSkillChip: () => set({ activeSkillId: null, skillSlotValues: {} }),
       promptSelection: null,
       setPromptSelection: (selection) => set((s) => ({ promptSelection: { ...selection, prompt: s.prompt } })),
       inputImages: [],
@@ -1431,25 +1450,30 @@ function putTask(task: TaskRecord): Promise<IDBValidKey> {
   return dbPutTask(getPersistableTask(task))
 }
 
-/** 更新任务在画布上的位置：先更新内存，再按任务队列持久化；失败只记录，不阻塞拖动 */
-export async function updateTaskCanvas(id: string, canvas: TaskCanvasMeta) {
+/** 更新任务在画布上的位置：先更新内存，再按任务队列持久化；返回是否真正写入成功 */
+export async function updateTaskCanvas(
+  id: string,
+  canvas: TaskCanvasMeta,
+  options: { silent?: boolean } = {},
+): Promise<boolean> {
   const state = useStore.getState()
   const task = state.tasks.find((item) => item.id === id)
-  if (!task) return
+  if (!task) return true
   const previousCanvas = task.canvas
   state.setTasks(state.tasks.map((item) => (item.id === id ? { ...item, canvas } : item)))
-  const outcome = await enqueueTaskWrite(id, { canvas })
-  if (outcome !== 'failed') return
+  const outcome = await enqueueTaskWrite(id, { canvas }, undefined, { silent: options.silent })
+  if (outcome !== 'failed') return true
   useStore.setState((latest) => {
     const current = latest.tasks.find((item) => item.id === id)
     if (!current || current.canvas !== canvas) return latest
     return { tasks: latest.tasks.map((item) => item.id === id ? { ...item, canvas: previousCanvas } : item) }
   })
   const now = Date.now()
-  if (now - lastTaskPersistErrorAt >= 10_000) {
+  if (!options.silent && now - lastTaskPersistErrorAt >= 10_000) {
     lastTaskPersistErrorAt = now
     useStore.getState().showToast('画布位置保存失败，已恢复到上一个位置。请检查磁盘空间或数据库。', 'error')
   }
+  return false
 }
 
 export function getCodexCliPromptKey(settings: AppSettings): string {
@@ -2122,6 +2146,10 @@ export interface SubmitTaskOptions {
   allowFullMask?: boolean
   useCurrentApiProfileWhenReusedMissing?: boolean
   input?: SubmitInput
+  /** 合并技能后的最终提示词；不传时用输入框内容 */
+  promptOverride?: string
+  /** 能力技能上下文；task.prompt 保存已合并文本 */
+  skillContext?: TaskSkillContext
   projectId?: string
   canvasId?: string
   viewport?: ViewportTransform
@@ -2129,6 +2157,8 @@ export interface SubmitTaskOptions {
   anchorTaskId?: string
   /** 图片拖入画布的落点：新任务直接放在该世界坐标 */
   position?: { x: number; y: number }
+  /** GIF/SVG 本地导出格式；API 仍按 PNG/JPEG/WebP 请求 */
+  localExportFormat?: 'gif' | 'svg'
 }
 
 /** 提交新任务，返回已开始的任务 id；批量提交时等全部任务结束后才返回 */
@@ -2140,7 +2170,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     return []
   }
   const input = options.input
-  const prompt = input ? input.prompts[0] ?? '' : state.prompt
+  const prompt = input ? input.prompts[0] ?? '' : options.promptOverride ?? state.prompt
   const inputImages = input?.inputImages ?? state.inputImages
   const maskDraft = input ? null : state.maskDraft
   const { reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, reusedTaskApiModel } = input
@@ -2281,7 +2311,15 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   const canvasTasks = targetSize
     ? useStore.getState().tasks.filter((task) => task.canvasId === targetCanvasId)
     : []
-  const canvasNodes = canvasTasks.length ? getCanvasNodeRects(canvasTasks) : []
+  const canvasImageNodes = targetSize && targetCanvasId
+    ? useWorkspaceStore.getState().canvases.find((canvas) => canvas.id === targetCanvasId)?.imageNodes ?? []
+    : []
+  const canvasNodes = canvasTasks.length || canvasImageNodes.length
+    ? [
+        ...getCanvasNodeRects(canvasTasks),
+        ...canvasImageNodes.map((node) => ({ id: `image:${node.id}`, x: node.x, y: node.y, width: node.w, height: node.h })),
+      ]
+    : []
   const insertBase = targetSize
     ? options.position ?? (canvasNodes.length
         ? getCanvasInsertPosition(canvasNodes, options.anchorTaskId)
@@ -2320,7 +2358,9 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     const task: TaskRecord = {
       id: genId(),
       prompt: taskPrompt,
+      skillContext: options.skillContext,
       params: taskParams,
+      ...(options.localExportFormat ? { localExportFormat: options.localExportFormat } : {}),
       apiProvider: activeProfile.provider,
       apiProfileId: activeProfile.id,
       apiProfileName: activeProfile.name,
@@ -5017,7 +5057,7 @@ export async function retryTask(task: TaskRecord, options: { remoteSettled?: boo
 
 /** 复用配置 */
 export async function reuseConfig(task: TaskRecord) {
-  const { settings, setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile } = useStore.getState()
+  const { settings, setPrompt, setActiveSkillId, setSkillSlotValues, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
   const currentProfile = getActiveApiProfile(settings)
   const taskProfile = normalizedSettings.reuseTaskApiProfileTemporarily ? getTaskApiProfile(normalizedSettings, task) : null
@@ -5054,7 +5094,10 @@ export async function reuseConfig(task: TaskRecord) {
   }
   setInputImages(imgs)
   // 部分参考图可能已被删除，按图片 id 重新对齐提示词中的图片序号，避免评论和提及错位到其他图片
-  setPrompt(remapImageMentionsForOrder(task.prompt, task.inputImageIds.map((id) => ({ id, dataUrl: '' })), useStore.getState().inputImages))
+  const userPrompt = task.skillContext?.userPrompt ?? task.prompt
+  setPrompt(remapImageMentionsForOrder(userPrompt, task.inputImageIds.map((id) => ({ id, dataUrl: '' })), useStore.getState().inputImages))
+  setActiveSkillId(task.skillContext?.id ?? null)
+  setSkillSlotValues(task.skillContext?.slotValues ?? {})
   const maskTargetImageId = task.maskTargetImageId ?? (task.maskImageId ? task.inputImageIds[0] : null)
   if (maskTargetImageId && task.maskImageId && imgs.some((img) => img.id === maskTargetImageId)) {
     const maskDataUrl = await ensureImageCached(task.maskImageId)
@@ -5712,6 +5755,8 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
   }
   const state = useStore.getState()
   const skills = useSkillStore.getState().skills
+  const capabilitySkills = useCapabilitySkillStore.getState().mine
+  const capabilityOverrides = useCapabilitySkillStore.getState().builtinOverrides
   const selectedIds = new Set(taskIds ?? state.tasks.map((task) => task.id))
   const allTasks = await getAllTasks()
   const tasks = allTasks.filter((task) => selectedIds.has(task.id))
@@ -5737,7 +5782,8 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
   }
   // 只导出本次删除涉及的任务及其图片，不把整个图库打进快照；
   // 技能封面图若在库中也随快照带上（不在库中的跳过，不阻断删除），用 Set 去重避免重复打包
-  const skillCoverImageIds = collectSkillCoverImageIds(skills).filter((id) => availableImageIds.has(id))
+  const skillCoverImageIds = [...collectSkillCoverImageIds(skills), ...collectCapabilityCoverImageIds(capabilitySkills), ...collectCapabilityOverrideCoverIds(capabilityOverrides)]
+    .filter((id) => availableImageIds.has(id))
   const imageIds = [...new Set([...referencedImageIds, ...skillCoverImageIds])]
   const exportedAt = Date.now()
   const params = {
@@ -5745,6 +5791,8 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
     exportedAt,
     settings: state.settings,
     skills,
+    capabilitySkills,
+    capabilityOverrides,
     tasks,
     imageTasks: tasks,
     imageSourceUrls: state.imageSourceUrls,
@@ -5796,6 +5844,8 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     }
     const state = useStore.getState()
     const skills = useSkillStore.getState().skills
+    const capabilitySkills = useCapabilitySkillStore.getState().mine
+    const capabilityOverrides = useCapabilitySkillStore.getState().builtinOverrides
     if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导出。')
     const tasks = options.exportTasks ? await getAllTasks() : []
     const imageIds = options.exportTasks ? await getAllImageIds() : []
@@ -5822,6 +5872,8 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       exportedAt,
       settings,
       skills,
+      capabilitySkills,
+      capabilityOverrides,
       tasks,
       imageTasks: tasks,
       imageSourceUrls: state.imageSourceUrls,
@@ -6150,6 +6202,21 @@ export async function importData(input: File | File[], options: ImportOptions = 
       useSkillStore.getState().replaceSkills(
         mergeImportedSkills(useSkillStore.getState().skills, importedSkills),
       )
+    }
+
+    // 能力技能：旧 v4 备份没有该字段时不动现有数据；内置技能不写入「我的」
+    const importedCapabilitySkills = selected.flatMap((part) => part.manifest.capabilitySkills ?? [])
+    if (selected.some((part) => Array.isArray(part.manifest.capabilitySkills))) {
+      useCapabilitySkillStore.getState().replaceMine(
+        mergeImportedCapabilitySkills(useCapabilitySkillStore.getState().mine, importedCapabilitySkills),
+      )
+    }
+    const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+    if (Object.keys(importedOverrides).length) {
+      useCapabilitySkillStore.getState().replaceOverrides({
+        ...useCapabilitySkillStore.getState().builtinOverrides,
+        ...importedOverrides,
+      })
     }
 
     let msg = '导入完成'

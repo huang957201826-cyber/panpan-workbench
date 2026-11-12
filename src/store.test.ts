@@ -15,6 +15,7 @@ import { FetchConnectError } from './lib/platform'
 import { useWorkspaceStore } from './lib/workspaceStore'
 import { createDefaultWorkspace, DEFAULT_CANVAS_ID } from './lib/workspaceState'
 import { deleteCanvas, deleteProject, saveActiveCanvasSnapshot, switchCanvas } from './lib/workspaceActions'
+import { assertCanvasUndoActive, clearCanvasUndo, createCanvasUndoEntry, getCanvasUndoDepth, isCanvasUndoing, pushCanvasUndo, runCanvasUndo } from './lib/canvasUndo'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const images = new Map<string, StoredImage>()
@@ -669,6 +670,44 @@ describe('workspace tasks', () => {
 
     expect(result).toEqual({ moved: 1, failed: ['source-b'] })
     expect(useStore.getState().tasks.find((item) => item.id === 'source-b')).toMatchObject({ projectId: 'p1', canvasId: 'c1' })
+    vi.mocked(putDbTask).mockImplementation(original)
+  })
+
+  it('returns false and rolls back the canvas position when its write fails', async () => {
+    const item = task({ id: 'canvas-write-task', canvas: { x: 10, y: 20 } })
+    useStore.setState({ tasks: [item], toast: null })
+    const original = vi.mocked(putDbTask).getMockImplementation()!
+    vi.mocked(putDbTask).mockRejectedValueOnce(new Error('write failed'))
+
+    const saved = await updateTaskCanvas(item.id, { x: 40, y: 60 }, { silent: true })
+
+    expect(saved).toBe(false)
+    expect(useStore.getState().tasks.find((entry) => entry.id === item.id)?.canvas).toEqual({ x: 10, y: 20 })
+    expect(useStore.getState().toast).toBeNull()
+    vi.mocked(putDbTask).mockImplementation(original)
+    expect(await updateTaskCanvas(item.id, { x: 40, y: 60 })).toBe(true)
+  })
+
+  it('keeps a position undo entry when its task write fails', async () => {
+    const item = task({ id: 'undo-write-task', canvas: { x: 10, y: 20 } })
+    useStore.setState({ tasks: [item], toast: null })
+    const original = vi.mocked(putDbTask).getMockImplementation()!
+    vi.mocked(putDbTask).mockRejectedValueOnce(new Error('write failed'))
+    const entry = createCanvasUndoEntry('position', '移动', async ({ isActive }) => {
+      const saved = await updateTaskCanvas(item.id, { x: 40, y: 60 }, { silent: true })
+      if (!saved) throw new Error('画布位置保存失败')
+      assertCanvasUndoActive(isActive)
+    })
+    pushCanvasUndo('undo-write-canvas', entry)
+
+    const result = await runCanvasUndo('undo-write-canvas')
+
+    expect(result.error).toBe('画布位置保存失败')
+    expect(getCanvasUndoDepth('undo-write-canvas')).toBe(1)
+    expect(isCanvasUndoing('undo-write-canvas')).toBe(false)
+    expect(useStore.getState().toast).toBeNull()
+    expect(useStore.getState().tasks.find((entry) => entry.id === item.id)?.canvas).toEqual({ x: 10, y: 20 })
+    clearCanvasUndo('undo-write-canvas')
     vi.mocked(putDbTask).mockImplementation(original)
   })
 
@@ -6475,7 +6514,7 @@ describe('reused task API profile', () => {
     expect(getTaskApiProfile(useStore.getState().settings, sourceTask)).toMatchObject({
       id: profile.id,
       provider: 'provider-old',
-      model: 'gpt-image-2.5-sunburst',
+      model: 'gpt-image-2.6-sunburst',
     })
   })
 

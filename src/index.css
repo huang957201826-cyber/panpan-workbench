@@ -14,7 +14,7 @@
   --sidebar: 240 5% 96%;
   --sidebar-foreground: 240 10% 10%;
   /* 字体由 src/lib/fonts.ts 按设置覆盖并按需加载字体文件，这里是脚本运行前的初始值 */
-  --font-ui-sans: 'Noto Sans SC Subset', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-ui-sans: 'Geist', 'Noto Sans SC Subset', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'Maple Mono NF CN Subset', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-right: env(safe-area-inset-right, 0px);
@@ -31,10 +31,20 @@
 /* ===== 设计系统令牌（见 docs/execution/DESIGN-SYSTEM-SPEC.md）：新组件只用这里的值 ===== */
 :root {
   /* 表面与描边 */
-  --bg: #fbfcfd;
+  --bg: #f3f4f8;
   --surface: #ffffff;
   --surface-2: #f6f7f9;
   --surface-3: #eef0f4;
+  /* AI Studio 风格：暖灰底 + 白卡微浮雕 + 黑色激活锚点 */
+  --accent-strong: #000000;
+  --accent-strong-foreground: #ffffff;
+  --tag-bg: #f5fae1;
+  --tag-text: #4d6600;
+  --radius-tile: 16px;
+  --radius-float: 24px;
+  --shadow-soft-card: 0 10px 30px -4px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.02);
+  --shadow-soft-float: 0 16px 40px -6px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04);
+  --font-display: 'Space Grotesk', 'Geist', 'Noto Sans SC', sans-serif;
   --border: rgba(0, 0, 0, 0.07);
   --border-strong: rgba(0, 0, 0, 0.16);
   /* 文字三级 */
@@ -85,6 +95,12 @@
   --surface: #141620;
   --surface-2: #1a1d28;
   --surface-3: #222634;
+  --accent-strong: #ffffff;
+  --accent-strong-foreground: #000000;
+  --tag-bg: rgba(245, 250, 225, 0.1);
+  --tag-text: #c7e36b;
+  --shadow-soft-card: 0 12px 36px -4px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-soft-float: 0 20px 48px -6px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.18);
   --text-1: #f1f3f7;
@@ -106,6 +122,18 @@
 ::selection {
   background: var(--selection);
   color: inherit;
+}
+
+.soft-card-shadow {
+  box-shadow: var(--shadow-soft-card);
+}
+
+.soft-float-shadow {
+  box-shadow: var(--shadow-soft-float);
+}
+
+.font-display {
+  font-family: var(--font-display);
 }
 
 :where(:focus-visible) {

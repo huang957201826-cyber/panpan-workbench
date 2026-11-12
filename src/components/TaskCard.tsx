@@ -8,7 +8,9 @@ import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_FAL_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getTaskPromptText } from '../lib/promptImageMentions'
-import { CodeIcon, TransparentBgIcon } from './icons'
+import { classifyApiError, formatApiErrorDiagnostic } from '../lib/apiErrorClassification'
+import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { CodeIcon, CopyIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
@@ -82,6 +84,7 @@ export default function TaskCard({
   const settings = useStore((s) => s.settings)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const privacyMode = useStore((s) => Boolean(s.privacyMode))
+  const showToast = useStore((s) => s.showToast)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
   const swipeResetTimerRef = useRef<number | null>(null)
@@ -332,6 +335,16 @@ export default function TaskCard({
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
+  const errorInfo = task.status === 'error' ? classifyApiError(task.error) : null
+
+  const handleCopyDiagnostic = async () => {
+    try {
+      await copyTextToClipboard(formatApiErrorDiagnostic(task.error, task.rawResponsePayload))
+      showToast('诊断信息已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制诊断失败', err), 'error')
+    }
+  }
 
   return (
     <div className="relative rounded-xl">
@@ -484,8 +497,28 @@ export default function TaskCard({
                 />
               </svg>
               <span className={`text-body-sm text-center leading-tight ${isInterrupted ? 'text-yellow-500' : 'text-red-400'}`}>
-                {isInterrupted ? '已停止' : '失败'}
+                {errorInfo?.title ?? (isInterrupted ? '已停止' : '失败')}
               </span>
+              {errorInfo?.hint && (
+                <span className="line-clamp-2 px-1 text-center text-caption text-gray-500 dark:text-gray-400">{errorInfo.hint}</span>
+              )}
+              {task.error && !isInterrupted && (
+                <div className="flex max-w-full items-center gap-1 px-1">
+                  <span className="line-clamp-2 min-w-0 text-center font-mono text-[10px] text-gray-400" title={task.error}>{task.error}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void handleCopyDiagnostic()
+                    }}
+                    className="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+                    aria-label="复制诊断"
+                    title="复制诊断"
+                  >
+                    <CopyIcon className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
           {task.status === 'done' && thumbSrc && (

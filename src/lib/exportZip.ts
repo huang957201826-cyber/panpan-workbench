@@ -1,9 +1,10 @@
 import { strFromU8, strToU8, type AsyncUnzipOptions, unzip, zip } from 'fflate'
 
-import type { AgentConversation, AppSettings, ExportData, FavoriteCollection, PromptSkill, StoredImage, StoredImageThumbnail, TaskRecord, WorkspaceState } from '../types'
+import type { AgentConversation, AppSettings, ExportData, FavoriteCollection, PromptSkill, Skill, StoredImage, StoredImageThumbnail, TaskRecord, WorkspaceState } from '../types'
 import { bytesToDataUrl, dataUrlToBytes } from './dataUrl'
 import { getNumberedFileNameBase, sanitizeFileNamePart } from './exportFileName'
 import { normalizePromptSkills } from './promptSkills'
+import { normalizeCapabilitySkills, type SkillOverride } from './capabilitySkillStore'
 
 type ZipFiles = Record<string, Uint8Array | [Uint8Array, { mtime: Date; level?: 0 }]>
 
@@ -47,6 +48,10 @@ export interface BuildExportZipParams {
   backupPart?: ExportData['backupPart']
   /** 技能库数据；调用方从 useSkillStore.getState().skills 取，导出边界统一归一化 / 清洗 */
   skills?: PromptSkill[]
+  /** 能力技能；调用方从 useCapabilitySkillStore.getState().mine 取 */
+  capabilitySkills?: Skill[]
+  /** 内置技能覆盖层；调用方从 useCapabilitySkillStore.getState().builtinOverrides 取 */
+  capabilityOverrides?: Record<string, SkillOverride>
 }
 
 export interface ExportZipContents {
@@ -118,6 +123,39 @@ export function mergeImportedSkills(existing: PromptSkill[], incoming: PromptSki
   ])
 }
 
+/** 能力技能导出边界：白名单归一并清掉可能的密钥字段 */
+export function serializeCapabilitySkillsForExport(skills: Skill[]): Skill[] {
+  return scrubApiKeys(normalizeCapabilitySkills(skills))
+}
+
+export function collectCapabilityCoverImageIds(skills: Skill[] | undefined): string[] {
+  if (!skills?.length) return []
+  return [...new Set(skills.flatMap((skill) => [
+    skill.coverImageId,
+    ...(skill.referenceImageIds ?? []),
+  ]).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))]
+}
+
+export function collectCapabilityOverrideCoverIds(overrides: Record<string, SkillOverride> | undefined): string[] {
+  if (!overrides) return []
+  return [...new Set(Object.values(overrides).flatMap((override) => [
+    override.coverImageId,
+    ...(override.referenceImageIds ?? []),
+  ]).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))]
+}
+
+/** 同 ID 覆盖、新 ID 追加；旧备份没有 capabilitySkills 时不动现有数据 */
+export function mergeImportedCapabilitySkills(existing: Skill[], incoming: Skill[] | undefined): Skill[] {
+  if (!incoming?.length) return existing
+  const normalizedIncoming = normalizeCapabilitySkills(incoming)
+  if (!normalizedIncoming.length) return existing
+  const incomingIds = new Set(normalizedIncoming.map((skill) => skill.id))
+  return normalizeCapabilitySkills([
+    ...normalizedIncoming,
+    ...existing.filter((skill) => !incomingIds.has(skill.id)),
+  ])
+}
+
 export async function buildExportZip(params: BuildExportZipParams) {
   const exportedAtDate = new Date(params.exportedAt)
   const imageTasks = params.options.exportTasks ? params.imageTasks ?? params.tasks : []
@@ -174,11 +212,22 @@ export async function buildExportZip(params: BuildExportZipParams) {
   if (params.skills !== undefined && params.includeManifestData !== false) {
     manifest.skills = serializeSkillsForExport(params.skills)
   }
+  if (params.capabilitySkills !== undefined && params.includeManifestData !== false) {
+    manifest.capabilitySkills = serializeCapabilitySkillsForExport(params.capabilitySkills)
+  }
+  if (params.capabilityOverrides !== undefined && params.includeManifestData !== false) {
+    manifest.capabilityOverrides = scrubApiKeys(params.capabilityOverrides)
+  }
   if (params.options.exportConfig && params.includeManifestData !== false) {
     manifest.settings = getExportSettings(params.settings)
   }
   if (params.options.exportTasks) {
-    if (params.includeManifestData !== false || params.tasks.length) manifest.tasks = params.tasks
+    const exportedTasks = params.tasks.map((task) => {
+      const copy = { ...task }
+      delete copy.localExportFormat
+      return copy
+    })
+    if (params.includeManifestData !== false || params.tasks.length) manifest.tasks = exportedTasks
     if (params.includeManifestData !== false || params.agentConversations.length) manifest.agentConversations = params.agentConversations
     if (params.includeManifestData !== false) {
       manifest.favoriteCollections = params.favoriteCollections
@@ -323,6 +372,8 @@ function getBaseManifestEstimatedBytes(params: Omit<BuildExportZipParams, 'image
     version: 4,
     exportedAt: new Date(params.exportedAt).toISOString(),
     ...(params.skills !== undefined ? { skills: serializeSkillsForExport(params.skills) } : {}),
+    ...(params.capabilitySkills !== undefined ? { capabilitySkills: serializeCapabilitySkillsForExport(params.capabilitySkills) } : {}),
+    ...(params.capabilityOverrides !== undefined ? { capabilityOverrides: params.capabilityOverrides } : {}),
     ...(params.options.exportConfig ? { settings: getExportSettings(params.settings) } : {}),
     ...(params.options.exportTasks ? {
       tasks: [],

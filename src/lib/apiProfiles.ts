@@ -41,10 +41,12 @@ export { DEFAULT_IMAGES_MODEL } from './imageModels'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-6.1-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
+export const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-image-preview'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_API_TIMEOUT = 600
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'sb2api-async', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'sb2api-async', 'fal', 'google'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -150,7 +152,7 @@ function normalizeZipDownloadRoutes(value: unknown) {
 function normalizeProviderOrder(value: unknown, customProviders: CustomProviderDefinition[]): string[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const providerIds = ['openai', 'sb2api-async', 'fal', ...customProviders.map((provider) => provider.id)]
+  const providerIds = ['openai', 'sb2api-async', 'fal', 'google', ...customProviders.map((provider) => provider.id)]
   const knownIds = new Set(providerIds)
   const ordered = value
     .map(String)
@@ -415,6 +417,26 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
   }
 }
 
+export function createDefaultGoogleProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return {
+    id: `google-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: 'Google Gemini',
+    provider: 'google',
+    baseUrl: DEFAULT_GEMINI_BASE_URL,
+    apiKey: '',
+    model: DEFAULT_GEMINI_MODEL,
+    imageGenerationModel: DEFAULT_GEMINI_MODEL,
+    timeout: DEFAULT_API_TIMEOUT,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    transparentBackgroundMethod: 'api',
+    ...overrides,
+  }
+}
+
 export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvider, customProvider?: CustomProviderDefinition): ApiProfile {
   const providerDrafts = {
     ...profile.providerDrafts,
@@ -441,6 +463,25 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       baseUrl: savedDraft?.baseUrl ?? DEFAULT_FAL_BASE_URL,
       model: savedDraft?.model ?? DEFAULT_FAL_MODEL,
       imageGenerationModel: savedDraft?.imageGenerationModel ?? profile.imageGenerationModel,
+      apiMode: 'images',
+      reasoningEffort: savedDraft?.reasoningEffort,
+      codexCli: false,
+      apiProxy: false,
+      responseFormatB64Json: savedDraft?.responseFormatB64Json,
+      streamImages: false,
+      streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      transparentBackgroundMethod: savedDraft?.transparentBackgroundMethod ?? 'api',
+      providerDrafts,
+    }
+  }
+
+  if (provider === 'google') {
+    return {
+      ...profile,
+      provider,
+      baseUrl: savedDraft?.baseUrl ?? DEFAULT_GEMINI_BASE_URL,
+      model: savedDraft?.model ?? DEFAULT_GEMINI_MODEL,
+      imageGenerationModel: savedDraft?.imageGenerationModel ?? DEFAULT_GEMINI_MODEL,
       apiMode: 'images',
       reasoningEffort: savedDraft?.reasoningEffort,
       codexCli: false,
@@ -511,6 +552,8 @@ function normalizeProviderDraft(
   const transparentBackgroundMethod = nativeTransparentBackgroundUnavailable ? 'local' : 'api'
   const fallback = provider === 'fal'
     ? createDefaultFalProfile()
+    : provider === 'google'
+    ? createDefaultGoogleProfile({ transparentBackgroundMethod })
     : createDefaultOpenAIProfile({ transparentBackgroundMethod })
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : undefined
   const model = (typeof input.model === 'string' && normalizeModelList(input.model)) || undefined
@@ -566,6 +609,8 @@ export function normalizeApiProfile(
     : fallback
   const defaults = provider === 'fal'
     ? createDefaultFalProfile(providerFallback)
+    : provider === 'google'
+    ? createDefaultGoogleProfile(providerFallback)
     : createDefaultOpenAIProfile({ ...providerFallback, apiMode })
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
   const streamImages = provider === 'openai'
@@ -794,6 +839,7 @@ export function getCustomProviderDefinition(settings: Partial<AppSettings> | unk
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
   if (provider === 'fal') return 'fal.ai'
+  if (provider === 'google') return 'Google Gemini'
   if (provider === 'openai') return 'OpenAI'
   if (provider === 'sb2api-async') return SUB2API_PROVIDER.name
   return getCustomProviderDefinition(settings, provider)?.name ?? provider

@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { MAX_INPUT_IMAGES } from '../types'
+import { MAX_INPUT_IMAGES, type TaskRecord } from '../types'
 import { useStore, addImageFromUrl } from '../store'
 import { canCopyImageToClipboard, copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
+import { downloadTaskImages } from '../lib/taskExport'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { ensureImageCached } from '../lib/imageCache'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
@@ -107,21 +108,20 @@ export default function ImageContextMenu() {
     setMenuInfo(null)
 
     try {
+      let matchedTask: TaskRecord | undefined
       let fileNameBase = ''
       if (imageId) {
         const tasks = useStore.getState().tasks
-        const matchedTask = tasks.find(t => t.outputImages?.includes(imageId))
-        if (matchedTask) {
-          fileNameBase = `task-${matchedTask.id}`
-        } else {
-          fileNameBase = `image-${imageId}`
-        }
+        matchedTask = tasks.find(t => t.outputImages?.includes(imageId))
+        fileNameBase = matchedTask ? `task-${matchedTask.id}` : `image-${imageId}`
       } else {
         const timeStr = formatExportFileTime(new Date())
         fileNameBase = `image-${timeStr}`
       }
 
-      const result = await downloadImageIds([imageId || src], fileNameBase)
+      const result = matchedTask && imageId
+        ? await downloadTaskImages(matchedTask, [imageId])
+        : await downloadImageIds([imageId || src], fileNameBase)
       if (result.canceled) return
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
@@ -141,13 +141,12 @@ export default function ImageContextMenu() {
     if (outputImageIds.length <= 1) return
 
     try {
+      let matchedTask: TaskRecord | undefined
       let fileNameBase = ''
       if (outputImageIds[0]) {
         const tasks = useStore.getState().tasks
-        const matchedTask = tasks.find(t => t.outputImages?.includes(outputImageIds[0]))
-        if (matchedTask) {
-          fileNameBase = `task-${matchedTask.id}`
-        }
+        matchedTask = tasks.find(t => t.outputImages?.includes(outputImageIds[0]))
+        if (matchedTask) fileNameBase = `task-${matchedTask.id}`
       }
       if (!fileNameBase) {
         const timeStr = formatExportFileTime(new Date())
@@ -155,14 +154,20 @@ export default function ImageContextMenu() {
       }
 
       const settings = useStore.getState().settings
-      const result = settings.zipDownloadRoutes.includes('image-context-menu-all')
-        ? await downloadImageEntriesAsZip(getImageZipEntries(outputImageIds, fileNameBase), fileNameBase)
-        : await downloadImageIds(outputImageIds, fileNameBase)
+      const canUseTask = matchedTask && outputImageIds.every((id) => matchedTask!.outputImages.includes(id))
+      const result = canUseTask
+        ? await downloadTaskImages(matchedTask!, outputImageIds, {
+            zip: settings.zipDownloadRoutes.includes('image-context-menu-all'),
+            zipFileNameBase: fileNameBase,
+          })
+        : settings.zipDownloadRoutes.includes('image-context-menu-all')
+          ? await downloadImageEntriesAsZip(getImageZipEntries(outputImageIds, fileNameBase), fileNameBase)
+          : await downloadImageIds(outputImageIds, fileNameBase)
       if (result.canceled) return
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
       } else if (result.failCount > 0) {
-        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}${result.error ? `：${result.error}` : ''}`, 'error')
       } else {
         showToast(withSaveLocation(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', result.location), 'success')
       }

@@ -50,6 +50,7 @@ export default {
       fontFamily: {
         sans: ['var(--font-ui-sans)'],
         mono: ['var(--font-mono)'],
+        display: ['var(--font-display)'],
       },
       // 6 档字号，值全部来自 index.css 的 --type-* 变量；禁止再出现 8~13px 任意值
       fontSize: {
@@ -66,12 +67,16 @@ export default {
         control: 'var(--radius-control)',
         card: 'var(--radius-card)',
         panel: 'var(--radius-modal)',
+        tile: 'var(--radius-tile)',
+        float: 'var(--radius-float)',
       },
       // 阴影三层
       boxShadow: {
         e1: 'var(--e1)',
         e2: 'var(--e2)',
         e3: 'var(--e3)',
+        'soft-card': 'var(--shadow-soft-card)',
+        'soft-float': 'var(--shadow-soft-float)',
       },
       transitionDuration: {
         fast: 'var(--motion-fast)',

@@ -1,18 +1,22 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, showCodexCliPrompt, getCodexCliPromptKey } from '../store'
+import { deleteTask, editTaskOutputs, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
+import { exportImagesAsGif, exportImageAsSvg } from '../lib/imageExport'
 import { formatImageRatio } from '../lib/size'
 import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageEntriesAsZip, downloadImageIds, getDownloadErrorMessage, getImageZipEntries, withSaveLocation } from '../lib/downloadImages'
+import { downloadTaskImages } from '../lib/taskExport'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getImageComments, getTaskPromptText, replaceImageMentionsForApi } from '../lib/promptImageMentions'
 import { getApiProviderLabel } from '../lib/apiProfiles'
+import { classifyApiError, formatApiErrorDiagnostic } from '../lib/apiErrorClassification'
 import { isTauri } from '../lib/platform'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
@@ -268,6 +272,7 @@ export default function DetailModal() {
   const showSourceInfo = Boolean(task.apiProvider || task.apiProfileName || task.apiModel)
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
+  const errorInfo = task.status === 'error' ? classifyApiError(task.error) : null
   const rawImageUrls = task.rawImageUrls ?? []
   const streamPreviewLen = streamPreviewItems.length
   const currentStreamPreviewSrc = activeStreamPreviewSrc
@@ -297,12 +302,12 @@ export default function DetailModal() {
   }
 
   const handleReuse = () => {
-    reuseConfig(task)
+    void reuseTaskConfig(task)
     setDetailTaskId(null)
   }
 
   const handleEdit = () => {
-    editOutputs(task)
+    void editTaskOutputs(task)
     setDetailTaskId(null)
   }
 
@@ -311,7 +316,7 @@ export default function DetailModal() {
     setConfirmDialog({
       title: '删除任务',
       message: '确定要删除这个任务吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
-      action: () => removeTask(task),
+      action: () => { void deleteTask(task) },
     })
   }
 
@@ -326,6 +331,15 @@ export default function DetailModal() {
       showToast('完整报错已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制报错失败', err), 'error')
+    }
+  }
+
+  const handleCopyDiagnostic = async () => {
+    try {
+      await copyTextToClipboard(formatApiErrorDiagnostic(task.error, task.rawResponsePayload))
+      showToast('诊断信息已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制诊断失败', err), 'error')
     }
   }
 
@@ -364,7 +378,7 @@ export default function DetailModal() {
     if (!currentOutputImageId || !task) return
 
     try {
-      const result = await downloadImageIds([currentOutputImageId], `task-${task.id}`)
+      const result = await downloadTaskImages(task, [currentOutputImageId])
       if (result.canceled) return
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
@@ -377,12 +391,37 @@ export default function DetailModal() {
     }
   }
 
+  const handleExportCurrentGif = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!task) return
+    const ids = task.outputImages.length ? task.outputImages : currentOutputImageId ? [currentOutputImageId] : []
+    const urls = (await Promise.all(ids.map((id) => ensureImageCached(id)))).filter((url): url is string => Boolean(url))
+    if (!urls.length) {
+      showToast('没有可导出的图片', 'error')
+      return
+    }
+    const location = await exportImagesAsGif(urls, `task-${task.id}`)
+    if (location) showToast(withSaveLocation(urls.length > 1 ? 'GIF 动画导出成功' : 'GIF 导出成功', location), 'success')
+  }
+
+  const handleExportCurrentSvg = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!task || !currentOutputImageId) return
+    const dataUrl = await ensureImageCached(currentOutputImageId)
+    if (!dataUrl) {
+      showToast('没有可导出的图片', 'error')
+      return
+    }
+    const location = await exportImageAsSvg(dataUrl, `task-${task.id}`)
+    if (location) showToast(withSaveLocation('SVG 导出成功', location), 'success')
+  }
+
   const handleDownloadCurrentOriginalOutput = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!currentOriginalOutputImageId || !task) return
 
     try {
-      const result = await downloadImageIds([currentOriginalOutputImageId], `task-${task.id}-orig`)
+      const result = await downloadTaskImages(task, [currentOriginalOutputImageId], { fileNameBase: `task-${task.id}-orig` })
       if (result.canceled) return
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
@@ -401,14 +440,15 @@ export default function DetailModal() {
 
     try {
       const fileNameBase = `task-${task.id}`
-      const result = settings.zipDownloadRoutes.includes('task-detail-all')
-        ? await downloadImageEntriesAsZip(getImageZipEntries(task.outputImages, fileNameBase), fileNameBase)
-        : await downloadImageIds(task.outputImages, fileNameBase)
+      const result = await downloadTaskImages(task, task.outputImages, {
+        zip: settings.zipDownloadRoutes.includes('task-detail-all'),
+        zipFileNameBase: fileNameBase,
+      })
       if (result.canceled) return
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
       } else if (result.failCount > 0) {
-        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}${result.error ? `：${result.error}` : ''}`, 'error')
       } else {
         showToast(withSaveLocation(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', result.location), 'success')
       }
@@ -430,7 +470,7 @@ export default function DetailModal() {
       if (result.successCount === 0) {
         showToast(getDownloadErrorMessage(result.error), 'error')
       } else if (result.failCount > 0) {
-        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}${result.error ? `：${result.error}` : ''}`, 'error')
       } else {
         showToast(withSaveLocation(`下载成功：${result.successCount} 张中间步骤图`, result.location), 'success')
       }
@@ -441,7 +481,7 @@ export default function DetailModal() {
   }
 
   const handleRetry = () => {
-    retryTask(task)
+    retryTaskAction(task)
     setDetailTaskId(null)
   }
 
@@ -454,7 +494,7 @@ export default function DetailModal() {
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
       <div
         ref={modalRef}
-        className="relative bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col md:flex-row z-10 ring-1 ring-black/5 dark:ring-white/10 animate-modal-in"
+        className="relative z-10 flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-black/[0.06] bg-white shadow-2xl animate-modal-in dark:border-white/[0.08] dark:bg-[#141620] md:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex h-14 items-center justify-end px-4 md:hidden">
@@ -510,6 +550,22 @@ export default function DetailModal() {
                   </ViewportTooltip>
                 </div>
               )}
+              <button
+                type="button"
+                onClick={(e) => { void handleExportCurrentGif(e) }}
+                className="rounded bg-black/50 px-1.5 py-0.5 text-caption font-bold leading-none text-white backdrop-blur-sm transition hover:bg-black/70"
+                title="导出 GIF（多图按顺序动画，最长边 2048px）"
+              >
+                GIF
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { void handleExportCurrentSvg(e) }}
+                className="rounded bg-black/50 px-1.5 py-0.5 text-caption font-bold leading-none text-white backdrop-blur-sm transition hover:bg-black/70"
+                title="导出 SVG"
+              >
+                SVG
+              </button>
             </div>
           )}
           {task.status === 'done' && outputLen > 0 && currentOutputPreviewSrc && (
@@ -725,8 +781,14 @@ export default function DetailModal() {
               <svg className="w-10 h-10 text-red-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
+              {errorInfo && (
+                <div className="mb-2">
+                  <p className={`text-body font-medium ${errorInfo.kind === 'stopped' ? 'text-yellow-500' : 'text-red-500'}`}>{errorInfo.title}</p>
+                  <p className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-400">{errorInfo.hint}</p>
+                </div>
+              )}
               <p
-                className="overflow-hidden whitespace-pre-line text-body leading-6 text-red-500 break-words"
+                className="overflow-hidden whitespace-pre-line text-body-sm leading-6 text-gray-500 dark:text-gray-400 break-words"
                 style={{
                   display: '-webkit-box',
                   WebkitBoxOrient: 'vertical',
@@ -735,7 +797,16 @@ export default function DetailModal() {
               >
                 {task.error || '生成失败'}
               </p>
-              <div className="mt-3 flex items-center justify-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCopyDiagnostic()}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-gray-200/80 bg-white/80 px-3 py-1.5 text-body-sm text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.08]"
+                  aria-label="复制诊断"
+                >
+                  <CopyIcon className="h-4 w-4" />
+                  复制诊断
+                </button>
                 <div className="relative group">
                   <button
                     type="button"
@@ -996,8 +1067,17 @@ export default function DetailModal() {
                 <span className="text-gray-400 dark:text-gray-500">格式</span>
                 <br />
                 <div className="mt-0.5 overflow-x-auto hide-scrollbar whitespace-nowrap mask-edge-r pr-2">
-                  <DetailParamValue task={task} paramKey="output_format" className="font-medium" actualParams={currentActualParams} />
+                  {task.localExportFormat ? (
+                    <span data-export-format className="font-medium" title={`API 仍返回 PNG，下载时本地转换为 ${task.localExportFormat.toUpperCase()}${task.localExportFormat === 'gif' ? '；最长边上限 2048px' : ''}`}>
+                      {task.localExportFormat.toUpperCase()}（本地转换）
+                    </span>
+                  ) : (
+                    <DetailParamValue task={task} paramKey="output_format" className="font-medium" actualParams={currentActualParams} />
+                  )}
                 </div>
+                {task.localExportFormat === 'gif' && (
+                  <p className="mt-0.5 text-caption text-slate-400">最长边上限 2048px</p>
+                )}
               </div>
               {supportsTransparentOutput && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2 min-w-0 overflow-hidden">

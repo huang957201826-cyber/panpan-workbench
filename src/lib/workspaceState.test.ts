@@ -141,6 +141,34 @@ describe('workspaceState', () => {
     expect(workspace.canvases[0].maskDraft?.targetImageId).toBe('a')
   })
 
+  it('keeps capability skill chip in the canvas snapshot and strips it when composer persistence is off', () => {
+    const workspace = normalizeWorkspace({
+      projects: [{ id: 'p1', name: 'P', createdAt: 1, updatedAt: 1 }],
+      canvases: [{
+        id: 'c1',
+        projectId: 'p1',
+        name: 'C',
+        order: 0,
+        activeSkillId: 'skill-1',
+        skillSlotValues: { style: '极简', refs: ['img-1'], bad: { nested: true } },
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+      activeProjectId: 'p1',
+      activeCanvasId: 'c1',
+    }, 100)
+
+    const canvas = workspace.canvases[0]
+    expect(canvas.activeSkillId).toBe('skill-1')
+    expect(canvas.skillSlotValues).toEqual({ style: '极简', refs: ['img-1'] })
+    expect(hasCanvasSnapshotChanged(canvas, { ...canvas, activeSkillId: 'skill-2' })).toBe(true)
+    expect(hasCanvasSnapshotChanged(canvas, { ...canvas, skillSlotValues: { style: '复古' } })).toBe(true)
+
+    const persisted = getPersistedWorkspace(workspace, false)
+    expect(persisted.canvases[0].activeSkillId).toBeUndefined()
+    expect(persisted.canvases[0].skillSlotValues).toBeUndefined()
+  })
+
   it('migrates legacy tasks into the default project and canvas', () => {
     const workspace = createDefaultWorkspace(100)
     const { tasks, changed } = migrateTasksToWorkspace([

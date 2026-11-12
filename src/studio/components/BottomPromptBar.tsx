@@ -9,10 +9,12 @@ import {
   Sliders,
   Layers,
   Crosshair,
-  Link as LinkIcon,
+  PanelRight,
   BookmarkPlus,
+  Sparkles,
 } from 'lucide-react';
 import type { GenerationParams, ReferenceImage } from '../types.ts';
+import type { Skill, SkillSlotValue } from '../../types';
 import { getAtImageQuery, imageMentionMatches } from '../../lib/promptImageMentions';
 import { MAX_PROMPT_LENGTH, clampPrompt } from '../../lib/promptLimits';
 import { submitShortcutHint } from '../../lib/platform';
@@ -20,7 +22,11 @@ import { useStore } from '../../store';
 import { Menu as PopMenu } from '../../ui';
 import { PromptMentionOverlay } from './PromptMentionOverlay';
 import SizePickerModal from '../../components/SizePickerModal';
-import AddImageUrlsModal from '../../components/input/addImageUrlsModal';
+import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills';
+import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore';
+import { ensureImageCached } from '../../lib/imageCache';
+import { SkillPickerModal } from './SkillPickerModal';
+import { STUDIO_FORMATS } from '../constants.ts';
 
 interface BottomPromptBarProps {
   prompt: string;
@@ -47,6 +53,8 @@ interface BottomPromptBarProps {
   onSaveAsSkill?: () => void;
   /** 打开设置里的模型配置（模型列表由 API profile 的逗号分隔字段决定） */
   onManageModels?: () => void;
+  viewMode?: 'canvas' | 'grid';
+  onViewModeChange?: (mode: 'canvas' | 'grid') => void;
 }
 
 export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
@@ -70,6 +78,8 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   canvasPickActive = false,
   onSaveAsSkill,
   onManageModels,
+  viewMode = 'canvas',
+  onViewModeChange,
   modelOptions = [{ id: 'gpt-image-2.5', label: 'gpt-image-2.5' }],
   aspectRatios = [
     { label: '1:1', res: '1024x1024' },
@@ -108,14 +118,46 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [showSizePicker, setShowSizePicker] = useState(false);
-  const [showAddImageUrls, setShowAddImageUrls] = useState(false);
+  const [showSkillPicker, setShowSkillPicker] = useState(false);
+  const [builtinSkills, setBuiltinSkills] = useState<Skill[]>([]);
+  const activeSkillId = useStore((s) => s.activeSkillId);
+  const skillSlotValues = useStore((s) => s.skillSlotValues);
+  const setActiveSkillId = useStore((s) => s.setActiveSkillId);
+  const setSkillSlotValues = useStore((s) => s.setSkillSlotValues);
+  const clearSkillChip = useStore((s) => s.clearSkillChip);
+  const mineSkills = useCapabilitySkillStore((s) => s.mine);
+  const activeSkill = [...mineSkills, ...builtinSkills].find((skill) => skill.id === activeSkillId) ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadBuiltinSkills()
+      .then((skills) => { if (!cancelled) setBuiltinSkills(skills); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const applySkill = async (skill: Skill, values: Record<string, SkillSlotValue>) => {
+    for (const imageId of skillSlotImageIds(skill, values)) {
+      if (useStore.getState().inputImages.some((image) => image.id === imageId)) continue;
+      const dataUrl = await ensureImageCached(imageId);
+      if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl });
+    }
+    setActiveSkillId(skill.id);
+    setSkillSlotValues(values);
+    setShowSkillPicker(false);
+  };
+
+  const applySkillAndGenerate = async (skill: Skill, values: Record<string, SkillSlotValue>) => {
+    await applySkill(skill, values);
+    onGenerate(prompt, params);
+  };
 
   const atMenuRef = useRef<HTMLDivElement>(null);
   const submitHint = submitShortcutHint;
   const modelMenuRef = useRef<HTMLButtonElement>(null);
   const sizeMenuRef = useRef<HTMLButtonElement>(null);
-  const qualityMenuRef = useRef<HTMLButtonElement>(null);
   const countMenuRef = useRef<HTMLButtonElement>(null);
+  const qualityMenuRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,7 +192,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
   const missingReference = referenceImages.some((ref) => ref.missing);
   const handleSend = () => {
-    if (!prompt.trim() || isGenerating) return;
+    if ((!prompt.trim() && !activeSkillId) || isGenerating) return;
     if (missingReference) {
       useStore.getState().showToast('参考图中有已被删除的素材，请先移除后再提交。', 'error');
       return;
@@ -283,14 +325,14 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // 输入台宽度随窗口分级增长：窄窗铺满可用宽度，大屏封顶保证行长可读
+  // 输入台宽度随窗口自适应，大屏封顶保证行长可读；缩放控件在输入台下方的右侧角落
   return (
-    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 pb-1 z-30 shrink-0 pointer-events-auto">
+    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 pb-1 z-30 shrink-0 pointer-events-none">
       {/* =========================================================================
           1. FLOATING REFERENCE IMAGE SHELF (Exact replica of user reference image)
           ========================================================================= */}
       {referenceImages && referenceImages.length > 0 && (
-        <div className="mb-2 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="pointer-events-auto mb-2 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <div className="flex items-center gap-2 px-1">
             {referenceImages.map((ref, idx) => (
               <div
@@ -403,19 +445,19 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
           startPromptHeightRef.current = promptHeight;
           setIsResizingPromptHeight(true);
         }}
-        className="w-full h-[8px] cursor-row-resize hover:bg-black/[0.04] dark:hover:bg-white/[0.06] active:bg-black/[0.08] flex items-center justify-center transition-colors group mb-1"
+        className="pointer-events-auto w-full h-[8px] cursor-row-resize hover:bg-black/[0.04] dark:hover:bg-white/[0.06] active:bg-black/[0.08] flex items-center justify-center transition-colors group mb-1"
         title="按住向上拉伸提示词输入框"
       >
         <div className="w-8 h-[2.5px] rounded-full bg-black/15 dark:bg-white/20 group-hover:bg-black/40 dark:group-hover:bg-white/50 transition-colors"></div>
       </div>
 
       {/* Main Generative Prompt Card (Frosted Floating Acrylic Glass HUD, 12px rounded-xl) */}
-      <div className="rounded-xl bg-white/80 dark:bg-[#141620]/80 border border-black/10 dark:border-white/10 shadow-2xl p-2.5 flex flex-col gap-1.5 backdrop-blur-2xl relative transition-all duration-150 focus-within:bg-white/92 dark:focus-within:bg-[#141620]/95 focus-within:border-black/25 dark:focus-within:border-white/25 focus-within:shadow-[0_12px_36px_rgba(0,0,0,0.12)]">
+      <div data-input-card className="pointer-events-auto relative flex flex-col gap-2 rounded-[20px] border border-black/[0.05] bg-white/95 p-3 shadow-[0_16px_40px_-6px_rgba(15,23,42,0.09),0_0_0_1px_rgba(15,23,42,0.03)] backdrop-blur-xl transition-all duration-150 focus-within:shadow-[0_20px_48px_rgba(15,23,42,0.13)] dark:border-white/[0.08] dark:bg-[#151824]/95">
         {/* Clear prompt button if has text */}
         {prompt && (
           <div className="absolute top-2.5 right-2.5 z-10 text-slate-400">
             <button
-              onClick={() => onPromptChange('')}
+              onClick={() => { onPromptChange(''); clearSkillChip(); }}
               className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
               title="清空提示词"
             >
@@ -426,6 +468,23 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
         {/* Textarea */}
         <div className="relative">
+          {activeSkill && (
+            <div className="flex px-1 pb-1">
+              <span className="inline-flex max-w-[240px] items-center gap-1 rounded-full bg-black/[0.06] py-0.5 pl-2 pr-1 text-caption text-slate-600 dark:bg-white/[0.09] dark:text-slate-300">
+                <Sparkles className="h-3 w-3 shrink-0 opacity-70" />
+                <span className="truncate font-medium">{activeSkill.name}</span>
+                <button
+                  type="button"
+                  onClick={clearSkillChip}
+                  className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/15"
+                  title="移除技能（保留输入文字）"
+                  aria-label="移除技能"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </span>
+            </div>
+          )}
           {atMenuOpen && atOptions.length > 0 && (
             <div ref={atMenuRef} className="absolute bottom-full left-0 z-50 mb-1 w-56 overflow-hidden rounded-xl border border-black/[0.08] bg-white/95 p-1 shadow-xl backdrop-blur-xl dark:border-white/[0.1] dark:bg-[#1c1e29]/95">
               <div className="px-2 pb-1 pt-0.5 text-caption text-slate-400">选择参考图</div>
@@ -453,28 +512,31 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </div>
             </div>
           )}
-          <textarea
-            ref={textareaRef}
-            style={{ height: `${promptHeight}px` }}
-            value={prompt}
-            maxLength={MAX_PROMPT_LENGTH}
-            onChange={(e) => {
-              const next = clampPrompt(e.target.value);
-              onPromptChange(next);
-              refreshAtMenu(next, e.target.selectionStart ?? next.length);
-            }}
-            onScroll={(e) => setPromptScrollTop(e.currentTarget.scrollTop)}
-            onKeyDown={handleKeyDown}
-            onCompositionStart={() => { isComposingRef.current = true; }}
-            onCompositionEnd={() => { isComposingRef.current = false; }}
-            placeholder={`描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`}
-            className={`relative w-full bg-transparent resize-none border-none p-1 pr-8 text-body-sm leading-relaxed text-transparent caret-slate-800 dark:caret-slate-100 placeholder-slate-400 focus:ring-0 outline-none font-sans`}
-          />
-          <PromptMentionOverlay
-            prompt={prompt}
-            scrollTop={promptScrollTop}
-            className="p-1 pr-8 text-body-sm leading-relaxed font-sans text-slate-800 dark:text-slate-100"
-          />
+          <div className="relative">
+            <textarea
+              ref={textareaRef}
+              style={{ height: `${promptHeight}px` }}
+              value={prompt}
+              maxLength={MAX_PROMPT_LENGTH}
+              onChange={(e) => {
+                const next = clampPrompt(e.target.value);
+                onPromptChange(next);
+                if (!next.trim() && activeSkillId) clearSkillChip();
+                refreshAtMenu(next, e.target.selectionStart ?? next.length);
+              }}
+              onScroll={(e) => setPromptScrollTop(e.currentTarget.scrollTop)}
+              onKeyDown={handleKeyDown}
+              onCompositionStart={() => { isComposingRef.current = true; }}
+              onCompositionEnd={() => { isComposingRef.current = false; }}
+              placeholder={`描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`}
+              className={`relative w-full bg-transparent resize-none border-none p-1 pr-8 text-body-sm leading-relaxed text-transparent caret-slate-800 dark:caret-slate-100 placeholder-slate-400 focus:ring-0 outline-none font-sans no-scrollbar`}
+            />
+            <PromptMentionOverlay
+              prompt={prompt}
+              scrollTop={promptScrollTop}
+              className="p-1 pr-8 text-body-sm leading-relaxed font-sans text-slate-800 dark:text-slate-100"
+            />
+          </div>
           {prompt.length >= MAX_PROMPT_LENGTH && (
             <div className="pointer-events-none absolute bottom-1 right-2 text-caption text-amber-600 dark:text-amber-400">
               已达 {MAX_PROMPT_LENGTH} 字上限
@@ -483,7 +545,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
         </div>
 
         {/* Single-line Pill Options Row (Strictly matching user screenshot) */}
-        <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-black/[0.04] dark:border-white/[0.05] relative text-caption select-none">
+        <div data-params-row className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-black/[0.04] dark:border-white/[0.05] relative text-caption select-none">
           {/* Left: Scrollable single row of pills (no wrap, strictly 1 line) */}
           <div className="contents">
             {/* 1. Model Capsule: gpt-image-2.5 ⌵ */}
@@ -491,7 +553,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               <button
                 ref={modelMenuRef}
                 onClick={() => setActiveDropdown(activeDropdown === 'model' ? null : 'model')}
-                className="flex items-center gap-1 px-2.5 py-0.5 h-[26px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-0.5 h-[28px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
               >
                 <span className="font-mono">{params.model}</span>
                 <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
@@ -540,7 +602,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               <button
                 ref={sizeMenuRef}
                 onClick={() => setActiveDropdown(activeDropdown === 'dimension' ? null : 'dimension')}
-                className="flex items-center gap-1 px-2.5 py-0.5 h-[26px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-0.5 h-[28px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
               >
                 <span className="text-slate-400">尺寸</span>
                 <span className="font-mono">{aspectRatios.find((item) => item.res === params.dimension)?.label ?? params.dimension}</span>
@@ -582,47 +644,12 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </PopMenu>
             </div>
 
-            {/* 3. Quality Capsule: 质量 auto ⌵ */}
-            <div className="relative shrink-0">
-              <button
-                ref={qualityMenuRef}
-                onClick={() => setActiveDropdown(activeDropdown === 'quality' ? null : 'quality')}
-                className="flex items-center gap-1 px-2.5 py-0.5 h-[26px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
-              >
-                <span className="text-slate-400">质量</span>
-                <span>{params.quality}</span>
-                <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
-              </button>
-              <PopMenu open={activeDropdown === 'quality'} anchorRef={qualityMenuRef} width={112} onClose={() => setActiveDropdown(null)}>
-                {['auto', 'low', 'medium', 'high', 'xhigh', 'max'].map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    role="menuitem"
-                    tabIndex={-1}
-                    data-active={params.quality === q ? 'true' : undefined}
-                    onClick={() => {
-                      setParams({ ...params, quality: q });
-                      setActiveDropdown(null);
-                    }}
-                    className={`text-caption w-full text-left px-2 py-1 rounded-md cursor-pointer transition ${
-                      params.quality === q
-                        ? 'bg-black/[0.08] dark:bg-white/[0.12] text-slate-900 dark:text-white font-medium'
-                        : 'hover:bg-black/5 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200'
-                    }`}
-                  >
-                    {q}
-                  </button>
-                ))}
-              </PopMenu>
-            </div>
-
-            {/* 4. Count Capsule: 数量 1 ⌵ */}
+            {/* 3. Count Capsule: 数量 1 ⌵ */}
             <div className="relative shrink-0">
               <button
                 ref={countMenuRef}
                 onClick={() => setActiveDropdown(activeDropdown === 'count' ? null : 'count')}
-                className="flex items-center gap-1 px-2.5 py-0.5 h-[26px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-0.5 h-[28px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
               >
                 <span className="text-slate-400">数量</span>
                 <span>{params.count}</span>
@@ -652,26 +679,63 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </PopMenu>
             </div>
 
-            {/* 5. More Capsule: 更多 · PNG · 透明 false · 审核 auto ⌵ */}
+            {/* 4. Quality Capsule: 质量 自动 ⌵ */}
+            <div className="relative shrink-0">
+              <button
+                ref={qualityMenuRef}
+                onClick={() => setActiveDropdown(activeDropdown === 'quality' ? null : 'quality')}
+                className="flex items-center gap-1 px-2.5 py-0.5 h-[28px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+              >
+                <span className="text-slate-400">质量</span>
+                <span className="font-mono">{params.quality}</span>
+                <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
+              </button>
+              <PopMenu open={activeDropdown === 'quality'} anchorRef={qualityMenuRef} width={112} onClose={() => setActiveDropdown(null)}>
+                {(['auto', 'low', 'medium', 'high', 'xhigh', 'max'] as const).map((quality) => (
+                  <button
+                    key={quality}
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    data-active={params.quality === quality ? 'true' : undefined}
+                    onClick={() => {
+                      setParams({ ...params, quality });
+                      setActiveDropdown(null);
+                    }}
+                    className={`w-full text-left px-2 py-1 rounded-md text-caption font-mono cursor-pointer transition ${
+                      params.quality === quality
+                        ? 'bg-black/[0.08] dark:bg-white/[0.12] text-slate-900 dark:text-white font-medium'
+                        : 'hover:bg-black/5 dark:hover:bg-white/10 text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    {quality}
+                  </button>
+                ))}
+              </PopMenu>
+            </div>
+
+            {/* 5. More Capsule: 导出格式、透明背景、内容审核、批量 */}
             <div className="relative shrink-0">
               <button
                 ref={moreMenuRef}
                 onClick={() => setActiveDropdown(activeDropdown === 'more' ? null : 'more')}
-                className="flex items-center gap-1 px-2.5 py-0.5 h-[26px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-0.5 h-[28px] rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
               >
                 <span>更多</span>
-                <span className="font-mono text-caption opacity-60">{params.format}</span>
+                <span className="font-mono text-caption opacity-60">
+                  {params.format}
+                </span>
                 <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
               </button>
-              <PopMenu open={activeDropdown === 'more'} anchorRef={moreMenuRef} width={256} onClose={() => setActiveDropdown(null)}>
+              <PopMenu open={activeDropdown === 'more'} anchorRef={moreMenuRef} width={280} onClose={() => setActiveDropdown(null)}>
                   <div className="text-body-sm font-semibold text-slate-800 dark:text-white pb-1 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
                     <span>通道与元数据设置</span>
                     <Sliders className="w-3 h-3 stroke-[1.4]" />
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-caption text-slate-500">导出格式</span>
-                    <div className="flex gap-1">
-                      {(['PNG', 'WebP', 'JPEG'] as const).map((fmt) => (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {STUDIO_FORMATS.map((fmt) => (
                         <button
                           key={fmt}
                           type="button"
@@ -689,6 +753,9 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                       ))}
                     </div>
                   </div>
+                  {(params.format === 'GIF' || params.format === 'SVG') && (
+                    <p className="text-caption leading-relaxed text-slate-400">GIF/SVG 不直接发给 API，生成后用本地转换保存；GIF 最长边上限 2048px，超出会等比缩小。</p>
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-caption text-slate-500">透明背景通道</span>
                     <button
@@ -751,7 +818,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
             </div>
           </div>
 
-          {/* Right Action Buttons: [+] Upload Reference, [◨] Switch to Right Workspace, and [↑] Generate */}
+          {/* Right Action Buttons: [+] Upload Reference, [◨] Canvas Pick, [✦] Skill, [↑] Generate */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
             {/* [+] Button: Trigger reference image upload */}
             <button
@@ -760,24 +827,6 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               title="添加本地参考图"
             >
               <Plus className="w-3.5 h-3.5 stroke-[1.8]" />
-            </button>
-
-            {onOpenMask && (
-              <button
-                onClick={onOpenMask}
-                className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
-                title="打开遮罩编辑器"
-              >
-                <Layers className="w-3.5 h-3.5 stroke-[1.6]" />
-              </button>
-            )}
-
-            <button
-              onClick={() => setShowAddImageUrls(true)}
-              className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
-              title="通过图片链接添加参考图"
-            >
-              <LinkIcon className="w-3.5 h-3.5 stroke-[1.8]" />
             </button>
 
             {onStartCanvasPick && (
@@ -796,6 +845,38 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </button>
             )}
 
+            {onOpenMask && (
+              <button
+                onClick={onOpenMask}
+                className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
+                title="遮罩编辑器"
+                aria-label="遮罩编辑器"
+              >
+                <Layers className="w-3.5 h-3.5 stroke-[1.8]" />
+              </button>
+            )}
+
+            {onDockRight && (
+              <button
+                onClick={onDockRight}
+                className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
+                title="切换至右侧停靠工作台"
+                aria-label="切换至右侧停靠工作台"
+              >
+                <PanelRight className="w-3.5 h-3.5 stroke-[1.8]" />
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowSkillPicker(true)}
+              className="flex h-6 items-center gap-1 rounded-full bg-black/[0.04] px-2 text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12]"
+              title="选用技能"
+              aria-label="选用技能"
+            >
+              <Sparkles className="h-3 w-3 stroke-[1.8]" />
+              选用技能
+            </button>
+
             {onSaveAsSkill && (
               <button
                 onClick={onSaveAsSkill}
@@ -808,24 +889,43 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </button>
             )}
 
-            {/* Switch to Right Workspace Docking */}
-            {onDockRight && (
-              <button
-                onClick={onDockRight}
-                className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
-                title="切换至右侧停靠工作台 (◨ 历史流与控制台)"
-              >
-                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
-                  <rect x="1" y="1" width="10" height="10" rx="1.5" />
-                  <line x1="7.5" y1="1" x2="7.5" y2="11" />
-                </svg>
-              </button>
+            {onViewModeChange && (
+              <div role="tablist" aria-label="视图切换" className="flex h-6 items-center rounded-full bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'canvas'}
+                  onClick={() => onViewModeChange('canvas')}
+                  className={`flex h-5 items-center rounded-full px-1.5 text-caption transition ${
+                    viewMode === 'canvas'
+                      ? 'bg-black text-white dark:bg-white dark:text-black'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+                  }`}
+                  title="画布视图"
+                >
+                  画布
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'grid'}
+                  onClick={() => onViewModeChange('grid')}
+                  className={`flex h-5 items-center rounded-full px-1.5 text-caption transition ${
+                    viewMode === 'grid'
+                      ? 'bg-black text-white dark:bg-white dark:text-black'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+                  }`}
+                  title="卡片视图"
+                >
+                  卡片
+                </button>
+              </div>
             )}
 
             {/* Pure Monochrome Send Button with embedded micro shortcut badge */}
             <button
               onClick={handleSend}
-              disabled={isGenerating || !prompt.trim() || missingReference}
+              disabled={isGenerating || (!prompt.trim() && !activeSkillId) || missingReference}
               className="h-7 px-2.5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-85 active:scale-95 flex items-center justify-center gap-1 transition shadow-xs disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
               title="立即生成方案 (Ctrl+Enter)"
             >
@@ -850,7 +950,15 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
         />
       )}
 
-      {showAddImageUrls && <AddImageUrlsModal onClose={() => setShowAddImageUrls(false)} />}
+      {showSkillPicker && (
+        <SkillPickerModal
+          onClose={() => setShowSkillPicker(false)}
+          onApply={(skill, values) => { void applySkill(skill, values) }}
+          onApplyAndGenerate={(skill, values) => { void applySkillAndGenerate(skill, values) }}
+          activeSkillId={activeSkillId}
+          initialValues={skillSlotValues}
+        />
+      )}
     </div>
   );
 };

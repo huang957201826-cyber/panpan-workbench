@@ -35,6 +35,23 @@ describe('connectionTest', () => {
     })
   })
 
+  it('uses Gemini models endpoint and x-goog-api-key for Google profiles', async () => {
+    const fetcher = vi.fn(async () => response({ models: [{ name: 'models/gemini-test-image' }] }))
+    await expect(testApiConnection({
+      ...profile,
+      provider: 'google',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-test-image',
+      selectedModel: '',
+    }, fetcher as never)).resolves.toMatchObject({
+      ok: true,
+      message: '连接成功，模型 gemini-test-image 可用',
+    })
+    expect(fetcher).toHaveBeenCalledWith('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': 'sk-test' },
+    })
+  })
+
   it('flags only non-local plain HTTP addresses', () => {
     expect(isInsecureBaseUrl('http://api.example.com/v1')).toBe(true)
     expect(isInsecureBaseUrl('http://127.0.0.1:8080/v1')).toBe(false)

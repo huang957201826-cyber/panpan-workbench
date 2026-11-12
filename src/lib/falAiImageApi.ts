@@ -1,6 +1,7 @@
 import { fal } from '@fal-ai/client'
 import type { ApiProfile, FalApiResponse, TaskParams } from '../types'
 import { DEFAULT_FAL_BASE_URL } from './apiProfiles'
+import type { ApiErrorWithMeta } from './apiErrorClassification'
 import { isGptImage25Model } from './imageModels'
 import { apiFetch } from './platform'
 import {
@@ -128,7 +129,7 @@ async function parseFalImageResults(payload: FalApiResponse, fallbackMime: strin
     }
   } catch (err) {
     if (rawImageUrls.length > 0 && err instanceof Error) {
-      (err as any).rawImageUrls = rawImageUrls
+      (err as ApiErrorWithMeta).rawImageUrls = rawImageUrls
     }
     throw err
   }
@@ -140,7 +141,7 @@ async function parseFalImageResults(payload: FalApiResponse, fallbackMime: strin
         : 'fal.ai 未返回可用图片数据',
     )
     if (customBaseUrlLabel) {
-      ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+      ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     }
     throw err
   }

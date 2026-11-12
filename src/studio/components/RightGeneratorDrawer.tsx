@@ -16,11 +16,13 @@ import {
   Image as ImageIcon,
   Layers,
   Crosshair,
-  Link as LinkIcon,
   BookmarkPlus,
 } from 'lucide-react';
 import type { Artboard, GenerationParams, ReferenceImage } from '../types.ts';
-import { ensureImageCached } from '../../lib/imageCache';
+import { STUDIO_FORMATS } from '../constants.ts';
+import { downloadImage } from '../../lib/downloadImage';
+import { downloadTaskImages } from '../../lib/taskExport';
+import { getDownloadErrorMessage } from '../../lib/downloadImages';
 import { submitShortcutHint } from '../../lib/platform';
 import { getAtImageQuery, imageMentionMatches } from '../../lib/promptImageMentions';
 import { MAX_PROMPT_LENGTH, clampPrompt } from '../../lib/promptLimits';
@@ -29,7 +31,6 @@ import { ArtboardThumb } from './ArtboardThumb';
 import { Menu as PopMenu } from '../../ui';
 import { PromptMentionOverlay } from './PromptMentionOverlay';
 import SizePickerModal from '../../components/SizePickerModal';
-import AddImageUrlsModal from '../../components/input/addImageUrlsModal';
 
 interface RightGeneratorDrawerProps {
   prompt: string;
@@ -70,6 +71,8 @@ interface RightGeneratorDrawerProps {
   apiProfiles?: Array<{ id: string; name: string }>;
   activeProfileId?: string;
   onSelectProfile?: (id: string) => void;
+  viewMode?: 'canvas' | 'grid';
+  onViewModeChange?: (mode: 'canvas' | 'grid') => void;
 }
 
 export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
@@ -114,6 +117,8 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
   apiProfiles = [],
   activeProfileId,
   onSelectProfile,
+  viewMode = 'canvas',
+  onViewModeChange,
 }) => {
   const [activeTab, setActiveTab] = useState<'feed' | 'params'>('feed');
   const [visibleCount, setVisibleCount] = useState(30);
@@ -145,7 +150,6 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [activeQuickDropdown, setActiveQuickDropdown] = useState<'model' | 'ratio' | 'count' | 'more' | null>(null);
   const [showSizePicker, setShowSizePicker] = useState(false);
-  const [showAddImageUrls, setShowAddImageUrls] = useState(false);
   const modelQuickRef = useRef<HTMLButtonElement>(null);
   const ratioQuickRef = useRef<HTMLButtonElement>(null);
   const countQuickRef = useRef<HTMLButtonElement>(null);
@@ -187,14 +191,16 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
   };
 
   const handleDownload = async (artboard: Artboard) => {
-    const url = artboard.imageUrl || (artboard.imageId ? await ensureImageCached(artboard.imageId) : '');
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${artboard.title || 'panpan-artwork'}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const ref = artboard.imageId || artboard.imageUrl;
+    if (!ref) return;
+    const tasks = useStore.getState().tasks;
+    const task = tasks.find((item) => item.id === artboard.taskId)
+      ?? tasks.find((item) => item.outputImages.includes(artboard.imageId || ''));
+    const result = task && artboard.imageId
+      ? await downloadTaskImages(task, [artboard.imageId], { fileNameBase: artboard.title || 'panpan-artwork' })
+      : await downloadImage(ref, artboard.title || 'panpan-artwork', artboard.imageIndex);
+    if (result.canceled || result.successCount) return;
+    useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error');
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -501,6 +507,7 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
                         }}
                         className="flex items-center gap-1 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
                         title="下载高清原图"
+                        aria-label="下载高清原图"
                       >
                         <Download className="w-3 h-3 stroke-[1.6]" />
                       </button>
@@ -615,7 +622,7 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
               <div className="space-y-1.5">
                 <label className="text-body-sm font-medium text-slate-700 dark:text-slate-300">输出格式</label>
                 <div className="grid grid-cols-3 gap-1">
-                  {(['PNG', 'WebP', 'JPEG'] as const).map((format) => (
+                  {STUDIO_FORMATS.map((format) => (
                     <button
                       key={format}
                       onClick={() => setParams({ ...params, format })}
@@ -629,6 +636,9 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
                     </button>
                   ))}
                 </div>
+                {(params.format === 'GIF' || params.format === 'SVG') && (
+                  <p className="text-caption leading-relaxed text-slate-400">GIF/SVG 不直接发给 API，生成后用本地转换保存；GIF 最长边上限 2048px，超出会等比缩小。</p>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-2">
@@ -687,7 +697,7 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
                     ))}
                   </div>
                 </div>
-                {params.format !== 'PNG' && (
+                {(params.format === 'WebP' || params.format === 'JPEG') && (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-body-sm text-slate-600 dark:text-slate-400">
                       <span>压缩质量</span>
@@ -887,22 +897,14 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
                 <ImageIcon className="w-3.5 h-3.5 stroke-[1.5]" />
                 <span>添加参考图</span>
               </button>
-              <button
-                onClick={() => setShowAddImageUrls(true)}
-                className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
-                title="通过图片链接添加参考图"
-              >
-                <LinkIcon className="w-3.5 h-3.5 stroke-[1.5]" />
-                <span>链接</span>
-              </button>
               {onOpenMask && (
                 <button
                   onClick={onOpenMask}
-                  className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
+                  className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-black/[0.05] hover:text-slate-800 dark:hover:bg-white/[0.08] dark:hover:text-slate-200 transition cursor-pointer"
                   title="对第一张参考图打开遮罩编辑器"
+                  aria-label="遮罩编辑器"
                 >
                   <Layers className="w-3.5 h-3.5 stroke-[1.5]" />
-                  <span>遮罩</span>
                 </button>
               )}
               {onToggleBatch && (
@@ -1094,6 +1096,39 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
           className="hidden"
         />
 
+        {onViewModeChange && (
+          <div role="tablist" aria-label="视图切换" className="flex h-7 items-center self-end rounded-full bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'canvas'}
+              onClick={() => onViewModeChange('canvas')}
+              className={`flex h-6 items-center rounded-full px-2.5 text-caption transition ${
+                viewMode === 'canvas'
+                  ? 'bg-black text-white dark:bg-white dark:text-black'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+              }`}
+              title="画布视图"
+            >
+              画布
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'grid'}
+              onClick={() => onViewModeChange('grid')}
+              className={`flex h-6 items-center rounded-full px-2.5 text-caption transition ${
+                viewMode === 'grid'
+                  ? 'bg-black text-white dark:bg-white dark:text-black'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+              }`}
+              title="卡片视图"
+            >
+              卡片
+            </button>
+          </div>
+        )}
+
         {/* Primary Generate Button (Full Width Monochrome with ⌘↵ indicator) */}
         <button
           onClick={handleSend}
@@ -1126,7 +1161,6 @@ export const RightGeneratorDrawer: React.FC<RightGeneratorDrawerProps> = ({
           onClose={() => setShowSizePicker(false)}
         />
       )}
-      {showAddImageUrls && <AddImageUrlsModal onClose={() => setShowAddImageUrls(false)} />}
     </aside>
   );
 };

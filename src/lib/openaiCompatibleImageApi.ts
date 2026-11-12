@@ -1,4 +1,5 @@
 import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefinition, type CustomProviderPollMapping, type CustomProviderResultMapping, type CustomProviderSubmitMapping, type ImageApiResponse, type ImageResponseItem, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
+import type { ApiErrorWithMeta } from './apiErrorClassification'
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import {
@@ -200,7 +201,7 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
   const output = payload.output
   if (!Array.isArray(output) || !output.length) {
     const err = new Error('接口未返回图片数据')
-    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     throw err
   }
 
@@ -221,7 +222,7 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
 
   if (!results.length) {
     const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认服务商实际返回的数据结构。如果使用的是中转或兼容接口，建议创建并使用「自定义服务商」配置。')
-    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     throw err
   }
 
@@ -232,7 +233,7 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
   const data = payload.data
   if (!Array.isArray(data) || !data.length) {
     const err = new Error('接口没有返回图片数据，请查看原始响应内容确认服务商实际返回的数据结构。如果使用的是中转或兼容接口，建议创建并使用「自定义服务商」配置。')
-    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     throw err
   }
 
@@ -255,14 +256,14 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
     }
   } catch (err) {
     if (rawImageUrls.length > 0 && err instanceof Error) {
-      (err as any).rawImageUrls = rawImageUrls
+      (err as ApiErrorWithMeta).rawImageUrls = rawImageUrls
     }
     throw err
   }
 
   if (!images.length) {
     const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认服务商实际返回的数据结构。如果使用的是中转或兼容接口，建议创建并使用「自定义服务商」配置。')
-    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     throw err
   }
 
@@ -350,7 +351,7 @@ async function parseImagesApiStreamResponse(
     }
   } catch (err) {
     if (rawImageUrls.length > 0 && err instanceof Error) {
-      (err as any).rawImageUrls = rawImageUrls
+      (err as ApiErrorWithMeta).rawImageUrls = rawImageUrls
     }
     throw err
   }
@@ -803,14 +804,14 @@ async function extractCustomImages(payload: unknown, result: CustomProviderResul
     }
   } catch (err) {
     if (rawImageUrls.length > 0 && err instanceof Error) {
-      (err as any).rawImageUrls = rawImageUrls
+      (err as ApiErrorWithMeta).rawImageUrls = rawImageUrls
     }
     throw err
   }
 
   if (!images.length) {
     const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认接口实际返回的数据结构，并根据 API 文档调整「自定义服务商」配置中的结果提取路径。')
-    ;(err as any).rawResponsePayload = JSON.stringify(payload, null, 2)
+    ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(payload, null, 2)
     throw err
   }
   return { images, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
@@ -999,7 +1000,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
     const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : String(taskIdValue ?? '').trim()
     if (submitMapping.taskIdPath && !taskId) {
       const err = new Error('无法从响应中提取异步任务 ID，请查看原始响应内容确认接口实际返回的数据结构，并根据 API 文档调整「自定义服务商」配置中的 taskIdPath。')
-      ;(err as any).rawResponsePayload = JSON.stringify(submitPayload, null, 2)
+      ;(err as ApiErrorWithMeta).rawResponsePayload = JSON.stringify(submitPayload, null, 2)
       throw err
     }
     if (!taskId) return await extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal)

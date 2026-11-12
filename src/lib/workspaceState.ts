@@ -1,4 +1,4 @@
-import type { Project, ProjectCanvas, TaskRecord, TaskParams, ViewportTransform, WorkspaceState } from '../types'
+import type { Project, ProjectCanvas, SkillSlotValue, TaskRecord, TaskParams, ViewportTransform, WorkspaceState } from '../types'
 import { normalizeCanvasImageNodes } from './canvasImageNodes'
 
 export const DEFAULT_PROJECT_ID = 'default-project'
@@ -27,6 +27,17 @@ function normalizeViewport(value: unknown): ViewportTransform | undefined {
   if (typeof value.y !== 'number' || !Number.isFinite(value.y)) return undefined
   if (typeof value.k !== 'number' || !Number.isFinite(value.k) || value.k <= 0) return undefined
   return { x: value.x, y: value.y, k: Math.min(3, Math.max(0.02, value.k)) }
+}
+
+function normalizeSkillSlotValues(value: unknown): Record<string, SkillSlotValue> | undefined {
+  if (!isRecord(value)) return undefined
+  const entries = Object.entries(value).filter(([key, item]) => {
+    if (!key) return false
+    if (typeof item === 'string' || typeof item === 'boolean') return true
+    if (typeof item === 'number') return Number.isFinite(item)
+    return Array.isArray(item) && item.every((part) => typeof part === 'string')
+  })
+  return entries.length ? Object.fromEntries(entries) as Record<string, SkillSlotValue> : undefined
 }
 
 function normalizeParamsDraft(value: unknown): Partial<TaskParams> | undefined {
@@ -62,6 +73,8 @@ function normalizeCanvas(value: unknown, projects: Map<string, Project>, now: nu
         updatedAt: normalizeTimestamp(value.maskDraft.updatedAt, createdAt),
       }
     : null
+  const activeSkillId = typeof value.activeSkillId === 'string' && value.activeSkillId ? value.activeSkillId : null
+  const skillSlotValues = normalizeSkillSlotValues(value.skillSlotValues)
   return {
     id: value.id,
     projectId: value.projectId,
@@ -75,6 +88,8 @@ function normalizeCanvas(value: unknown, projects: Map<string, Project>, now: nu
     ...(typeof value.maskEditorImageId === 'string' ? { maskEditorImageId: value.maskEditorImageId } : {}),
     ...(imageNodes.length ? { imageNodes } : {}),
     ...(removedImageIds?.length ? { removedImageIds } : {}),
+    ...(activeSkillId ? { activeSkillId } : {}),
+    ...(skillSlotValues ? { skillSlotValues } : {}),
     createdAt,
     updatedAt: normalizeTimestamp(value.updatedAt, createdAt),
   }
@@ -216,7 +231,7 @@ export function getPersistedWorkspace(state: WorkspaceState, includeComposer: bo
   return {
     version: state.version,
     projects: state.projects,
-    canvases: state.canvases.map(({ promptDraft, paramsDraft, referenceImageIds, maskDraft, maskEditorImageId, ...canvas }) => canvas),
+    canvases: state.canvases.map(({ promptDraft, paramsDraft, referenceImageIds, maskDraft, maskEditorImageId, activeSkillId, skillSlotValues, ...canvas }) => canvas),
     activeProjectId: state.activeProjectId,
     activeCanvasId: state.activeCanvasId,
     viewMode: state.viewMode,
@@ -229,6 +244,8 @@ export function hasCanvasSnapshotChanged(current: ProjectCanvas | undefined, mer
   if (!merged) return false
   if (!current) return true
   return current.promptDraft !== merged.promptDraft
+    || current.activeSkillId !== merged.activeSkillId
+    || JSON.stringify(current.skillSlotValues) !== JSON.stringify(merged.skillSlotValues)
     || current.maskEditorImageId !== merged.maskEditorImageId
     || JSON.stringify(current.paramsDraft) !== JSON.stringify(merged.paramsDraft)
     || JSON.stringify(current.referenceImageIds) !== JSON.stringify(merged.referenceImageIds)
@@ -292,9 +309,13 @@ function mergeCanvasSnapshot(current: ProjectCanvas, imported: ProjectCanvas): P
     return merged
   })()
   const removedImageIds = [...new Set([...(current.removedImageIds ?? []), ...(imported.removedImageIds ?? [])])]
+  const activeSkillId = current.activeSkillId ?? imported.activeSkillId ?? null
+  const skillSlotValues = current.activeSkillId ? current.skillSlotValues : imported.skillSlotValues ?? current.skillSlotValues
   return {
     ...current,
     ...(promptDraft !== undefined ? { promptDraft } : {}),
+    ...(activeSkillId ? { activeSkillId } : {}),
+    ...(skillSlotValues && Object.keys(skillSlotValues).length ? { skillSlotValues } : {}),
     ...(paramsDraft ? { paramsDraft } : {}),
     ...(referenceImageIds ? { referenceImageIds } : {}),
     ...(current.maskDraft ?? imported.maskDraft ? { maskDraft: current.maskDraft ?? imported.maskDraft } : {}),

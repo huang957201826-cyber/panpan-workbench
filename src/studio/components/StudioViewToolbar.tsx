@@ -1,15 +1,22 @@
 import { useRef, useState } from 'react'
-import { Check, Filter, Search, Star } from 'lucide-react'
+import { ArrowUpDown, Check, Filter, Search, Star } from 'lucide-react'
 import type { TaskRecord } from '../../types'
-import { Button, IconButton, Menu, MenuItem, Segmented, TextField, Tooltip } from '../../ui'
+import { Button, IconButton, Menu, MenuItem, TextField, Tooltip } from '../../ui'
 
 export type StudioStatusFilter = 'all' | 'done' | 'error' | 'running'
+export type StudioCardSort = 'newest' | 'oldest' | 'prompt'
 
 const STATUS_OPTIONS: Array<{ value: StudioStatusFilter; label: string }> = [
   { value: 'all', label: '全部状态' },
   { value: 'running', label: '生成中' },
   { value: 'done', label: '完成' },
   { value: 'error', label: '失败' },
+]
+
+const SORT_OPTIONS: Array<{ value: StudioCardSort; label: string }> = [
+  { value: 'newest', label: '最新优先' },
+  { value: 'oldest', label: '最早优先' },
+  { value: 'prompt', label: '按提示词' },
 ]
 
 interface Props {
@@ -20,7 +27,7 @@ interface Props {
   models: string[]
   selectionMode: boolean
   selectedCount: number
-  viewMode: 'canvas' | 'grid'
+  sort: StudioCardSort
   onQueryChange: (value: string) => void
   onStatusChange: (value: StudioStatusFilter) => void
   onModelChange: (value: string) => void
@@ -32,10 +39,10 @@ interface Props {
   onBatchDownload: () => void
   batchDownloadProgress?: { done: number; total: number } | null
   onBatchDelete: () => void
-  onViewModeChange: (mode: 'canvas' | 'grid') => void
+  onSortChange: (value: StudioCardSort) => void
 }
 
-/** 顶部工具区：搜索 + 筛选菜单 + 多选 + 视图切换；状态与模型收进筛选，避免窄窗口一排摆不下 */
+/** 卡片视图头部：搜索 + 筛选 + 排序 + 多选；画布顶部不再常驻这些控件 */
 export function StudioViewToolbar({
   query,
   status,
@@ -44,7 +51,7 @@ export function StudioViewToolbar({
   models,
   selectionMode,
   selectedCount,
-  viewMode,
+  sort,
   onQueryChange,
   onStatusChange,
   onModelChange,
@@ -56,10 +63,12 @@ export function StudioViewToolbar({
   onBatchDownload,
   batchDownloadProgress,
   onBatchDelete,
-  onViewModeChange,
+  onSortChange,
 }: Props) {
   const filterRef = useRef<HTMLButtonElement>(null)
+  const sortRef = useRef<HTMLButtonElement>(null)
   const [filterOpen, setFilterOpen] = useState(false)
+  const [sortOpen, setSortOpen] = useState(false)
   const activeFilters = (status === 'all' ? 0 : 1) + (model ? 1 : 0) + (favoriteOnly ? 1 : 0)
 
   return (
@@ -121,6 +130,36 @@ export function StudioViewToolbar({
         </div>
       </Menu>
 
+      <Tooltip label="排序">
+        <button
+          ref={sortRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={sortOpen}
+          onClick={() => setSortOpen((value) => !value)}
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-control border border-line bg-surface-2 px-2.5 text-body-sm text-ink-1 transition-colors duration-fast hover:bg-surface-3"
+        >
+          <ArrowUpDown size={14} />
+          {SORT_OPTIONS.find((option) => option.value === sort)?.label ?? '排序'}
+        </button>
+      </Tooltip>
+
+      <Menu open={sortOpen} anchorRef={sortRef} width={140} onClose={() => setSortOpen(false)}>
+        {SORT_OPTIONS.map((option) => (
+          <MenuItem
+            key={option.value}
+            active={sort === option.value}
+            icon={sort === option.value ? <Check size={13} /> : null}
+            onClick={() => {
+              onSortChange(option.value)
+              setSortOpen(false)
+            }}
+          >
+            {option.label}
+          </MenuItem>
+        ))}
+      </Menu>
+
       <Tooltip label={favoriteOnly ? '取消只看收藏' : '只看收藏'}>
         <IconButton
           label="只看收藏"
@@ -140,15 +179,6 @@ export function StudioViewToolbar({
       >
         多选
       </Button>
-
-      <Segmented
-        value={viewMode}
-        onChange={onViewModeChange}
-        options={[
-          { value: 'canvas', label: '画布' },
-          { value: 'grid', label: '九宫格' },
-        ]}
-      />
 
       {selectionMode && (
         <>

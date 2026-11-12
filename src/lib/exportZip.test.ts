@@ -111,6 +111,7 @@ describe('exportZip', () => {
       createdAt: 1700000000000,
       finishedAt: 1700000000200,
       elapsed: 200,
+      localExportFormat: 'gif',
     }
     const images: StoredImage[] = [{
       id: 'img-1',
@@ -148,6 +149,8 @@ describe('exportZip', () => {
 
     expect(parsed.manifest).toEqual(manifest)
     expect(parsed.manifest.version).toBe(4)
+    expect(parsed.manifest.tasks?.[0]).not.toHaveProperty('localExportFormat')
+    expect(manifest.tasks?.[0]).not.toHaveProperty('localExportFormat')
     expect(parsed.manifest.exportedAt).toBe(new Date(1700000001000).toISOString())
     expect(parsed.manifest.imageFiles?.['img-1']).toEqual({
       path: 'images/task-task-1-input.png',

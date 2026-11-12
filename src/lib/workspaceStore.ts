@@ -12,6 +12,7 @@ interface WorkspaceActions {
   renameProject: (projectId: string, name: string) => void
   removeProject: (projectId: string) => void
   createCanvas: (projectId: string, name?: string) => string
+  duplicateCanvas: (canvasId: string) => string | null
   renameCanvas: (canvasId: string, name: string) => void
   removeCanvas: (canvasId: string) => void
   updateCanvas: (canvasId: string, patch: Partial<Omit<ProjectCanvas, 'id' | 'projectId' | 'createdAt'>>) => void
@@ -89,6 +90,29 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         })
         return canvasId
       },
+      duplicateCanvas: (canvasId) => {
+        const state = get()
+        const source = state.canvases.find((canvas) => canvas.id === canvasId)
+        if (!source) return null
+        const now = Date.now()
+        const id = crypto.randomUUID()
+        const order = Math.max(-1, ...state.canvases.filter((canvas) => canvas.projectId === source.projectId).map((canvas) => canvas.order)) + 1
+        const copy = {
+          ...source,
+          id,
+          name: `${source.name} 副本`,
+          order,
+          createdAt: now,
+          updatedAt: now,
+          imageNodes: (source.imageNodes ?? []).map((node) => ({ ...node, id: crypto.randomUUID() })),
+        }
+        set({
+          canvases: [...state.canvases, copy],
+          activeProjectId: source.projectId,
+          activeCanvasId: id,
+        })
+        return id
+      },
       renameCanvas: (canvasId, name) => set((state) => ({
         canvases: state.canvases.map((canvas) => canvas.id === canvasId
           ? { ...canvas, name: name.trim() || canvas.name, updatedAt: Date.now() }
@@ -99,8 +123,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         if (!target) return {}
         const canvases = state.canvases.filter((canvas) => canvas.id !== canvasId)
         if (state.activeCanvasId !== canvasId) return { canvases }
-        const sameProject = canvases.find((canvas) => canvas.projectId === target.projectId)
-        const next = sameProject ?? canvases[0]
+        // 删除当前画布后切相邻画布：优先右邻，其次左邻，最后才考虑其他项目
+        const siblings = state.canvases
+          .filter((canvas) => canvas.projectId === target.projectId)
+          .sort((a, b) => a.order - b.order)
+        const index = siblings.findIndex((canvas) => canvas.id === canvasId)
+        const next = siblings[index + 1] ?? siblings[index - 1] ?? canvases.find((canvas) => canvas.projectId !== target.projectId)
         const projectStillExists = state.projects.some((project) => project.id === target.projectId)
         return {
           canvases,
