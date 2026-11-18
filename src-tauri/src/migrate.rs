@@ -196,7 +196,11 @@ fn copy_into(src: &Path, dst: &Path, meta: &fs::Metadata) -> io::Result<()> {
         }
         // 跨盘移动删除源之前，先把目标文件刷到磁盘，避免断电后源已删、目标截断。
         // Windows 对只读文件不允许写句柄，这种文件无法 fsync，保留原有复制结果。
-        match fs::OpenOptions::new().write(true).open(dst).and_then(|file| file.sync_all()) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .open(dst)
+            .and_then(|file| file.sync_all())
+        {
             Ok(()) => {}
             Err(err) if err.kind() == ErrorKind::PermissionDenied => {}
             Err(err) => return Err(err),

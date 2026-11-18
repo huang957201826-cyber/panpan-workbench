@@ -9,19 +9,22 @@ use std::os::windows::io::AsRawHandle;
 use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::{
+    ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
+};
+use windows_sys::core::PWSTR;
 use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_PIPE_BUSY, HANDLE};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows_sys::Win32::Security::{
-    EqualSid, GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    EqualSid, GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+    TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows_sys::core::PWSTR;
 
 /// 进程令牌中的 TOKEN_USER；process 由调用方负责关闭
 fn token_user(process: HANDLE) -> io::Result<Vec<u64>> {
@@ -36,7 +39,8 @@ fn token_user(process: HANDLE) -> io::Result<Vec<u64>> {
     // 用 u64 作缓冲区元素，保证 TOKEN_USER 的对齐
     let mut buf = vec![0u64; (len as usize).div_ceil(8)];
     // SAFETY: buf 至少有 len 字节且对齐满足 TOKEN_USER；token 是上面打开的有效句柄
-    let ok = unsafe { GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) };
+    let ok =
+        unsafe { GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) };
     let err = io::Error::last_os_error();
     // SAFETY: token 是上面打开的有效句柄，之后不再使用
     unsafe { CloseHandle(token) };
@@ -75,7 +79,10 @@ fn user_sid() -> io::Result<String> {
 }
 
 pub fn name() -> io::Result<String> {
-    Ok(format!(r"\\.\pipe\gpt-image-playground-cli-{}", user_sid()?))
+    Ok(format!(
+        r"\\.\pipe\gpt-image-playground-cli-{}",
+        user_sid()?
+    ))
 }
 
 /// 只允许当前用户访问的安全描述符（`P` 表示不继承上级的权限）
@@ -90,14 +97,20 @@ unsafe impl Sync for Security {}
 
 impl Security {
     fn current_user() -> io::Result<Self> {
-        let sddl: Vec<u16> = std::ffi::OsStr::new(&format!("O:{sid}D:P(A;;GA;;;{sid})", sid = user_sid()?))
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+        let sddl: Vec<u16> =
+            std::ffi::OsStr::new(&format!("O:{sid}D:P(A;;GA;;;{sid})", sid = user_sid()?))
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
         let mut sd: PSECURITY_DESCRIPTOR = null_mut();
         // SAFETY: sddl 是以 0 结尾的 UTF-16 字符串；sd 是输出参数，由系统用 LocalAlloc 分配，在 Drop 中释放
         let ok = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, null_mut())
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                null_mut(),
+            )
         };
         if ok == 0 {
             return Err(io::Error::last_os_error());
@@ -161,7 +174,9 @@ pub async fn open() -> io::Result<NamedPipeClient> {
     let start = Instant::now();
     let pipe = loop {
         match ClientOptions::new().open(&name) {
-            Err(err) if err.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && start.elapsed() < Duration::from_secs(2) => {}
+            Err(err)
+                if err.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
+                    && start.elapsed() < Duration::from_secs(2) => {}
             res => break res?,
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -182,7 +197,10 @@ pub async fn open() -> io::Result<NamedPipeClient> {
     let (server, me) = (server?, current_user()?);
     // SAFETY: 两个 SID 都指向存活缓冲区中的有效 SID
     if unsafe { EqualSid(sid_of(&server), sid_of(&me)) } == 0 {
-        return Err(io::Error::new(ErrorKind::PermissionDenied, "管道的服务端不属于当前用户"));
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            "管道的服务端不属于当前用户",
+        ));
     }
     Ok(pipe)
 }

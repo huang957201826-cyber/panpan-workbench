@@ -62,7 +62,7 @@ describe('exportZip skills', () => {
     const { bytes } = await buildExportZip(makeParams({ skills }))
     const manifest = (await readExportZip(bytes)).manifest
 
-    expect(manifest.version).toBe(4)
+    expect(manifest.version).toBe(5)
     expect(manifest.skills).toHaveLength(skills.length)
 
     const restored = mergeImportedSkills([], manifest.skills)
@@ -85,7 +85,7 @@ describe('exportZip skills', () => {
   it('keeps legacy v4 zips without the skills field completely unchanged', async () => {
     const { bytes } = await buildExportZip(makeParams())
     const manifest = (await readExportZip(bytes)).manifest
-    expect(manifest.version).toBe(4)
+    expect(manifest.version).toBe(5)
     expect(manifest.skills).toBeUndefined()
 
     const legacy = { version: 4, exportedAt: new Date(NOW).toISOString() } as ExportData
@@ -160,8 +160,8 @@ describe('exportZip skills', () => {
     const skills = [makeSkill({ id: 's1' })]
     const base = (await buildExportZip(makeParams({ skills }))).manifest
     const page = (await buildExportZip(makeParams({ skills, includeManifestData: false }))).manifest
-    expect(base.version).toBe(4)
-    expect(page.version).toBe(4)
+    expect(base.version).toBe(5)
+    expect(page.version).toBe(5)
     expect(base.skills).toHaveLength(1)
     expect(page.skills).toBeUndefined()
   })

@@ -2,9 +2,13 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [b02, main]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows:
@@ -18,13 +22,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
-      - name: Build frontend
-        run: npm run build
-      - name: Test frontend
-        run: npm test
-      # 单独门禁：真实事件顺序（pointerdown → mousedown → click）下的下拉选项必须可写回，
-      # 防止「下拉能弹出但选项点不动」这类 P0 交互缺陷再次只被纯函数单测放过。
-      - name: Test UI interactions
-        run: npm run test:interaction
+      - name: Frontend gate
+        run: npm run gate:dev
+      - name: Security scan
+        run: npm run security:check
       - name: Test Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Test UI end-to-end
+        run: npm run e2e
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            artifacts/e2e-report
+            artifacts/e2e-results
+          if-no-files-found: ignore

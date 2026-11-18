@@ -20,8 +20,16 @@ vi.mock('./downloadImages', () => ({
   downloadImageIds: vi.fn(),
   getImageZipEntries: vi.fn(),
 }))
-vi.mock('./capabilitySkills', () => ({ skillCoverColor: vi.fn(() => '#000') }))
-vi.mock('./capabilitySkillStore', () => ({ useCapabilitySkillStore: { getState: vi.fn() } }))
+vi.mock('./capabilitySkills', () => ({
+  skillCoverColor: vi.fn(() => '#000'),
+  composeSkillPrompt: vi.fn(() => ''),
+  validateSkillValues: vi.fn(() => []),
+}))
+vi.mock('./capabilitySkillStore', () => ({
+  useCapabilitySkillStore: { getState: vi.fn() },
+  normalizeCapabilitySkills: vi.fn(() => []),
+  applySkillOverride: vi.fn((skill) => skill),
+}))
 vi.mock('./canvasImageNodes', () => ({ removeCanvasImageNodes: vi.fn() }))
 vi.mock('../store', () => ({
   useStore: { getState: mocks.getStoreState },

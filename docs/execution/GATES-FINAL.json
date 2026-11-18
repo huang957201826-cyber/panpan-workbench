@@ -1,0 +1,54 @@
+{
+  "batch": "FINAL / v1.0.0 本地验收",
+  "plan": "docs/execution/PLAN-FINALIZE.md",
+  "checklist": "docs/execution/AUDIT-FINAL.md",
+  "branch": "b02",
+  "commit": "cfa108f",
+  "gates": {
+    "tsc": "pass",
+    "viteBuild": "pass",
+    "vitest": {
+      "files": 84,
+      "tests": 1021,
+      "failed": 0
+    },
+    "cargoTest": {
+      "libTests": 105,
+      "failed": 0
+    },
+    "tauriAcl": "pass (72 commands, 11 permission sets)",
+    "installer": "PanPan Workbench_1.0.0_x64-setup.exe",
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_1.0.0_x64-setup.exe",
+    "installerBytes": 30211348,
+    "installerSha256": "B770BC5A0BB9C548110DAF96179AE43D0F36BE20147FDA9E5905D2943BFD9C68",
+    "installerSignatureBytes": 448,
+    "updaterManifest": "src-tauri/target/release/latest.json（签名与 .sig 一致）",
+    "installMode": "pass (静默 /S 覆盖安装，currentUser)",
+    "installedExeSha256": "695CFEE67E5CEAFF72B67488ED7536A4D88994EDA80DF5F88378C96C3AD06039",
+    "installedVersion": "1.0.0",
+    "dataAfterUpgrade": "tasks 15 / images 20（与升级前备份一致）",
+    "runtimeLog": "无 ResizeObserver 报错；仅更新检查 404（仓库未创建，预期）",
+    "uiSmoke": "pass（画布点阵、共享工具栏、多选批量、设置页、技能库、缩放全览）",
+    "version": "1.0.0"
+  },
+  "focusedRegression": {
+    "dotGridMounted": "pass（[data-canvas-root] canvas = 1）",
+    "dotGridReducedMotionFallback": "pass（prefers-reduced-motion 回落 CSS 点阵）",
+    "dotGridIdleStopsRaf": "pass（静止 240ms 停止重绘）",
+    "resizeObserverLoop": "fixed（不再写 canvas style 宽高；日志 0 条）",
+    "studioShellToggleRemoved": "pass（设置页文案 0 处）",
+    "oldGalleryKept": "kept（按用户要求暂不删除，仅收起入口）",
+    "skillsNotInZip": "known-limit（V1 边界，未做）",
+    "errorClassification": "known-limit（无 Key/余额不足/超时未分开提示）"
+  },
+  "firstFailingGate": null,
+  "knownLimits": [
+    "更新地址仍指向未创建的 GitHub 仓库，应用内检查更新必然失败",
+    "安装包无 Authenticode 签名，安装时可能出现 SmartScreen 提示",
+    "技能库不进 ZIP 导入导出",
+    "无 Key / 余额不足 / 超时未分开展示",
+    "旧画廊仍保留在代码中，只是没有入口",
+    "960 窄窗与 125%/150% DPI 未逐项截图",
+    "托盘菜单退出未逐项点击（关闭隐藏已实测）"
+  ]
+}

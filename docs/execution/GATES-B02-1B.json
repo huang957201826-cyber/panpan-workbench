@@ -1,0 +1,89 @@
+{
+  "batch": "B02-1B",
+  "plan": "docs/execution/PLAN-B02.md",
+  "planSha256": "D167732252396120F0EA32F60EAEEA67B0024AC8647F99CD40CF800FBF10E679",
+  "checklist": "docs/execution/B02-CHECKLIST.md",
+  "checklistFrozenSha256": "26407F6881F6D548E3ADD5B435D9076374B00D4793669267E7C17C419C2148F1",
+  "checklistSha256": "794A865458ED03BD53BC38E41F16ABA5198EF9CB2B03DC60B642BAE11D5EE2B7",
+  "branch": "b02",
+  "branchStart": "8f83c20",
+  "planCommit": "155cae8",
+  "head": "41b7452",
+  "diffRange": "8f83c20..41b7452",
+  "gates": {
+    "tsc": "pass",
+    "viteBuild": "pass",
+    "presetScan": "pass",
+    "vitest": {
+      "files": 79,
+      "tests": 1010,
+      "failed": 0
+    },
+    "cargoTest": {
+      "libTests": 94,
+      "failed": 0
+    },
+    "tauriBuild": "pass",
+    "releaseCheck": "pass",
+    "installer": "PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerBytes": 29082405,
+    "installerSha256": "4E2B38143032F7E2BA74AB7429029C9D4EB7100D1BEF0B7D2B889F6A545F1289",
+    "builtExePath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\gpt-image-playground.exe",
+    "builtExeSha256": "411A9B7CE5ACB6FD9B98B15B983039EE0D9AF634257C74F200901FB57E0718B9",
+    "buildSourceCommit": "41b7452",
+    "install": "pass; installed exe sha256 1FDF26E3CEBDC037A4EF5716FFED63E7C7E46B867540046E8943D8701F08187F",
+    "u2": "partial: real copy migration pass; presets pass; delete snapshot/error boundary/disk prompt covered by automated tests, UI clicks deferred as knownLimits",
+    "realData": "controlled first startup executed; 14 tasks preserved; quick_check=ok; profiles 6->2; plaintextSecretBytes=0"
+  },
+  "realDataMigration": {
+    "preManifestSha256": "e82069ec5d6ae9cee94c28c97b90e0f18c0fb709bd0d490456fb4b55cadc5506",
+    "prePlaintextDb": 4,
+    "prePlaintextWal": 317,
+    "postManifestSha256": "e1b242a5c66fdad9a59df12e86c057e8a26455b62f45c02c101796b8b44643dc",
+    "postTaskCount": 14,
+    "postQuickCheck": "ok",
+    "postProfileCount": 2,
+    "postEncryptedApiKeys": 2,
+    "postPlaintextSecretBytes": 0,
+    "dpapiDecrypt": "pass (51 chars, sk- prefix)",
+    "preMigrationSnapshot": "E:\\02-RUANJIAN\\67-生图工作台-backups\\b02-1b-pre-real-20261107"
+  },
+  "focusedRegression": {
+    "errorBoundary": "pass",
+    "diagnosticsSanitization": "pass",
+    "presetScanFixtures": "pass",
+    "diskSpaceGuard": "pass",
+    "deleteSnapshotCommands": "pass",
+    "apiKeyTransform": "pass",
+    "dbQuickCheck": "pass",
+    "migrationSnapshot": "pass",
+    "dpapiRoundTrip": "pass",
+    "deleteSnapshotScoped": "pass",
+    "deleteSnapshotLongGallery": "pass",
+    "retiredProfileKeyPreserved": "pass",
+    "installerBinaryScan": "pass",
+    "activeTempPreserved": "pass",
+    "walPlaintextCleanup": "pass",
+    "gatesBomRegression": "pass",
+    "releaseCheckProductIdentity": "pass",
+    "deleteSnapshotWorkspaceTrim": "pass",
+    "cleanupRetryOnStartup": "implemented",
+    "tauriAclStaticCheck": "pass",
+    "firstMigrationCleansSecretBytes": "pass"
+  },
+  "u2Scripts": {
+    "dryRun": "scripts/u2/b02-1b-dry-run.mjs",
+    "databaseQuery": "scripts/u2/query.mjs",
+    "fixture": "scripts/u2/fixture.mjs",
+    "failTaskWrite": "scripts/u2/fail-task-write.mjs"
+  },
+  "firstFailingGate": null,
+  "knownLimits": [
+    "B02-1B 删除快照恢复、ErrorBoundary 白屏兜底、磁盘不足提示未做真实点击 U2，仅自动化测试通过；留待后续批次抽查",
+    "P1-41 网页版不创建本地删除快照（客户端才写入 data/backups）",
+    "MCP token 复用 DPAPI 机制留到 B02-4",
+    "removeTasks try/finally、clearData 部分失败提示已收口；Agent 对话仍由现有异步订阅落盘",
+    "真实启动后 Key 已加密，回退到 B02-1A 安装包无法解密，回滚需还原 b02-1b-pre-real-20261107"
+  ]
+}

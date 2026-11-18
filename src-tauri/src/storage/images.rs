@@ -296,7 +296,10 @@ impl Storage {
                 let file: Option<String> = stmt.query_row([id], |row| row.get(0)).optional()?;
                 // 库中的相对路径以 / 分隔，逐段拼接成本机的写法
                 Ok(file
-                    .map(|file| file.split('/').fold(self.root.clone(), |path, part| path.join(part)))
+                    .map(|file| {
+                        file.split('/')
+                            .fold(self.root.clone(), |path, part| path.join(part))
+                    })
                     .filter(|path| path.is_file())
                     .map(|path| path.to_string_lossy().into_owned()))
             })

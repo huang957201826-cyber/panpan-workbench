@@ -1,0 +1,107 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S0",
+  "revision": "r2-agent-favorites-safe-settings",
+  "status": "awaiting_code_review",
+  "plan": "docs/execution/PLAN-1.8.0-LAUNCH-20261117.md",
+  "frozenPlanSha256": "912D81374CD13B338946843BD9C7B3E40D56A8512DDD6A37090FAE31B99C5493",
+  "baseline": {
+    "branch": "b02",
+    "startCommit": "4115858e0725be756d7b75acb8461e4aea820326",
+    "installedVersion": "1.7.0",
+    "dataDirId": "8fa3cb579f662515"
+  },
+  "gates": [
+    {
+      "id": "S0-G01",
+      "command": "npm run build",
+      "exitCode": 0,
+      "result": "pass"
+    },
+    {
+      "id": "S0-G02",
+      "command": "npm test",
+      "exitCode": 0,
+      "result": "104 files / 1140 tests passed"
+    },
+    {
+      "id": "S0-G03",
+      "command": "node scripts/verify-vendor.mjs",
+      "exitCode": 0,
+      "result": "vendor ok: 26 files"
+    },
+    {
+      "id": "S0-G04",
+      "command": "npm run scan:typography",
+      "exitCode": 0,
+      "result": "text-[数字px]=0; leading-[...]=0"
+    },
+    {
+      "id": "S0-G05",
+      "command": "npm run sast",
+      "exitCode": 0,
+      "result": "pass; demo key removed"
+    },
+    {
+      "id": "S0-G06",
+      "command": "node scripts/verify/s0-data-inventory.mjs <installed-data>",
+      "exitCode": 0,
+      "evidence": "docs/execution/evidence/s0-data-inventory-20261118.json"
+    },
+    {
+      "id": "S0-G07",
+      "command": "node scripts/verify/s0-data-inventory.mjs <test-copy>",
+      "exitCode": 0,
+      "evidence": "docs/execution/evidence/s0-test-copy-inventory-20261118.json"
+    },
+    {
+      "id": "S0-G08",
+      "command": "npm run gate:dev",
+      "exitCode": 0,
+      "result": "process-check + vendor + typography + build + 1140 tests + SAST + release-check passed"
+    },
+    {
+      "id": "S0-FI01",
+      "injection": "missing data directory",
+      "expected": "exit 1",
+      "observedExitCode": 1,
+      "recoveryExitCode": 0,
+      "evidence": ".tmp/s0-inventory-failure.log"
+    }
+  ],
+  "inventory": {
+    "sqliteIntegrity": "ok",
+    "sqliteQuickCheck": "ok",
+    "tasks": 19,
+    "images": 23,
+    "thumbnails": 23,
+    "projects": 4,
+    "canvases": 6,
+    "imageNodes": 3,
+    "capabilitySkills": 5,
+    "promptSkills": 0,
+    "missingImageReferences": 0,
+    "orphanImages": 0,
+    "workflowIdsInCurrentData": 0,
+    "workflowIndexedDbPresent": false
+  },
+  "designCoverage": {
+    "agentConversations": true,
+    "favoriteCollections": true,
+    "defaultFavoriteCollectionId": true,
+    "safeSettingsTopLevelAllowlist": true,
+    "recursiveSensitiveKeyRejection": true,
+    "customProviderQueryBodyScrubbing": true
+  },
+  "snapshot": {
+    "files": 78,
+    "bytes": 61655377,
+    "manifestSha256": "90BCACC241FDB459D449DC1242B0989B7E9625E142E4AF94E3E5390A904DE64B"
+  },
+  "rollback": {
+    "codeCommit": "4115858e0725be756d7b75acb8461e4aea820326",
+    "installedPackage": "1.7.0",
+    "dataSnapshot": "s0-installed-data-copy-20261118"
+  },
+  "reviewRequired": true
+}

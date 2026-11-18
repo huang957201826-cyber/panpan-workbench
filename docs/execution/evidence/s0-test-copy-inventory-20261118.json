@@ -1,0 +1,122 @@
+{
+  "generatedAt": "2026-11-17T16:42:32.063Z",
+  "dataDirId": "30880bd103925df7",
+  "database": {
+    "sha256": "b16f4f0b2a73368e132024c515d41319075b15a5b15981eb2d5864a72522bc60",
+    "bytes": 122880,
+    "walBytes": 700432,
+    "integrity": {
+      "integrity_check": "ok"
+    },
+    "quickCheck": {
+      "quick_check": "ok"
+    },
+    "tables": {
+      "agent_conversations": 0,
+      "images": 23,
+      "kv": 6,
+      "meta": 3,
+      "tasks": 19,
+      "thumbnails": 23
+    },
+    "metaKeys": [
+      "mcp-config",
+      "mcp-token",
+      "schema_version"
+    ],
+    "kvKeys": [
+      {
+        "key": "dismissed-announcements",
+        "valueLength": 19
+      },
+      {
+        "key": "gpt-image-playground",
+        "valueLength": 7488
+      },
+      {
+        "key": "panpan-capability-skills-v1",
+        "valueLength": 1824
+      },
+      {
+        "key": "panpan-prompt-skills-v1",
+        "valueLength": 35
+      },
+      {
+        "key": "panpan-workspace-v1",
+        "valueLength": 3993
+      },
+      {
+        "key": "save-location-asked",
+        "valueLength": 1
+      }
+    ]
+  },
+  "workspace": {
+    "projectCount": 4,
+    "canvasCount": 6,
+    "duplicateProjectIds": [],
+    "duplicateCanvasIds": [],
+    "orphanCanvasCount": 0,
+    "imageNodeCount": 3
+  },
+  "tasks": {
+    "total": 19,
+    "statusCounts": {
+      "done": 18,
+      "error": 1
+    }
+  },
+  "images": {
+    "stored": 23,
+    "referenced": 23,
+    "missingReferenceCount": 0,
+    "orphanCount": 0,
+    "missingReferenceIds": [],
+    "orphanIds": []
+  },
+  "skills": {
+    "capabilityMine": 5,
+    "promptSkills": 0,
+    "duplicateNames": [
+      "TestSkill1800"
+    ]
+  },
+  "workflowStorage": {
+    "localStorageKeyFound": true,
+    "workflowIdCount": 0,
+    "workflowResultImageIdCount": 0,
+    "indexedDbKeyFound": false
+  },
+  "filesystem": {
+    "images": {
+      "exists": true,
+      "files": 23,
+      "bytes": 44892371
+    },
+    "thumbnails": {
+      "exists": true,
+      "files": 23,
+      "bytes": 1546194
+    },
+    "backups": {
+      "exists": true,
+      "files": 5,
+      "bytes": 14237280
+    },
+    "logs": {
+      "exists": false,
+      "files": 0,
+      "bytes": 0
+    },
+    "localWebStorage": {
+      "exists": true,
+      "files": 7,
+      "bytes": 61318
+    },
+    "workflowIndexedDb": {
+      "exists": false,
+      "files": 0,
+      "bytes": 0
+    }
+  }
+}

@@ -315,6 +315,8 @@ export interface SkillVariable {
   options?: string[]
 }
 
+export type SkillKind = 'prompt' | 'capability'
+
 export interface PromptSkill {
   id: string
   title: string
@@ -364,6 +366,7 @@ export interface Skill {
   name: string
   description: string
   category: string
+  tags?: string[]
   coverColor: string
   coverImageId?: string
   /** 主图之外的参考图/示例图，按顺序展示 */
@@ -375,10 +378,17 @@ export interface Skill {
   requiredImages?: SkillRequiredImages[]
   examples?: string[]
   source: 'builtin' | 'mine'
+  /** 判别联合：提示词技能与能力技能共享注册表，但保留各自行为 */
+  kind?: SkillKind
+  /** 注册表身份；同名/同源 ID 不会互相覆盖 */
+  registryId?: string
+  /** 原存储中的 ID，迁移和兼容读取使用 */
+  sourceId?: string
   /** 适用模型；空表示通用 */
   model?: string
   /** 收藏只影响筛选，不改变排序 */
   favorite?: boolean
+  author?: string
   version: number
   createdAt: number
   updatedAt: number
@@ -709,9 +719,30 @@ export interface FalApiResponse {
 
 // ===== 导出数据 =====
 
+export interface SavedWorkflowBackupResult {
+  imageId: string
+  inputImageId?: string
+  record: Record<string, unknown>
+  createdAt: number
+  missingImageIds?: string[]
+}
+
+export interface SavedWorkflowBackup {
+  id: string
+  workspaceProjectId: string | null
+  presetId: string
+  name: string
+  values: Record<string, string | number | boolean>
+  results: SavedWorkflowBackupResult[]
+  lastRunAt?: number
+  createdAt: number
+  updatedAt: number
+}
+
 /** ZIP manifest.json 格式 */
 export interface ExportData {
   version: number
+  appVersion?: string
   exportedAt: string
   backupPart?: {
     id: string
@@ -748,4 +779,9 @@ export interface ExportData {
   capabilitySkills?: Skill[]
   /** 内置技能的收藏/封面/模型覆盖层；与 capabilitySkills 分开 */
   capabilityOverrides?: Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+  savedWorkflows?: SavedWorkflowBackup[]
+  workflowImageFiles?: Record<string, {
+    path: string
+    createdAt?: number
+  }>
 }

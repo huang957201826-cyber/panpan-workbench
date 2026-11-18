@@ -1,0 +1,86 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S7",
+  "status": "local-complete",
+  "releaseAuthorized": false,
+  "baseCommit": "e379fe6",
+  "gates": [
+    {
+      "id": "S7-G01",
+      "name": "signed build",
+      "exitCode": 0,
+      "result": "npm run tauri:build with updater signing key; one final signed candidate",
+      "evidence": "docs/execution/REPORT-1.8.0-LAUNCH-S7.md"
+    },
+    {
+      "id": "S7-G02",
+      "name": "installer hash",
+      "result": "PanPan Workbench_1.8.0_x64-setup.exe 15537168 bytes SHA256 8E70801C7B768EC8FAD8DBA5F78645C741EC6DF1F0AEF7F0F6430D66161E51AF"
+    },
+    {
+      "id": "S7-G03",
+      "name": "signature verification",
+      "result": "key id 94CBC66F59E52734 matches config pubkey; prehash=true; global=true; trusted file/version match; .sig 448 bytes",
+      "evidence": "temp verify-sig.mjs (not committed)"
+    },
+    {
+      "id": "S7-G04",
+      "name": "manifest",
+      "result": "latest.json version 1.8.0 points to v1.8.0/PanPan.Workbench_1.8.0_x64-setup.exe"
+    },
+    {
+      "id": "S7-G05",
+      "name": "clean install and upgrades",
+      "result": "clean 1.8.0; isolated 1.6.3->1.8.0; real 1.7.0->1.8.0; data.db SHA B16F4F0B...22BC60 unchanged; images=23 unchanged"
+    },
+    {
+      "id": "S7-G06",
+      "name": "uninstall and restore",
+      "result": "/S retains data; GUI delete-data removes data dir but keeps downloads backup; reinstall + ZIP import succeeds",
+      "evidence": [
+        "docs/execution/evidence/s7-backup-export.png",
+        "docs/execution/evidence/s7-backup-restore.png",
+        "docs/execution/evidence/s7-reinstall-restore.png"
+      ]
+    },
+    {
+      "id": "S7-G07",
+      "name": "installed U2",
+      "result": "local ComfyUI upscale prompt dcafdbb9-a124-4c3b-82f6-897a4e7b10ef; output 4096x5468; UI comparer B; downloaded PNG 22999007 bytes",
+      "evidence": [
+        "docs/execution/evidence/s7-u2-workflow-after.png",
+        "docs/execution/evidence/s7-u2-workflow-result.png"
+      ]
+    }
+  ],
+  "knownLimits": [
+    {
+      "id": "KL-S7-01",
+      "title": "real-install backup export blocked by 2 dangling workflow result images",
+      "evidence": "docs/execution/evidence/s7-export-known-limit.png",
+      "blocking": false
+    },
+    {
+      "id": "KL-S7-02",
+      "title": "updater real update install/rollback requires publishing a new version; endpoint override is debug-only",
+      "blocking": false
+    },
+    {
+      "id": "KL-S7-03",
+      "title": "signing key offline backup and password custody need user-owned location",
+      "blocking": false
+    },
+    {
+      "id": "KL-S7-04",
+      "title": "cloud image generation and two qwen UI journeys skipped per user instruction (no API key used)",
+      "blocking": false
+    }
+  ],
+  "pendingAfterApproval": [
+    "publish v1.8.0 tag and Release with installer, .sig, latest.json",
+    "perform one real updater update/rollback after a later version is published",
+    "offline backup of updater signing key and password"
+  ],
+  "reviewResult": "not-requested-for-S7",
+  "stoppedAt": "local only; no push, tag or Release"
+}

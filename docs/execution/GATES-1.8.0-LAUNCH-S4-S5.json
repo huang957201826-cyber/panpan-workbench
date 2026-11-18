@@ -1,0 +1,52 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S4+S5",
+  "status": "approved",
+  "reviewRound": 3,
+  "baseCommit": "556dab1",
+  "gates": [
+    {
+      "id": "S4S5-G01",
+      "command": "npm run gate:dev",
+      "exitCode": 0,
+      "result": "build + 1165 frontend tests + SAST + release-check passed"
+    },
+    {
+      "id": "S4S5-G02",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+      "exitCode": 0,
+      "result": "114 Rust tests passed"
+    },
+    {
+      "id": "S4S5-G03",
+      "command": "npx playwright test e2e/left-rails.e2e.ts e2e/workflow-drag.e2e.ts",
+      "exitCode": 0,
+      "result": "2 Playwright tests passed"
+    }
+  ],
+  "implemented": {
+    "sharedSidebarStyles": true,
+    "workflowDragTransitionDisabled": true,
+    "workflowDragRafMerged": true,
+    "skillListMcp": true,
+    "workflowListGetMcp": true,
+    "diagnosticsMcp": true,
+    "backupVerifyMcp": true,
+    "mcpStructuredGuardErrors": true,
+    "mcpSensitiveContentExcluded": true
+  },
+  "knownLimits": [
+    "connection-line realtime following remains deferred",
+    "installed Tauri MCP and IDB backup verification remain for S7/U2"
+  ],
+  "remediated": [
+    {
+      "id": "S5-FI01",
+      "case": "malicious skill names/categories and workflow metadata contain paths or secrets",
+      "expected": "backslash/slash Windows, UNC, POSIX and spaced paths are fully redacted; normal technical IDs remain unchanged",
+      "result": "pass"
+    }
+  ],
+  "reviewResult": "CODE_REVIEW=APPROVE",
+  "reviewRequired": false
+}

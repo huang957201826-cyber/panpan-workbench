@@ -42,6 +42,7 @@ export function toCapabilitySkill(entry: SkillKitEntry): Skill {
     name: entry.skill.name,
     description: entry.skill.purpose ?? `${entry.skill.category}技能`,
     category: entry.skill.category,
+    tags: [],
     coverColor: skillCoverColor(id),
     basePrompt: entry.prompt.trim(),
     slots: entry.skill.inputs.map(toSlot),
@@ -53,6 +54,8 @@ export function toCapabilitySkill(entry: SkillKitEntry): Skill {
         }))
       : undefined,
     source: 'builtin',
+    kind: 'capability',
+    sourceId: id,
     version: 1,
     createdAt: 0,
     updatedAt: 0,

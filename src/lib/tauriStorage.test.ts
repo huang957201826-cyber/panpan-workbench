@@ -146,6 +146,22 @@ describe('tauriStorage', () => {
     expect(invoke).toHaveBeenCalledTimes(2)
   })
 
+  it('严格 flush 在写入失败时返回错误，供恢复流程中止', async () => {
+    const { tauriStorage, flushTauriStorageStrict } = await setup()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    invoke.mockRejectedValueOnce({ code: 'db', message: 'disk full' })
+    tauriStorage.setItem('restore-key', 'value')
+    await expect(flushTauriStorageStrict()).rejects.toThrow('本地设置仍有未写入内容')
+  })
+
+  it('严格 flush 成功后不留下 dirty key', async () => {
+    const { tauriStorage, flushTauriStorageStrict } = await setup()
+    tauriStorage.setItem('restore-key', 'value')
+    await expect(flushTauriStorageStrict()).resolves.toBeUndefined()
+    await expect(flushTauriStorageStrict()).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledTimes(1)
+  })
+
   it('值没变时跳过写入，也不推迟已有的防抖', async () => {
     const { tauriStorage } = await setup({ k: '1' })
     tauriStorage.setItem('k', '1')

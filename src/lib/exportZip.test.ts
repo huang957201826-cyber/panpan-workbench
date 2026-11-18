@@ -13,7 +13,7 @@ const estimateFromDataUrl = (image: StoredImage, thumbnail?: StoredImageThumbnai
 )
 
 describe('exportZip', () => {
-  it('omits empty customProviders in backup settings and retains non-empty providers', async () => {
+  it('retains sanitized customProviders in backup settings', async () => {
     const opts = {
       options: { exportConfig: true },
       exportedAt: 1700000001000,
@@ -26,7 +26,7 @@ describe('exportZip', () => {
       agentConversations: [],
     }
     const empty = await buildExportZip(opts)
-    expect((await readExportZip(empty.bytes)).manifest.settings).not.toHaveProperty('customProviders')
+    expect((await readExportZip(empty.bytes)).manifest.settings?.customProviders).toEqual([])
     const provider = { id: 'custom', name: 'Custom', submit: { path: 'generate' } }
     const filled = await buildExportZip({ ...opts, settings: { ...DEFAULT_SETTINGS, customProviders: [provider] } })
     expect((await readExportZip(filled.bytes)).manifest.settings?.customProviders).toEqual([provider])
@@ -50,11 +50,51 @@ describe('exportZip', () => {
       agentConversations: [],
     })
     const manifest = (await readExportZip(bytes)).manifest
-    expect(manifest.settings?.apiKey).toBe('')
+    expect(manifest.settings).not.toHaveProperty('apiKey')
     expect(manifest.settings?.profiles.every((profile) => profile.apiKey === '')).toBe(true)
   })
 
-  it('writes workspace only into the base manifest with version 4', async () => {
+  it('scrubs nested provider secrets from query and body', async () => {
+    const provider = {
+      id: 'custom',
+      name: 'Custom',
+      submit: {
+        path: 'generate',
+        query: {
+          token: 'query-token',
+          safe: 'visible',
+          authorization: 'Bearer nested-secret',
+        },
+        body: {
+          password: 'nested-password',
+          nested: {
+            clientSecret: 'client-secret',
+            value: 'Bearer abcdefghijklmnop',
+          },
+        },
+      },
+    }
+    const { bytes } = await buildExportZip({
+      options: { exportConfig: true },
+      exportedAt: 1700000001000,
+      settings: { ...DEFAULT_SETTINGS, customProviders: [provider] },
+      tasks: [],
+      images: [],
+      thumbnailsByImageId: new Map(),
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      agentConversations: [],
+    })
+    const text = JSON.stringify((await readExportZip(bytes)).manifest.settings)
+    expect(text).not.toContain('query-token')
+    expect(text).not.toContain('nested-secret')
+    expect(text).not.toContain('nested-password')
+    expect(text).not.toContain('client-secret')
+    expect(text).not.toContain('abcdefghijklmnop')
+    expect(text).toContain('visible')
+  })
+
+  it('writes workspace only into the base manifest with version 5', async () => {
     const workspace = createDefaultWorkspace(1700000001000)
     const opts = {
       options: { exportTasks: true },
@@ -70,7 +110,7 @@ describe('exportZip', () => {
     }
     const base = await buildExportZip(opts)
     const baseManifest = (await readExportZip(base.bytes)).manifest
-    expect(baseManifest.version).toBe(4)
+    expect(baseManifest.version).toBe(5)
     expect(baseManifest.workspace).toEqual(workspace)
 
     const page = await buildExportZip({ ...opts, includeManifestData: false })
@@ -96,6 +136,48 @@ describe('exportZip', () => {
 
     expect(manifest.imageFiles?.linked?.sourceUrl).toBe('https://example.com/a.png')
     expect(manifest.imageFiles?.local).not.toHaveProperty('sourceUrl')
+  })
+
+  it('packages saved workflows and workflow images as separate v5 entries', async () => {
+    const workflow = {
+      id: 'workflow-1',
+      workspaceProjectId: null,
+      presetId: 'qwen-upscale',
+      name: '保存的工作流',
+      values: { flow: 'upscale' },
+      results: [{
+        imageId: 'wfi-output',
+        inputImageId: 'wfi-input',
+        record: { id: 'record-1', title: '无损放大' },
+        createdAt: 1,
+      }],
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const { bytes } = await buildExportZip({
+      options: { exportTasks: true },
+      exportedAt: 1700000001000,
+      settings: DEFAULT_SETTINGS,
+      tasks: [],
+      images: [],
+      thumbnailsByImageId: new Map(),
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      agentConversations: [],
+      savedWorkflows: [workflow],
+      workflowImages: [
+        { id: 'wfi-output', dataUrl: 'data:image/png;base64,AAECAw==' },
+        { id: 'wfi-input', dataUrl: 'data:image/png;base64,BAUGBw==' },
+      ],
+    })
+    const parsed = await readExportZip(bytes)
+    expect(parsed.manifest.version).toBe(5)
+    expect(parsed.manifest.savedWorkflows).toEqual([workflow])
+    expect(parsed.manifest.workflowImageFiles?.['wfi-output']?.path).toMatch(/^workflow-images\//)
+    expect(readExportZipFileAsDataUrl(
+      parsed.files,
+      parsed.manifest.workflowImageFiles!['wfi-output'].path,
+    )).toBe('data:image/png;base64,AAECAw==')
   })
 
   it('builds and reads backup zip entries without changing manifest shape', async () => {
@@ -148,7 +230,7 @@ describe('exportZip', () => {
     const parsed = await readExportZip(bytes)
 
     expect(parsed.manifest).toEqual(manifest)
-    expect(parsed.manifest.version).toBe(4)
+    expect(parsed.manifest.version).toBe(5)
     expect(parsed.manifest.tasks?.[0]).not.toHaveProperty('localExportFormat')
     expect(manifest.tasks?.[0]).not.toHaveProperty('localExportFormat')
     expect(parsed.manifest.exportedAt).toBe(new Date(1700000001000).toISOString())
@@ -290,7 +372,7 @@ describe('exportZip', () => {
       }],
     }, [{ id: 'ignored-image', bytes: 2_000_000 }], { maxBytes: 1_800_000, partBytes: 1_400_000 })
 
-    expect(plan).toEqual([{ imageIds: [], tasks: [], agentConversations: [], includeBaseData: true }])
+    expect(plan).toEqual([{ imageIds: [], workflowImageIds: [], tasks: [], agentConversations: [], includeBaseData: true }])
   })
 
 })

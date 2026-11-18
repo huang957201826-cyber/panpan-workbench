@@ -31,10 +31,15 @@ CREATE TABLE thumbnails (
 -- 孤儿清理按文件路径核对记录（文件名不一定等于 id）
 CREATE INDEX images_file ON images (file);
 CREATE INDEX thumbnails_file ON thumbnails (file);
+", "
+CREATE TABLE saved_workflows (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX saved_workflows_updated_at ON saved_workflows (updated_at);
+CREATE TABLE restore_journal (id TEXT PRIMARY KEY, state TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
 "];
 
 pub const TASKS: &str = "tasks";
 pub const CONVERSATIONS: &str = "agent_conversations";
+pub const SAVED_WORKFLOWS: &str = "saved_workflows";
 
 /// 返回给前端的错误，code 供前端识别（例如 unavailable 表示数据目录不可用，前端据此弹窗提示）
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +82,34 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 pub struct Doc {
     pub id: String,
     pub data: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KvWrite {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreCommit {
+    pub operation_id: String,
+    pub tasks: Vec<Doc>,
+    pub conversations: Vec<Doc>,
+    pub saved_workflows: Vec<Doc>,
+    pub kv_writes: Vec<KvWrite>,
+    pub replace_tasks: bool,
+    pub replace_conversations: bool,
+    pub replace_saved_workflows: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreJournalRow {
+    pub id: String,
+    pub state: String,
+    pub data: String,
+    pub updated_at: i64,
 }
 
 pub struct Storage {
@@ -150,7 +183,9 @@ fn quick_check(conn: &Connection) -> Result<()> {
 }
 
 fn prune_db_snapshots(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<_> = entries
         .flatten()
         .filter(|entry| {
@@ -175,14 +210,20 @@ fn prune_db_snapshots(dir: &Path) {
 fn snapshot_before_migration(conn: &Connection, root: &Path) -> Result<()> {
     let dir = root.join("backups");
     fs::create_dir_all(&dir).map_err(|err| {
-        StorageError::new("unavailable", format!("无法创建数据库快照目录 {}：{err}", dir.display()))
+        StorageError::new(
+            "unavailable",
+            format!("无法创建数据库快照目录 {}：{err}", dir.display()),
+        )
     })?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0);
     let path = dir.join(format!("db-pre-migrate-{stamp}.db"));
-    let sql = format!("VACUUM INTO '{}'", path.display().to_string().replace('\'', "''"));
+    let sql = format!(
+        "VACUUM INTO '{}'",
+        path.display().to_string().replace('\'', "''")
+    );
     conn.execute_batch(&sql).map_err(|err| {
         StorageError::new(
             "unavailable",
@@ -263,7 +304,9 @@ impl Storage {
             root.join("data.db"),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .map_err(|err| StorageError::new("unavailable", format!("无法以只读方式打开数据库：{err}")))?;
+        .map_err(|err| {
+            StorageError::new("unavailable", format!("无法以只读方式打开数据库：{err}"))
+        })?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.pragma_update(None, "query_only", true)?;
         Ok(Self {
@@ -337,6 +380,101 @@ impl Storage {
 
     pub fn docs_clear(&self, table: &str) -> Result<()> {
         self.lock().execute(&format!("DELETE FROM {table}"), [])?;
+        Ok(())
+    }
+
+    pub fn replace_saved_workflows(&self, docs: &[Doc]) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM saved_workflows", [])?;
+        let now = now_ms();
+        for doc in docs {
+            put_doc(&tx, SAVED_WORKFLOWS, doc, now)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn restore_journal_begin(&self, id: &str, data: &str) -> Result<()> {
+        if id.is_empty() {
+            return Err(StorageError::new(
+                "invalid_argument",
+                "恢复操作 ID 不能为空",
+            ));
+        }
+        serde_json::from_str::<serde::de::IgnoredAny>(data).map_err(|err| {
+            StorageError::new("invalid_argument", format!("恢复日志不是合法 JSON：{err}"))
+        })?;
+        self.lock().execute(
+            "INSERT OR REPLACE INTO restore_journal (id, state, data, updated_at) VALUES (?1, 'staging', ?2, ?3)",
+            params![id, data, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    pub fn restore_journal_list(&self) -> Result<Vec<RestoreJournalRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, state, data, updated_at FROM restore_journal ORDER BY updated_at, id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(RestoreJournalRow {
+                id: row.get(0)?,
+                state: row.get(1)?,
+                data: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn restore_journal_delete(&self, id: &str) -> Result<()> {
+        self.lock()
+            .execute("DELETE FROM restore_journal WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn restore_commit(&self, commit: RestoreCommit) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let now = now_ms();
+
+        if commit.replace_tasks {
+            tx.execute("DELETE FROM tasks", [])?;
+        }
+        for doc in &commit.tasks {
+            put_doc(&tx, TASKS, doc, now)?;
+        }
+
+        if commit.replace_conversations {
+            tx.execute("DELETE FROM agent_conversations", [])?;
+        }
+        for doc in &commit.conversations {
+            put_doc(&tx, CONVERSATIONS, doc, now)?;
+        }
+
+        if commit.replace_saved_workflows {
+            tx.execute("DELETE FROM saved_workflows", [])?;
+        }
+        for doc in &commit.saved_workflows {
+            put_doc(&tx, SAVED_WORKFLOWS, doc, now)?;
+        }
+
+        for item in &commit.kv_writes {
+            if item.key.is_empty() {
+                return Err(StorageError::new("invalid_argument", "kv key 不能为空"));
+            }
+            tx.execute(
+                "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?1, ?2, ?3)",
+                params![item.key, item.value, now],
+            )?;
+        }
+
+        tx.execute(
+            "UPDATE restore_journal SET state = 'committed', updated_at = ?2 WHERE id = ?1",
+            params![commit.operation_id, now],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -489,7 +627,12 @@ mod tests {
         let backups: Vec<_> = fs::read_dir(dir.path().join("backups"))
             .unwrap()
             .flatten()
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("db-pre-migrate-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("db-pre-migrate-")
+            })
             .collect();
         assert_eq!(backups.len(), 1);
     }
@@ -620,13 +763,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path()).unwrap();
         storage.kv_set("answer", "42").unwrap();
-        storage.doc_put(TASKS, &doc("t1", "{\"id\":\"t1\"}")).unwrap();
+        storage
+            .doc_put(TASKS, &doc("t1", "{\"id\":\"t1\"}"))
+            .unwrap();
         drop(storage);
         let path = dir.path().join("data.db");
         let before = Sha256::digest(std::fs::read(&path).unwrap()).to_vec();
         {
             let read = Storage::open_read_only(dir.path()).unwrap();
-            assert_eq!(read.kv_get_all().unwrap().get("answer").map(String::as_str), Some("42"));
+            assert_eq!(
+                read.kv_get_all().unwrap().get("answer").map(String::as_str),
+                Some("42")
+            );
             assert!(read.docs_get_all(TASKS).unwrap().contains("\"t1\""));
             assert!(read.meta_get("mcp-token").unwrap().is_none());
         }
@@ -763,6 +911,166 @@ mod tests {
             storage.docs_get_all(TASKS).unwrap(),
             r#"[{"id":"b","v":2}]"#
         );
+    }
+
+    #[test]
+    fn restore_commit_is_atomic_and_marks_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .doc_put(TASKS, &doc("old-task", r#"{"id":"old-task"}"#))
+            .unwrap();
+        storage
+            .doc_put(
+                CONVERSATIONS,
+                &doc("old-conversation", r#"{"id":"old-conversation"}"#),
+            )
+            .unwrap();
+        storage
+            .doc_put(
+                SAVED_WORKFLOWS,
+                &doc("old-workflow", r#"{"id":"old-workflow"}"#),
+            )
+            .unwrap();
+        storage.kv_set("workspace", "old").unwrap();
+        storage
+            .restore_journal_begin("restore-1", r#"{"stagedImageIds":["wfi-1"]}"#)
+            .unwrap();
+
+        storage
+            .restore_commit(RestoreCommit {
+                operation_id: "restore-1".into(),
+                tasks: vec![doc("new-task", r#"{"id":"new-task"}"#)],
+                conversations: vec![doc("new-conversation", r#"{"id":"new-conversation"}"#)],
+                saved_workflows: vec![doc("new-workflow", r#"{"id":"new-workflow"}"#)],
+                kv_writes: vec![KvWrite {
+                    key: "workspace".into(),
+                    value: "new".into(),
+                }],
+                replace_tasks: true,
+                replace_conversations: true,
+                replace_saved_workflows: true,
+            })
+            .unwrap();
+
+        assert_eq!(
+            storage.docs_get_all(TASKS).unwrap(),
+            r#"[{"id":"new-task"}]"#
+        );
+        assert_eq!(
+            storage.docs_get_all(CONVERSATIONS).unwrap(),
+            r#"[{"id":"new-conversation"}]"#
+        );
+        assert_eq!(
+            storage.docs_get_all(SAVED_WORKFLOWS).unwrap(),
+            r#"[{"id":"new-workflow"}]"#
+        );
+        assert_eq!(storage.kv_get_all().unwrap()["workspace"], "new");
+        assert_eq!(
+            storage.restore_journal_list().unwrap()[0].state,
+            "committed"
+        );
+    }
+
+    #[test]
+    fn restore_commit_rolls_back_on_invalid_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .doc_put(TASKS, &doc("keep", r#"{"id":"keep"}"#))
+            .unwrap();
+        storage
+            .doc_put(
+                SAVED_WORKFLOWS,
+                &doc("keep-workflow", r#"{"id":"keep-workflow"}"#),
+            )
+            .unwrap();
+        storage.restore_journal_begin("restore-bad", "{}").unwrap();
+
+        let error = storage
+            .restore_commit(RestoreCommit {
+                operation_id: "restore-bad".into(),
+                tasks: vec![doc("broken", "{bad")],
+                conversations: vec![],
+                saved_workflows: vec![doc("new-workflow", r#"{"id":"new-workflow"}"#)],
+                kv_writes: vec![],
+                replace_tasks: true,
+                replace_conversations: true,
+                replace_saved_workflows: true,
+            })
+            .err()
+            .unwrap();
+
+        assert_eq!(error.code, "invalid_argument");
+        assert_eq!(storage.docs_get_all(TASKS).unwrap(), r#"[{"id":"keep"}]"#);
+        assert_eq!(
+            storage.docs_get_all(SAVED_WORKFLOWS).unwrap(),
+            r#"[{"id":"keep-workflow"}]"#
+        );
+        assert_eq!(storage.restore_journal_list().unwrap()[0].state, "staging");
+    }
+
+    #[test]
+    fn restore_commit_rolls_back_all_categories_on_invalid_kv_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .doc_put(TASKS, &doc("keep-task", r#"{"id":"keep-task"}"#))
+            .unwrap();
+        storage
+            .doc_put(
+                CONVERSATIONS,
+                &doc("keep-conversation", r#"{"id":"keep-conversation"}"#),
+            )
+            .unwrap();
+        storage
+            .doc_put(
+                SAVED_WORKFLOWS,
+                &doc("keep-workflow", r#"{"id":"keep-workflow"}"#),
+            )
+            .unwrap();
+        storage.kv_set("workspace", "keep").unwrap();
+        storage
+            .restore_journal_begin("restore-kv-bad", "{}")
+            .unwrap();
+
+        let error = storage
+            .restore_commit(RestoreCommit {
+                operation_id: "restore-kv-bad".into(),
+                tasks: vec![doc("new-task", r#"{"id":"new-task"}"#)],
+                conversations: vec![doc("new-conversation", r#"{"id":"new-conversation"}"#)],
+                saved_workflows: vec![doc("new-workflow", r#"{"id":"new-workflow"}"#)],
+                kv_writes: vec![
+                    KvWrite {
+                        key: "workspace".into(),
+                        value: "new".into(),
+                    },
+                    KvWrite {
+                        key: "".into(),
+                        value: "invalid".into(),
+                    },
+                ],
+                replace_tasks: true,
+                replace_conversations: true,
+                replace_saved_workflows: true,
+            })
+            .err()
+            .unwrap();
+
+        assert_eq!(error.code, "invalid_argument");
+        assert_eq!(
+            storage.docs_get_all(TASKS).unwrap(),
+            r#"[{"id":"keep-task"}]"#
+        );
+        assert_eq!(
+            storage.docs_get_all(CONVERSATIONS).unwrap(),
+            r#"[{"id":"keep-conversation"}]"#
+        );
+        assert_eq!(
+            storage.docs_get_all(SAVED_WORKFLOWS).unwrap(),
+            r#"[{"id":"keep-workflow"}]"#
+        );
+        assert_eq!(storage.kv_get_all().unwrap()["workspace"], "keep");
     }
 
     #[test]

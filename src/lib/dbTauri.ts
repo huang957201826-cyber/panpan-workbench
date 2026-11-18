@@ -120,6 +120,57 @@ export async function replaceAgentConversations(conversations: AgentConversation
   return undefined
 }
 
+// ===== Saved workflows and restore transaction =====
+
+export interface RestoreJournalRow {
+  id: string
+  state: string
+  data: string
+  updatedAt: number
+}
+
+export interface RestoreCommitInput {
+  operationId: string
+  tasks: TaskRecord[]
+  conversations: AgentConversation[]
+  savedWorkflows: Array<{ id: string }>
+  kvWrites: Array<{ key: string; value: string }>
+  replaceTasks: boolean
+  replaceConversations: boolean
+  replaceSavedWorkflows: boolean
+}
+
+export async function getSavedWorkflows<T>(): Promise<T[]> {
+  return call('saved_workflows_get_all')
+}
+
+export async function replaceSavedWorkflows(workflows: Array<{ id: string }>): Promise<void> {
+  await call('saved_workflows_replace', { workflows: toDocs(workflows) })
+}
+
+export async function beginRestoreJournal(id: string, data: unknown): Promise<void> {
+  await call('restore_journal_begin', { id, data: JSON.stringify(data) })
+}
+
+export function listRestoreJournals(): Promise<RestoreJournalRow[]> {
+  return call('restore_journal_list')
+}
+
+export async function deleteRestoreJournal(id: string): Promise<void> {
+  await call('restore_journal_delete', { id })
+}
+
+export async function commitRestore(input: RestoreCommitInput): Promise<void> {
+  await call('restore_commit', {
+    commit: {
+      ...input,
+      tasks: toDocs(input.tasks),
+      conversations: toDocs(input.conversations),
+      savedWorkflows: toDocs(input.savedWorkflows),
+    },
+  })
+}
+
 // ===== Images =====
 
 /** 原图文件内容与元数据，不经过 base64，供导出等只需要二进制的场景使用 */

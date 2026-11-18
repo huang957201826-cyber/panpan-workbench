@@ -1,0 +1,38 @@
+{
+  "version": "1.2.1",
+  "date": "2026-11-12",
+  "gates": {
+    "gateDev": true,
+    "unitFiles": 102,
+    "unitTests": 1129,
+    "e2eTests": 62,
+    "rustTests": 107,
+    "sast": true,
+    "releaseCheck": true,
+    "signedBuild": true,
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_1.2.1_x64-setup.exe",
+    "installerSha256": "6DFBA7588B3D5F874024ABC356B9B9F42640ABBC3DFF7FFCEE3766648AE6BDEB",
+    "installerBytes": 10969181,
+    "installExit": 0,
+    "installedVersion": "1.2.1",
+    "tasksBefore": 18,
+    "imagesBefore": 19,
+    "tasksAfter": 18,
+    "imagesAfter": 19,
+    "quickCheck": "ok",
+    "review": "CODE_REVIEW=APPROVE (final delta after 2 blockers fixed)",
+    "backups": [
+      "E:\\02-RUANJIAN\\67-盼盼工作台\\backups\\20261112-1.2.1-a",
+      "E:\\02-RUANJIAN\\67-盼盼工作台\\backups\\20261112-1.2.1-b"
+    ],
+    "publicRelease": {
+      "repo": "huang957201826-cyber/panpan-workbench",
+      "tag": "v1.2.1",
+      "commit": "31bbcd1",
+      "releaseUrl": "https://github.com/huang957201826-cyber/panpan-workbench/releases/tag/v1.2.1",
+      "assetSha256": "6DFBA7588B3D5F874024ABC356B9B9F42640ABBC3DFF7FFCEE3766648AE6BDEB",
+      "assetBytes": 10969181,
+      "method": "manual upload; workflow windows job skipped because TAURI_SIGNING_PRIVATE_KEY is not set"
+    }
+  }
+}

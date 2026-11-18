@@ -178,7 +178,10 @@ pub fn cleanup(app_name: &str, current: &Version) {
 }
 
 /// 检查更新；没有新版本时返回 None，其余错误原样返回
-async fn check_optional<R: Runtime>(app: &AppHandle<R>, any: bool) -> Result<Option<Update>, String> {
+async fn check_optional<R: Runtime>(
+    app: &AppHandle<R>,
+    any: bool,
+) -> Result<Option<Update>, String> {
     let builder = app.updater_builder().timeout(Duration::from_secs(30));
     // 与 API 请求使用同一代理设置；检查得到的 Update 会带上这里的代理设置，下载时沿用
     let builder = match app.state::<Proxy>().route() {

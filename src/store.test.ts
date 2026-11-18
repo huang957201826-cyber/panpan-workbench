@@ -14,6 +14,8 @@ import { setPresetConfig } from './lib/presetConfig'
 import { FetchConnectError } from './lib/platform'
 import { useWorkspaceStore } from './lib/workspaceStore'
 import { createDefaultWorkspace, DEFAULT_CANVAS_ID } from './lib/workspaceState'
+import { initializeSavedWorkflows, listWorkflows } from './studio/workflows/projectWorkflows'
+import { getResultImage } from './studio/workflows/resultImageStore'
 import { deleteCanvas, deleteProject, saveActiveCanvasSnapshot, switchCanvas } from './lib/workspaceActions'
 import { assertCanvasUndoActive, clearCanvasUndo, createCanvasUndoEntry, getCanvasUndoDepth, isCanvasUndoing, pushCanvasUndo, runCanvasUndo } from './lib/canvasUndo'
 vi.mock('./lib/db', () => {
@@ -52,10 +54,10 @@ vi.mock('./lib/db', () => {
     clearAgentConversations: async () => {
       agentConversations.clear()
     },
-    replaceAgentConversations: async (conversations: AgentConversation[]) => {
+    replaceAgentConversations: vi.fn(async (conversations: AgentConversation[]) => {
       agentConversations.clear()
       for (const conversation of conversations) agentConversations.set(conversation.id, conversation)
-    },
+    }),
     getImage: async (id: string) => images.get(id),
     getStoredImageThumbnail: async (id: string) => thumbnails.get(id),
     getImageThumbnail: async (id: string) => thumbnails.get(id),
@@ -90,6 +92,20 @@ vi.mock('./lib/db', () => {
       const height = size ? Number(size[2]) : undefined
       images.set(id, { id, dataUrl, source, createdAt: Date.now(), width, height })
       return { id, width, height }
+    }),
+  }
+})
+vi.mock('./studio/workflows/resultImageStore', () => {
+  const images = new Map<string, string>()
+  return {
+    putResultImage: vi.fn(async (dataUrl: string, requestedId?: string) => {
+      const id = requestedId ?? `wfi-${images.size + 1}`
+      images.set(id, dataUrl)
+      return id
+    }),
+    getResultImage: vi.fn(async (id: string) => images.get(id)),
+    deleteResultImages: vi.fn(async (ids: string[]) => {
+      for (const id of ids) images.delete(id)
     }),
   }
 })
@@ -162,14 +178,14 @@ vi.mock('./lib/browserNotification', async (importOriginal) => ({
   showBrowserNotification: vi.fn(() => true),
 }))
 import { showBrowserNotification } from './lib/browserNotification'
-import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, deleteImage as deleteDbImage, deleteTask as deleteDbTask, getAllAgentConversations, getAllImageIds, getAllTasks, getImage, getStoredImageThumbnail, putAgentConversation, putImage, putImageThumbnail, putTask as putDbTask, storeImageWithSize } from './lib/db'
+import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, deleteImage as deleteDbImage, deleteTask as deleteDbTask, getAllAgentConversations, getAllImageIds, getAllTasks, getImage, getStoredImageThumbnail, putAgentConversation, putImage, putImageThumbnail, putTask as putDbTask, replaceAgentConversations, storeImageWithSize } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { ensureImageCached } from './lib/imageCache'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
-import { addImageFromFile, clearData, clearFailedTasks, createInputImageFromFile, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, moveTasksToWorkspace, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, restoreExplicitPresetConfig, retryTask, reuseConfig, stopAgentResponse, stopBatchPrompts, stopTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, updateTaskCanvas, updateTaskInStore, updateTasksFavoriteCollections, useStore, withInputPending } from './store'
+import { addImageFromFile, clearData, clearFailedTasks, createInputImageFromFile, deleteFavoriteCollection, editOutputs, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, isRestoreWriteLocked, moveTasksToWorkspace, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, restoreExplicitPresetConfig, retryTask, reuseConfig, stopAgentResponse, stopBatchPrompts, stopTask, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, updateTaskCanvas, updateTaskInStore, updateTasksFavoriteCollections, useStore, withInputPending } from './store'
 
 const commitTaskDeletionImplementation = vi.mocked(commitTaskDeletion).getMockImplementation()!
 const deleteDbImageImplementation = vi.mocked(deleteDbImage).getMockImplementation()!
@@ -3157,6 +3173,248 @@ describe('data import', () => {
     })
     await clearAgentConversations()
   })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('restores v5 task, agent, favorite, skill and workflow data through merge mode', async () => {
+    const localValues = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => localValues.get(key) ?? null,
+      setItem: (key: string, value: string) => localValues.set(key, value),
+      removeItem: (key: string) => localValues.delete(key),
+      clear: () => localValues.clear(),
+    })
+    await clearTasks()
+    await clearAgentConversations()
+    await initializeSavedWorkflows()
+    const currentTask = task({ id: 'current-task', status: 'done' })
+    await putDbTask(currentTask)
+    useStore.setState({ tasks: [currentTask], agentConversations: [], activeAgentConversationId: null })
+    const importedConversation = agentConversation({
+      id: 'imported-conversation',
+      activeRoundId: 'round-imported',
+      messages: [{
+        id: 'message-imported',
+        role: 'user',
+        content: '导入对话',
+        roundId: 'round-imported',
+        createdAt: 1,
+      }],
+      rounds: [{
+        id: 'round-imported',
+        index: 1,
+        userMessageId: 'message-imported',
+        prompt: '导入对话',
+        inputImageIds: [],
+        outputTaskIds: [],
+        status: 'done',
+        error: null,
+        createdAt: 1,
+        finishedAt: 2,
+      }],
+    })
+    const importedTask = task({
+      id: 'imported-task',
+      agentConversationId: 'imported-conversation',
+      status: 'done',
+    })
+    const favorite = { id: 'imported-favorite', name: '导入收藏', createdAt: 3, updatedAt: 3 }
+    const workflow = {
+      id: 'workflow-imported',
+      workspaceProjectId: null,
+      presetId: 'qwen-upscale',
+      name: '导入工作流',
+      values: { flow: 'upscale' },
+      results: [{
+        imageId: 'wfi-old',
+        record: { id: 'record-old', title: '旧结果' },
+        createdAt: 4,
+      }],
+      createdAt: 4,
+      updatedAt: 4,
+    }
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(4).toISOString(),
+      tasks: [importedTask],
+      agentConversations: [importedConversation],
+      favoriteCollections: [favorite],
+      defaultFavoriteCollectionId: favorite.id,
+      skills: [{
+        id: 'prompt-imported',
+        title: '导入技能',
+        prompt: '测试',
+        tags: [],
+        createdAt: 5,
+        updatedAt: 5,
+      }],
+      savedWorkflows: [workflow],
+      workflowImageFiles: {
+        'wfi-old': { path: 'workflow-images/old.png', createdAt: 4 },
+      },
+    }, {
+      'workflow-images/old.png': new Uint8Array([0, 1, 2, 3]),
+    }), {
+      importConfig: false,
+      importTasks: true,
+      restoreMode: 'merge',
+    })
+    expect(imported).toBe(true)
+    expect(useStore.getState().tasks.map((item) => item.id).sort()).toEqual(['current-task', 'imported-task'])
+    expect(useStore.getState().agentConversations.map((item) => item.id)).toContain('imported-conversation')
+    expect(useStore.getState().favoriteCollections.map((item) => item.id)).toContain('imported-favorite')
+    expect(listWorkflows().map((item) => item.id)).toContain('workflow-imported')
+    const restoredWorkflow = listWorkflows().find((item) => item.id === 'workflow-imported')!
+    const restoredImageId = restoredWorkflow.results[0].imageId
+    expect(restoredImageId).not.toBe('wfi-old')
+    expect(await getResultImage(restoredImageId)).toBe('data:image/png;base64,AAECAw==')
+    expect(JSON.parse(localStorage.getItem('panpan-prompt-skills-v1') ?? '{}').state.skills.map((item: { id: string }) => item.id)).toContain('prompt-imported')
+  })
+
+  it('drains a running task before v5 restore', async () => {
+    const localValues = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => localValues.get(key) ?? null,
+      setItem: (key: string, value: string) => localValues.set(key, value),
+      removeItem: (key: string) => localValues.delete(key),
+      clear: () => localValues.clear(),
+    })
+    await clearTasks()
+    const running = task({ id: 'running-task', status: 'running', finishedAt: null, elapsed: null })
+    await putDbTask(running)
+    useStore.setState({ tasks: [running], showToast: vi.fn() })
+
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(6).toISOString(),
+      tasks: [task({ id: 'restored-after-running', status: 'done' })],
+      agentConversations: [],
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      savedWorkflows: [],
+    }), {
+      importConfig: false,
+      importTasks: true,
+      restoreMode: 'merge',
+    })
+    expect(imported).toBe(true)
+    expect(useStore.getState().tasks.find((item) => item.id === 'running-task')?.status).toBe('error')
+    expect(useStore.getState().tasks.find((item) => item.id === 'restored-after-running')?.status).toBe('done')
+  })
+
+  it('keeps same-ID image and thumbnail bytes unchanged when v5 commit fails', async () => {
+    await clearTasks()
+    await clearImages()
+    const imageId = 'same-restore-image'
+    await putImage({
+      id: imageId,
+      dataUrl: 'data:image/png;base64,b2xkLWltYWdl',
+      source: 'upload',
+      createdAt: 1,
+    })
+    await putImageThumbnail({
+      id: imageId,
+      thumbnailDataUrl: 'data:image/webp;base64,b2xkLXRodW1i',
+      width: 1,
+      height: 1,
+      thumbnailVersion: 2,
+    })
+    useStore.setState({
+      tasks: [],
+      agentConversations: [],
+      activeAgentConversationId: null,
+      imageSourceUrls: { [imageId]: 'https://old.example/image.png' },
+      showToast: vi.fn(),
+    })
+    vi.mocked(putDbTask).mockRejectedValueOnce(new Error('commit failed'))
+
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(10).toISOString(),
+      tasks: [task({
+        id: 'import-same-image',
+        outputImages: [imageId],
+        status: 'done',
+      })],
+      agentConversations: [],
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      savedWorkflows: [],
+      imageFiles: {
+        [imageId]: { path: 'images/same-image.png', createdAt: 2 },
+      },
+      thumbnailFiles: {
+        [imageId]: { path: 'thumbnails/same-image.webp', width: 1, height: 1, thumbnailVersion: 2 },
+      },
+    }, {
+      'images/same-image.png': new Uint8Array([4, 3, 2, 1]),
+      'thumbnails/same-image.webp': new Uint8Array([9, 8, 7, 6]),
+    }), {
+      importConfig: false,
+      importTasks: true,
+      restoreMode: 'merge',
+    })
+    vi.mocked(putDbTask).mockImplementation(putDbTaskImplementation)
+
+    expect(imported).toBe(false)
+    expect(await getImage(imageId)).toMatchObject({
+      id: imageId,
+      dataUrl: 'data:image/png;base64,b2xkLWltYWdl',
+    })
+    expect(await getStoredImageThumbnail(imageId)).toMatchObject({
+      id: imageId,
+      thumbnailDataUrl: 'data:image/webp;base64,b2xkLXRodW1i',
+    })
+    expect(useStore.getState().imageSourceUrls?.[imageId]).toBe('https://old.example/image.png')
+    expect((await getAllImageIds()).filter((id) => id.startsWith('restore-image-'))).toEqual([])
+  })
+
+  it('releases the restore lock when Agent persistence drain fails', async () => {
+    vi.mocked(replaceAgentConversations).mockRejectedValueOnce(new Error('agent drain failed'))
+
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(11).toISOString(),
+      tasks: [],
+      agentConversations: [],
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      savedWorkflows: [],
+    }), {
+      importConfig: false,
+      importTasks: true,
+      restoreMode: 'merge',
+    })
+    expect(imported).toBe(false)
+    expect(isRestoreWriteLocked()).toBe(false)
+
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: [],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+    useStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+        retryMode: 'new',
+      },
+      tasks: [],
+      prompt: '恢复失败后仍可提交',
+      inputImages: [],
+      params: { ...DEFAULT_PARAMS },
+      showToast: vi.fn(),
+    })
+
+    const ids = await submitTask()
+    expect(ids).toHaveLength(1)
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).not.toBe('running'))
+    expect(useStore.getState().showToast).not.toHaveBeenCalledWith(
+      '数据恢复正在进行，暂时不能提交任务。',
+      'info',
+    )
+  })
 
   it('applies imported default canvas snapshots even when every task id already exists', async () => {
     await clearTasks()
@@ -5033,6 +5291,80 @@ describe('agent built-in image tool failure', () => {
       agentEditingRoundId: null,
       showToast: vi.fn(),
     })
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('aborts and drains an in-flight Agent text request before v5 restore', async () => {
+    const localValues = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => localValues.get(key) ?? null,
+      setItem: (key: string, value: string) => localValues.set(key, value),
+      removeItem: (key: string) => localValues.delete(key),
+      clear: () => localValues.clear(),
+    })
+    vi.mocked(callAgentResponsesApi).mockImplementationOnce((options) => new Promise((_, reject) => {
+      const signal = options.signal
+      const rejectAborted = () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }
+      if (!signal || signal.aborted) rejectAborted()
+      else signal.addEventListener('abort', rejectAborted, { once: true })
+    }))
+
+    const running = submitAgentMessage()
+    await vi.waitFor(() => expect(callAgentResponsesApi).toHaveBeenCalledTimes(1))
+
+    const restoredConversation = agentConversation({
+      id: 'restored-agent-conversation',
+      activeRoundId: 'restored-round',
+      rounds: [{
+        id: 'restored-round',
+        index: 1,
+        parentRoundId: null,
+        userMessageId: 'restored-user-message',
+        prompt: '恢复后的对话',
+        inputImageIds: [],
+        outputTaskIds: [],
+        status: 'done',
+        error: null,
+        createdAt: 20,
+        finishedAt: 21,
+      }],
+      messages: [{
+        id: 'restored-user-message',
+        role: 'user',
+        content: '恢复后的对话',
+        roundId: 'restored-round',
+        createdAt: 20,
+      }],
+    })
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(20).toISOString(),
+      tasks: [],
+      agentConversations: [restoredConversation],
+      favoriteCollections: [],
+      defaultFavoriteCollectionId: null,
+      savedWorkflows: [],
+    }), {
+      importConfig: false,
+      importTasks: true,
+      restoreMode: 'replace',
+    })
+    await running
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(imported).toBe(true)
+    expect(useStore.getState().agentConversations.map((conversation) => conversation.id)).toEqual([
+      'restored-agent-conversation',
+    ])
+    expect(useStore.getState().agentConversations[0].rounds).toHaveLength(1)
+    expect(await getAllAgentConversations()).toEqual([
+      expect.objectContaining({ id: 'restored-agent-conversation' }),
+    ])
   })
 
   it('normalizes Agent image params with the Hybrid image profile', async () => {

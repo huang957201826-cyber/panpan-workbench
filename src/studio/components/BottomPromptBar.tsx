@@ -9,7 +9,6 @@ import {
   Sliders,
   Layers,
   Crosshair,
-  PanelRight,
   BookmarkPlus,
   Sparkles,
 } from 'lucide-react';
@@ -24,6 +23,8 @@ import { PromptMentionOverlay } from './PromptMentionOverlay';
 import SizePickerModal from '../../components/SizePickerModal';
 import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills';
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore';
+import { useSkillStore } from '../../lib/skillStore';
+import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry';
 import { ensureImageCached } from '../../lib/imageCache';
 import { SkillPickerModal } from './SkillPickerModal';
 import { STUDIO_FORMATS } from '../constants.ts';
@@ -44,7 +45,6 @@ interface BottomPromptBarProps {
   onReorderReferenceImages?: (newOrder: ReferenceImage[]) => void;
   params?: GenerationParams;
   onParamsChange?: (params: GenerationParams) => void;
-  onDockRight?: () => void;
   modelOptions?: Array<{ id: string; label: string }>;
   aspectRatios?: Array<{ label: string; res: string }>;
   countOptions?: number[];
@@ -73,7 +73,6 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   onReorderReferenceImages,
   params: externalParams,
   onParamsChange,
-  onDockRight,
   onStartCanvasPick,
   canvasPickActive = false,
   onSaveAsSkill,
@@ -126,7 +125,14 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   const setSkillSlotValues = useStore((s) => s.setSkillSlotValues);
   const clearSkillChip = useStore((s) => s.clearSkillChip);
   const mineSkills = useCapabilitySkillStore((s) => s.mine);
-  const activeSkill = [...mineSkills, ...builtinSkills].find((skill) => skill.id === activeSkillId) ?? null;
+  const promptSkills = useSkillStore((s) => s.skills);
+  const skillOverrides = useCapabilitySkillStore((s) => s.builtinOverrides);
+  const activeSkill = resolveRegisteredSkill(buildRegisteredSkillCatalog({
+    promptSkills,
+    capabilitySkills: mineSkills,
+    builtinSkills,
+    overrides: skillOverrides,
+  }), activeSkillId);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +148,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
       const dataUrl = await ensureImageCached(imageId);
       if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl });
     }
-    setActiveSkillId(skill.id);
+    setActiveSkillId(skill.registryId ?? skill.id);
     setSkillSlotValues(values);
     setShowSkillPicker(false);
   };
@@ -327,7 +333,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
   // 输入台宽度随窗口自适应，大屏封顶保证行长可读；缩放控件在输入台下方的右侧角落
   return (
-    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 pb-1 z-30 shrink-0 pointer-events-none">
+    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 z-30 shrink-0 pointer-events-none">
       {/* =========================================================================
           1. FLOATING REFERENCE IMAGE SHELF (Exact replica of user reference image)
           ========================================================================= */}
@@ -853,17 +859,6 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                 aria-label="遮罩编辑器"
               >
                 <Layers className="w-3.5 h-3.5 stroke-[1.8]" />
-              </button>
-            )}
-
-            {onDockRight && (
-              <button
-                onClick={onDockRight}
-                className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
-                title="切换至右侧停靠工作台"
-                aria-label="切换至右侧停靠工作台"
-              >
-                <PanelRight className="w-3.5 h-3.5 stroke-[1.8]" />
               </button>
             )}
 

@@ -1,0 +1,38 @@
+{
+  "scanner": "scripts/audit-buttons.mjs",
+  "scope": {
+    "glob": "src/**/*.tsx",
+    "includesTests": true,
+    "literalButtonOnly": true,
+    "boundBy": [
+      "onClick",
+      "onMouseDown",
+      "onPointerDown",
+      "type=submit",
+      "JSXSpread"
+    ],
+    "excludes": [
+      "<Button>",
+      "<TooltipButton>",
+      "menu items and other component wrappers"
+    ]
+  },
+  "summary": {
+    "total": 384,
+    "bound": 383,
+    "unbound": 1
+  },
+  "unbound": [
+    {
+      "file": "src/studio/components/UpdateEntry.tsx",
+      "line": 160,
+      "column": 17,
+      "attributes": [
+        "type",
+        "disabled",
+        "className"
+      ],
+      "label": "下载中…"
+    }
+  ]
+}

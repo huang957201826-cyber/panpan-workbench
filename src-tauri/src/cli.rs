@@ -37,7 +37,10 @@ impl Cli {
     /// 页面开始重载：旧页面已无人回复，丢弃等待中的命令（等待方收到中断错误）
     pub fn reset(&self) {
         self.ready.store(false, Ordering::SeqCst);
-        self.pending.lock().unwrap_or_else(|err| err.into_inner()).clear();
+        self.pending
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clear();
     }
 }
 
@@ -78,7 +81,11 @@ async fn serve(app: AppHandle, conn: tokio::net::windows::named_pipe::NamedPipeS
 
     let (read, mut write) = tokio::io::split(conn);
     let mut line = Vec::new();
-    if BufReader::new(read).read_until(b'\n', &mut line).await.is_err() {
+    if BufReader::new(read)
+        .read_until(b'\n', &mut line)
+        .await
+        .is_err()
+    {
         return;
     }
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -112,16 +119,24 @@ async fn call(app: &AppHandle, request: Value, progress: mpsc::UnboundedSender<S
     }
     let id = cli.next_id.fetch_add(1, Ordering::SeqCst);
     let (tx, rx) = oneshot::channel();
-    cli.pending.lock().unwrap_or_else(|err| err.into_inner()).insert(id, Waiting { done: tx, progress });
+    cli.pending
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .insert(id, Waiting { done: tx, progress });
     let payload = json!({ "id": id, "tool": request["tool"], "arguments": request["arguments"] });
     if let Err(err) = app.emit_to("main", "cli-request", payload) {
-        cli.pending.lock().unwrap_or_else(|err| err.into_inner()).remove(&id);
+        cli.pending
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(&id);
         return json!({ "error": format!("无法联系应用主窗口：{err}") });
     }
     match rx.await {
         Ok(Ok(result)) => result,
         Ok(Err(message)) => json!({ "error": message }),
-        Err(_) => json!({ "error": "应用页面重新加载，命令已中断；已开始的任务可能仍在继续，可用 history 查看" }),
+        Err(_) => {
+            json!({ "error": "应用页面重新加载，命令已中断；已开始的任务可能仍在继续，可用 history 查看" })
+        }
     }
 }
 
@@ -134,7 +149,12 @@ pub fn cli_ready(ready: bool, cli: State<'_, Cli>) {
 /// 前端执行 cli-request 期间转给命令行的一行进度
 #[tauri::command]
 pub fn cli_progress(id: u64, text: String, cli: State<'_, Cli>) {
-    if let Some(waiting) = cli.pending.lock().unwrap_or_else(|err| err.into_inner()).get(&id) {
+    if let Some(waiting) = cli
+        .pending
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .get(&id)
+    {
         let _ = waiting.progress.send(text);
     }
 }
@@ -142,7 +162,11 @@ pub fn cli_progress(id: u64, text: String, cli: State<'_, Cli>) {
 /// 前端执行完 cli-request 后回传结果；error 非空表示命令执行失败
 #[tauri::command]
 pub fn cli_respond(id: u64, result: Option<Value>, error: Option<String>, cli: State<'_, Cli>) {
-    let waiting = cli.pending.lock().unwrap_or_else(|err| err.into_inner()).remove(&id);
+    let waiting = cli
+        .pending
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .remove(&id);
     if let Some(waiting) = waiting {
         let _ = waiting.done.send(match (result, error) {
             (Some(result), None) => Ok(result),

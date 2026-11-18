@@ -1,0 +1,52 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S6",
+  "status": "approved",
+  "reviewRound": 3,
+  "baseCommit": "67768b5",
+  "gates": [
+    {
+      "id": "S6-G01",
+      "command": "npm run gate:dev",
+      "exitCode": 0,
+      "result": "1.8.0 build + 1165 frontend tests + SAST + release-check passed"
+    },
+    {
+      "id": "S6-G02",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+      "exitCode": 0,
+      "result": "114 Rust tests passed"
+    },
+    {
+      "id": "S6-G03",
+      "command": "npm run e2e",
+      "exitCode": 0,
+      "result": "82 Playwright tests passed"
+    },
+    {
+      "id": "S6-G04",
+      "command": "npx playwright test e2e/r9-layout.e2e.ts -g \"S6：\"",
+      "exitCode": 0,
+      "result": "960x640 at 125%/150% UI scale passed with screenshots"
+    }
+  ],
+  "implemented": {
+    "allLegacySkipsRemoved": true,
+    "ciE2eBlocking": true,
+    "tagReleaseWorkflowRemoved": true,
+    "version1_8_0Unified": true,
+    "readmeAndReleaseUpdated": true,
+    "controlSweepClean": true,
+    "secretAssetScanClean": true
+  },
+  "pendingAfterApproval": [
+    "build final installer once",
+    "generate matching .sig and latest.json",
+    "clean install and two upgrade paths",
+    "uninstall retain/delete and reinstall recovery",
+    "updater install and rollback",
+    "installed U2"
+  ],
+  "reviewResult": "CODE_REVIEW=APPROVE",
+  "reviewRequired": false
+}

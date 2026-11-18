@@ -21,9 +21,9 @@ describe('workspaceState', () => {
     expect(normalizeWorkspace({ projects: 'bad' }, 100)).toMatchObject({ viewMode: 'canvas', inputDockPosition: 'bottom' })
   })
 
-  it('keeps explicitly saved grid/right preferences for existing users', () => {
+  it('keeps grid view but collapses legacy right dock to bottom', () => {
     const saved = { ...createDefaultWorkspace(1), viewMode: 'grid' as const, inputDockPosition: 'right' as const }
-    expect(normalizeWorkspace(saved, 100)).toMatchObject({ viewMode: 'grid', inputDockPosition: 'right' })
+    expect(normalizeWorkspace(saved, 100)).toMatchObject({ viewMode: 'grid', inputDockPosition: 'bottom' })
   })
 
   it('keeps projects without auto-restoring default nodes', () => {

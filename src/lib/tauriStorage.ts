@@ -111,6 +111,16 @@ export function flushTauriStorage() {
   return writing
 }
 
+export async function flushTauriStorageStrict() {
+  if (loadError) {
+    throw new Error(`读取本地设置失败，无法安全恢复：${loadError.message}`)
+  }
+  await flushTauriStorage()
+  if (dirty.size) {
+    throw new Error('本地设置仍有未写入内容，恢复已中止')
+  }
+}
+
 /** 关闭窗口或安装更新前写入，限时等待 */
 export function flushTauriStorageBeforeExit() {
   let limit: ReturnType<typeof setTimeout> | undefined

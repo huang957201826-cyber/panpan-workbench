@@ -18,9 +18,9 @@ import { deleteCanvas, deleteProject, enqueueWorkspaceAction, getCanvasTasks, ge
 import { clearAllSelection } from '../lib/selection'
 import { clearCanvasUndo, retainCanvasUndo } from '../lib/canvasUndo'
 import { composeSkillPrompt, loadBuiltinSkills, skillCoverColor } from '../lib/capabilitySkills'
-import { migratePromptSkills } from '../lib/migratePromptSkills'
-import { useSkillStore } from '../lib/skillStore'
 import { useCapabilitySkillStore } from '../lib/capabilitySkillStore'
+import { useSkillStore } from '../lib/skillStore'
+import { buildRegisteredSkillCatalog, resolveRegisteredSkill, saveCapabilitySkill } from '../lib/skillRegistry'
 import { MAX_PROMPT_LENGTH } from '../lib/promptLimits'
 import { useWorkspaceStore } from '../lib/workspaceStore'
 import CanvasBoard from '../components/CanvasBoard'
@@ -33,16 +33,15 @@ import { AppSidebar } from './components/AppSidebar'
 import { BottomPromptBar } from './components/BottomPromptBar'
 import { CardGridView } from './components/CardGridView'
 import { DeleteWorkspaceDialog } from './components/DeleteWorkspaceDialog'
-import { RightGeneratorDrawer } from './components/RightGeneratorDrawer'
 import { TitleBar } from './components/TitleBar'
 import { StudioHeader } from './components/StudioHeader'
 import { createFavoritesEntries, FAVORITES_CANVAS_ID, isFavoritesCanvas, isFavoritesProject } from '../lib/favorites'
 import { StudioViewToolbar, selectAllTaskIds, type StudioStatusFilter } from './components/StudioViewToolbar'
 import { CanvasCapsuleBar } from './components/CanvasCapsuleBar'
 import type { SidebarProject } from './components/AppSidebar'
-import { CapabilitySkillLibrary } from './components/CapabilitySkillLibrary'
 import { HomeHubView } from './components/HomeHubView'
-import { WorkflowView } from './components/WorkflowView'
+import { SkillHubHost } from './components/SkillHubHost'
+import { WorkflowHub } from './components/WorkflowHub'
 
 import { getStudioSizeOptions, getGenerationParams, toReferenceImages, toTaskParams, useArtboards } from './adapters'
 import './studio.css'
@@ -78,7 +77,6 @@ export default function StudioShell() {
     localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
-  const [narrow, setNarrow] = useState(() => window.innerWidth < 1100)
   const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -115,7 +113,8 @@ export default function StudioShell() {
   const [batchDownloadProgress, setBatchDownloadProgress] = useState<{ done: number; total: number } | null>(null)
   const clearSkillChip = useStore((s) => s.clearSkillChip)
   const mineCapabilitySkills = useCapabilitySkillStore((s) => s.mine)
-  const legacyPromptSkills = useSkillStore((s) => s.skills)
+  const promptSkills = useSkillStore((s) => s.skills)
+  const skillOverrides = useCapabilitySkillStore((s) => s.builtinOverrides)
   const [builtinCapabilitySkills, setBuiltinCapabilitySkills] = useState<Skill[]>([])
 
   useEffect(() => {
@@ -126,10 +125,6 @@ export default function StudioShell() {
     return () => { cancelled = true }
   }, [])
 
-  useEffect(() => {
-    const count = migratePromptSkills()
-    if (count > 0) showToast(`已把 ${count} 个旧提示词迁移到技能库`, 'success')
-  }, [legacyPromptSkills.length, showToast])
   const filteredTasks = useMemo(() => {
     const list = filterStudioTasks(tasks, { query, status: statusFilter, favoriteOnly, model: modelFilter || undefined })
     if (cardSort === 'oldest') return [...list].sort((a, b) => a.createdAt - b.createdAt)
@@ -244,12 +239,6 @@ export default function StudioShell() {
     if (canvas && (canvas.promptDraft != null || canvas.paramsDraft || canvas.referenceImageIds?.length || canvas.maskDraft)) {
       void enqueueWorkspaceAction(() => restoreActiveCanvasSnapshot())
     }
-  }, [])
-
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 1100)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   useEffect(() => {
@@ -448,7 +437,7 @@ export default function StudioShell() {
     }
     const now = Date.now()
     const id = `mine:${crypto.randomUUID()}`
-    useCapabilitySkillStore.getState().addMine({
+    saveCapabilitySkill({
       id,
       name: prompt.trim().split(/\r?\n/)[0]?.slice(0, 40) || '未命名技能',
       description: '从当前提示词保存',
@@ -477,7 +466,12 @@ export default function StudioShell() {
       return
     }
     const liveState = useStore.getState()
-    const liveSkill = [...mineCapabilitySkills, ...builtinCapabilitySkills].find((item) => item.id === liveState.activeSkillId) ?? null
+    const liveSkill = resolveRegisteredSkill(buildRegisteredSkillCatalog({
+      promptSkills,
+      capabilitySkills: mineCapabilitySkills,
+      builtinSkills: builtinCapabilitySkills,
+      overrides: skillOverrides,
+    }), liveState.activeSkillId)
     const liveSlotValues = liveState.skillSlotValues
     if (!promptText.trim() && !liveSkill) {
       showToast('请输入提示词或先选用技能', 'error')
@@ -499,7 +493,7 @@ export default function StudioShell() {
         return
       }
       skillContext = {
-        id: skill.id,
+        id: skill.registryId ?? skill.id,
         name: skill.name,
         basePrompt: skill.basePrompt,
         slots: skill.slots,
@@ -974,7 +968,6 @@ export default function StudioShell() {
                         tasks={tasksInView}
                         allTaskCount={tasks.length}
                         canvasId={activeCanvas?.id ?? ''}
-                        rightInset={narrow && workspace.inputDockPosition === 'right' ? 360 : 0}
                         pickMode={canvasPickMode}
                         onCancelPick={() => setCanvasPickMode(false)}
                         onPickImage={(imageId) => {
@@ -997,9 +990,9 @@ export default function StudioShell() {
                 </>
               )
             ) : activeActivity === 'skills' ? (
-              <CapabilitySkillLibrary onUsed={() => setActiveActivity('projects')} />
+              <SkillHubHost onApplied={() => setActiveActivity('projects')} />
             ) : activeActivity === 'workflow' ? (
-              <WorkflowView onBack={() => setActiveActivity('projects')} />
+              <WorkflowHub />
             ) : null}
           </div>
 
@@ -1007,7 +1000,7 @@ export default function StudioShell() {
             <div
               ref={bottomBarRef}
               data-input-bar
-              className="ui-scale-chrome absolute bottom-16 left-0 right-0 z-30 pointer-events-none flex justify-center"
+              className="ui-scale-chrome absolute bottom-4 left-0 right-0 z-30 pointer-events-none flex justify-center"
             >
               <BottomPromptBar
                 prompt={prompt}
@@ -1027,7 +1020,6 @@ export default function StudioShell() {
                 }}
                 params={generationParams}
                 onParamsChange={handleParamsChange}
-                onDockRight={() => useWorkspaceStore.getState().setInputDockPosition('right')}
                 modelOptions={modelOptions}
                 aspectRatios={sizeOptions}
                 countOptions={[1, 2, 4]}
@@ -1046,58 +1038,6 @@ export default function StudioShell() {
 
           </div>
 
-          {workspace.inputDockPosition === 'right' && activeActivity === 'projects' && activeCanvas && (
-            <div data-right-drawer className={`ui-scale-chrome h-full ${narrow ? 'absolute right-0 top-0 bottom-0 z-30 shadow-2xl' : ''}`}>
-              <RightGeneratorDrawer
-                prompt={prompt}
-                onPromptChange={setPrompt}
-                onGenerate={(text, nextParams) => void handleGenerate(text, nextParams)}
-                isGenerating={submitting || pendingInputs > 0}
-                referenceImages={toReferenceImages(inputImages, missingInputIds)}
-                onAddReferenceImage={(image) => addInputImage({ id: image.id, dataUrl: image.url })}
-                onAddReferenceFile={(file) => void addImageFileToCanvas(activeCanvas?.id ?? '', file)}
-                onRemoveReferenceImage={(id) => {
-                  const index = inputImages.findIndex((image) => image.id === id)
-                  if (index >= 0) useStore.getState().removeInputImage(index)
-                }}
-                onClearReferenceImages={clearInputImages}
-                onReorderReferenceImages={(next) => {
-                  useStore.getState().reorderInputImages(next.map((ref) => ref.id))
-                }}
-                params={generationParams}
-                onParamsChange={handleParamsChange}
-                canvasId={activeCanvas?.id}
-                artboards={resultArtboards}
-                selectedArtboardId={selectedArtboardId}
-                onSelectArtboard={setSelectedArtboardId}
-                onFocusArtboard={(artboardId) => {
-                  focusTask(artboardId.split(':')[0])
-                }}
-                onSetAsReference={(artboard) => void addArtboardImage(artboard)}
-                onRecallPrompt={(artboard) => {
-                  const task = findTask(artboard.taskId)
-                  if (task) void reuseTaskConfig(task)
-                }}
-                onCloseOrDockBottom={() => useWorkspaceStore.getState().setInputDockPosition('bottom')}
-                modelOptions={modelOptions}
-                aspectRatios={sizeOptions}
-                countOptions={[1, 2, 4]}
-                showDockToggle={true}
-                apiProfiles={settings.profiles.map((profile) => ({ id: profile.id, name: profile.name }))}
-                activeProfileId={settings.activeProfileId}
-                onSelectProfile={(id) => setSettings({ activeProfileId: id })}
-                batchEnabled={settings.batchPromptEnabled}
-                onToggleBatch={() => setSettings({ showBatchPrompt: true, batchPromptEnabled: !settings.batchPromptEnabled })}
-                onOpenMask={openMask}
-                onStartCanvasPick={() => setCanvasPickMode((value) => !value)}
-                canvasPickActive={canvasPickMode}
-                onSaveAsSkill={savePromptAsSkill}
-                onManageModels={() => setShowSettings(true, 'api')}
-                viewMode={workspace.viewMode}
-                onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
-              />
-            </div>
-          )}
         </div>
       </div>
 

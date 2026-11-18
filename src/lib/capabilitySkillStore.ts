@@ -31,15 +31,17 @@ function normalizeSlots(value: unknown): SkillSlot[] {
 
 export function normalizeCapabilitySkills(value: unknown): Skill[] {
   if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
   return value.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const skill = item as Partial<Skill>
     if (typeof skill.id !== 'string' || typeof skill.name !== 'string' || typeof skill.basePrompt !== 'string') return []
-    return [{
+    const normalized: Skill = {
       id: skill.id,
       name: skill.name,
       description: typeof skill.description === 'string' ? skill.description : '',
       category: typeof skill.category === 'string' ? skill.category : '我的',
+      tags: Array.isArray(skill.tags) ? skill.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
       coverColor: typeof skill.coverColor === 'string' ? skill.coverColor : '#E8DCC8',
       coverImageId: typeof skill.coverImageId === 'string' ? skill.coverImageId : undefined,
       referenceImageIds: Array.isArray(skill.referenceImageIds)
@@ -52,12 +54,20 @@ export function normalizeCapabilitySkills(value: unknown): Skill[] {
       requiredImages: Array.isArray(skill.requiredImages) ? skill.requiredImages : undefined,
       examples: Array.isArray(skill.examples) ? skill.examples.filter((example): example is string => typeof example === 'string') : undefined,
       source: skill.source === 'builtin' ? 'builtin' : 'mine',
+      kind: 'capability',
+      sourceId: skill.id,
       model: typeof skill.model === 'string' && skill.model.trim() ? skill.model.trim() : undefined,
       favorite: skill.favorite === true,
+      author: typeof skill.author === 'string' && skill.author.trim() ? skill.author.trim() : undefined,
       version: typeof skill.version === 'number' ? skill.version : 1,
       createdAt: typeof skill.createdAt === 'number' ? skill.createdAt : Date.now(),
       updatedAt: typeof skill.updatedAt === 'number' ? skill.updatedAt : Date.now(),
-    }]
+    }
+    return [normalized]
+  }).filter((skill) => {
+    if (seen.has(skill.id)) return false
+    seen.add(skill.id)
+    return true
   })
 }
 
@@ -100,6 +110,8 @@ export function applySkillOverride(skill: Skill, overrides: Record<string, Skill
   if (!override) return skill
   return {
     ...skill,
+    kind: 'capability',
+    sourceId: skill.id,
     favorite: override.favorite ?? skill.favorite,
     coverImageId: override.coverImageId ?? skill.coverImageId,
     model: override.model ?? skill.model,

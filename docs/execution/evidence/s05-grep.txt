@@ -1,0 +1,1 @@
+git grep -n "onDockRight\|inputDockPosition === 'right'" -- src => matches: 0

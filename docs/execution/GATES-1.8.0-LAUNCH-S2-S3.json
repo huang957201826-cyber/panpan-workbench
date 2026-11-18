@@ -1,0 +1,52 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S2+S3",
+  "status": "approved",
+  "reviewRound": 2,
+  "baseCommit": "93f0353",
+  "gates": [
+    {
+      "id": "S2S3-G01",
+      "command": "npm run gate:dev",
+      "exitCode": 0,
+      "result": "build + 1165 frontend tests + SAST + release-check passed"
+    },
+    {
+      "id": "S2S3-G02",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+      "exitCode": 0,
+      "result": "110 Rust tests passed"
+    },
+    {
+      "id": "S2S3-G03",
+      "command": ".\\.node_modules\\.bin\\tsc.cmd -b",
+      "exitCode": 0
+    }
+  ],
+  "implemented": {
+    "unifiedSkillRegistry": true,
+    "promptCapabilityKind": true,
+    "canonicalRegistryIds": true,
+    "legacyPromptMirrorFiltered": true,
+    "registryCrudBoundary": true,
+    "extensibleSkillKindModule": true,
+    "backupRestoreUsesRegistry": true,
+    "savedWorkflowLabels": true,
+    "workflowPlaceholderRemoved": true
+  },
+  "deferredToU2": [
+    "TestSkill1800 exact-ID cleanup",
+    "legacy workflow localStorage final cleanup after real migration verification",
+    "real backup activeSkill/cover/reference-image round trip"
+  ],
+  "remediated": [
+    {
+      "id": "S2-FI01",
+      "case": "prompt skill with legacy prompt: capability mirror is deleted",
+      "expected": "mirror cannot reappear in catalog, export snapshot or restored capability store",
+      "result": "pass"
+    }
+  ],
+  "reviewResult": "CODE_REVIEW=APPROVE",
+  "reviewRequired": false
+}

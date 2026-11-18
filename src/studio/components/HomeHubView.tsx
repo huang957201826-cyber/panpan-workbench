@@ -6,6 +6,8 @@ import { useStore } from '../../store'
 import { Menu as PopMenu } from '../../ui'
 import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
+import { useSkillStore } from '../../lib/skillStore'
+import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry'
 import { ensureImageCached } from '../../lib/imageCache'
 import { STUDIO_FORMATS } from '../constants'
 import { SkillPickerModal } from './SkillPickerModal'
@@ -48,7 +50,14 @@ export function HomeHubView({
   const setSkillSlotValues = useStore((s) => s.setSkillSlotValues)
   const clearSkillChip = useStore((s) => s.clearSkillChip)
   const mineSkills = useCapabilitySkillStore((s) => s.mine)
-  const activeSkill = [...mineSkills, ...builtinSkills].find((skill) => skill.id === activeSkillId) ?? null
+  const promptSkills = useSkillStore((s) => s.skills)
+  const skillOverrides = useCapabilitySkillStore((s) => s.builtinOverrides)
+  const activeSkill = resolveRegisteredSkill(buildRegisteredSkillCatalog({
+    promptSkills,
+    capabilitySkills: mineSkills,
+    builtinSkills,
+    overrides: skillOverrides,
+  }), activeSkillId)
   const canGenerate = Boolean(prompt.trim() || activeSkillId) && !isGenerating
   const sizeLabel = sizeOptions.find((item) => item.res === params.dimension)?.label ?? params.dimension
 
@@ -71,7 +80,7 @@ export function HomeHubView({
       const dataUrl = await ensureImageCached(imageId)
       if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl })
     }
-    setActiveSkillId(skill.id)
+    setActiveSkillId(skill.registryId ?? skill.id)
     setSkillSlotValues(values)
     setShowSkillPicker(false)
   }

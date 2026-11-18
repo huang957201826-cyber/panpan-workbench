@@ -1,0 +1,59 @@
+{
+  "batch": "B04B",
+  "version": "1.0.3",
+  "builtAt": "2026-11-10T22:06:00+08:00",
+  "commit": "f83e988f2f9b931f921849b1fec9bd5954d04378",
+  "planHash": "A7687CFB02862C694A4E6E7EBA91712C9DBD80ACBFC0F6365FC5DAE1DD4ADFE8",
+  "installer": {
+    "path": "C:/Users/95720/生图软件二开/gpt_image_playground-main/src-tauri/target/release/bundle/nsis/PanPan Workbench_1.0.3_x64-setup.exe",
+    "bytes": 10530675,
+    "sha256": "A3DA499B1FF8BF41C2955F228FAF131C6D46D33549FCBE8A23888213A729B14B",
+    "signaturePath": "C:/Users/95720/生图软件二开/gpt_image_playground-main/src-tauri/target/release/bundle/nsis/PanPan Workbench_1.0.3_x64-setup.exe.sig",
+    "signatureBytes": 448,
+    "signatureSha256": "0A71F9D3B538D154C95FB6B3A5C129161D76A5C080BE3F35064321764E2AA636"
+  },
+  "rollback": {
+    "path": "E:/02-RUANJIAN/67-盼盼工作台/backups/b04b-pre-install-20261110/PanPan Workbench_1.0.2_x64-setup.exe",
+    "bytes": 10513977,
+    "sha256": "8A3C2B6E840A1B8A4CA68007F5CAD0B3888B9853A89298A9C53F27400A05382A",
+    "signature": true
+  },
+  "gates": {
+    "unit": "93 files / 1085 tests passed",
+    "e2e": "11 tests passed",
+    "rust": "105 tests passed",
+    "gateDev": "passed (release-check 1.0.3)",
+    "tauriBuild": "passed (signed)"
+  },
+  "failureInjection": {
+    "clearAllSelectionSkipsCanvas": "U6 e2e failed as expected, restored to green",
+    "skillMergeSkipped": "skills e2e failed as expected, restored to green",
+    "evidence": "docs/execution/evidence/b04b-failure-injection.log"
+  },
+  "preInstall": {
+    "backupRoot": "E:/02-RUANJIAN/67-盼盼工作台/backups/b04b-pre-install-20261110",
+    "dataBackup": "data",
+    "appBackup": "app",
+    "quickCheck": "ok",
+    "tasks": 12,
+    "images": 15
+  },
+  "postInstall": {
+    "version": "1.0.3",
+    "installPath": "E:/02-RUANJIAN/67-盼盼工作台/PanPan Workbench",
+    "quickCheck": "ok",
+    "tasks": 12,
+    "images": 15,
+    "windowTitle": "盼盼工作台",
+    "processRunning": true,
+    "completedAt": "2026-11-10T22:10:00+08:00"
+  },
+  "installedVerification": {
+    "skillPicker": "27 built-in skills loaded with categories and covers",
+    "data": "12 tasks / 15 images unchanged",
+    "evidence": [
+      "docs/execution/evidence/b04b-installed-skill-picker.png",
+      "docs/execution/evidence/b04b-failure-injection.log"
+    ]
+  }
+}

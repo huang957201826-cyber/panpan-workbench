@@ -1,0 +1,54 @@
+{
+  "batch": "B01",
+  "version": "0.1.1",
+  "head": "b01-3",
+  "tags": {
+    "b01-base": "dfb7569",
+    "b01-1": "14a9562",
+    "b01-2": "6d15f5f",
+    "b01-3": "HEAD"
+  },
+  "gates": {
+    "tsc": "pass",
+    "vitest": {
+      "files": 72,
+      "tests": 950,
+      "failed": 0
+    },
+    "viteBuild": "pass",
+    "cargoTest": {
+      "libTests": 87,
+      "failed": 0
+    },
+    "tauriBuild": "pass",
+    "installer": "PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerBytes": 29024769,
+    "installerSha256": "FFD58571167BF983A91CC781F6FC88D19489482C82C9E2C9D4109568F47D5858",
+    "installedExeSha256": "9A6E2EDFB5226E64991E603FA0F83FB042288A486D57200CD7A03BBE55DAFDF6",
+    "buildSourceCommit": "ba60268",
+    "installedVersion": "0.1.1",
+    "installLocation": "E:\\02-RUANJIAN\\67-生图工作台\\PanPan Workbench",
+    "dataDir": "E:\\02-RUANJIAN\\67-生图工作台\\PanPan Workbench\\data (test data)",
+    "orphanedRealData": "C:\\Users\\95720\\AppData\\Local\\PanPan Workbench\\data (real tasks, no exe)",
+    "codeReview": "REJECT (4 blockers recorded in AUDIT-B02.md)",
+    "install": "silent /S pass",
+    "overwriteInstall": "pass",
+    "u2": {
+      "testDataDirEnv": "PANPAN_DATA_DIR pass",
+      "quickMenuFloating": "pass",
+      "sizePickerModal": "pass",
+      "canvasNodeActions": "pass",
+      "settingsSixTabs": "pass",
+      "announcementPopup": "absent",
+      "realImageDataHashBefore": "43E676EA0026871CAD17D7ECA19FE5E6C7F1D5A4AEA50732E619D7361B0D62FC",
+      "realImageDataHashAfter": "43E676EA0026871CAD17D7ECA19FE5E6C7F1D5A4AEA50732E619D7361B0D62FC",
+      "realDataBackupSha256": "CB2F0238864D08C0F8297E6D10DA7A447D3A960AB3F86E0F90E2D9E078A340CD"
+    }
+  },
+  "knownLimits": [
+    "内部未签名 NSIS 包，无 .sig/latest.json",
+    "未做干净虚拟机验证",
+    "未在真实数据上执行生成/拖拽/删除写操作",
+    "图标为盼盼熊猫首版，待用户确认"
+  ]
+}

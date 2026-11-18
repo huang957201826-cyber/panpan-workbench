@@ -17,6 +17,7 @@ import type {
   MaskDraft,
   SketchBoardRequest,
   TaskRecord,
+  ExportData,
   TaskCanvasMeta,
   TaskSkillContext,
   ViewportTransform,
@@ -67,13 +68,13 @@ import { useCanvasViewStore } from './lib/canvasViewStore'
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { getManualTaskConcurrency } from './lib/manualTaskQueue'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
-import { blobToDataUrl } from './lib/dataUrl'
+import { blobToDataUrl, dataUrlToBytes } from './lib/dataUrl'
 import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleMissingThumbnailBackfill } from './lib/imageCache'
 import { migrateImagesToBlob } from './lib/imageBlob'
 import { hasActiveDataOperations, isCustomRecoverableTask, isFalRecoverableTask } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, collectCapabilityCoverImageIds, collectCapabilityOverrideCoverIds, collectSkillCoverImageIds, createExportBlob, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, mergeImportedCapabilitySkills, mergeImportedSkills, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
-import { useCapabilitySkillStore } from './lib/capabilitySkillStore'
+import type { SkillOverride } from './lib/capabilitySkillStore'
 import { collectReferencedImageIds } from './lib/exportReferences'
 import { getExportImageSizes, readExportImages } from './lib/exportImages'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPath, isEmptyAgentConversation, normalizeAgentConversations, remapAgentRoundMentionsForPathChange, uniqueIds } from './lib/agentConversationState'
@@ -81,9 +82,9 @@ import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createR
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
 import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefaultFavoriteCollection, deleteFavoriteCollectionState, ensureDefaultFavoriteCollection, getNewTaskFavoritePatch, getTaskFavoriteCollectionIds, mergeFavoriteCollections, normalizeFavoriteCollectionIds, normalizeFavoriteCollectionName, normalizeFavoriteCollections, normalizeFavoritePatch, normalizeLoadedFavoriteState, resolveDefaultFavoriteCollectionId, sameFavoriteCollectionIds } from './lib/favoriteState'
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
-import { collectWorkspaceDraftImageIds, DEFAULT_CANVAS_ID, getPersistedWorkspace, hasCanvasSnapshotChanged, migrateTasksToWorkspace, mergeImportedWorkspace, resolveTaskOwnership, splitNewTasks } from './lib/workspaceState'
+import { collectWorkspaceDraftImageIds, DEFAULT_CANVAS_ID, getPersistedWorkspace, hasCanvasSnapshotChanged, migrateTasksToWorkspace, mergeImportedWorkspace, normalizeWorkspace, resolveTaskOwnership, splitNewTasks } from './lib/workspaceState'
 import { useWorkspaceStore, setWorkspaceComposerPersistence } from './lib/workspaceStore'
-import { useSkillStore } from './lib/skillStore'
+import { getRegisteredSkillSnapshot, replaceRegisteredSkillBackup, replaceRegisteredSkillState } from './lib/skillRegistry'
 import { setStorageErrorHandler } from './lib/tauriStorage'
 import { ensureDiskSpace } from './lib/diskSpace'
 import { collectTaskAssetImageIds, trimWorkspaceForDelete, writeDeleteSnapshot, type DeleteSnapshotScope } from './lib/deleteSnapshot'
@@ -93,13 +94,20 @@ import { apiFetch, FetchConnectError, isTauri } from './lib/platform'
 import { pickSaveDir, saveFile, saveFileToDir, type SaveOptions } from './lib/saveFile'
 import { endDataProgress, setDataProgressCancelable, startDataProgress, updateDataProgress, useSettingsDataTransfer } from './lib/dataProgress'
 import { throwIfAborted } from './lib/serverSentEvents'
-import { tauriStorage } from './lib/tauriStorage'
+import { flushTauriStorageStrict, tauriStorage } from './lib/tauriStorage'
 import { encryptedTauriStorage } from './lib/secretVault'
 import { createPrivacyModeState, getPrivacySnapshotImageIds, isPrivacyHiddenConversation, isPrivacyHiddenTask, restorePrivacyInputState, type PrivacyModeState } from './lib/privacyMode'
+import { cleanupPreparedWorkflowImages, collectWorkflowBackup, planWorkflowRestore, replaceSavedWorkflowState, writePlannedWorkflowImages } from './lib/workflowBackup'
+import { beginRestoreJournal, commitRestore, deleteRestoreJournal } from './lib/dbTauri'
+import { mergeRestoreTasks, mergeRestoreWorkflows, type RestoreMode } from './lib/restorePlan'
+import { encryptPersistedSettings } from './lib/secretVault'
+import { createImageRestoreMap, remapImageIdsDeep } from './lib/imageRestore'
+import { initializeSavedWorkflows, listWorkflows, SAVED_WORKFLOWS_MIGRATION_KEY, type ProjectWorkflow } from './studio/workflows/projectWorkflows'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
 const RECOVERY_MAX_MS = 30 * 60 * 1000
+const AGENT_RESTORE_DRAIN_TIMEOUT_MS = 5_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 
 class RecoveryAbortedError extends Error {
@@ -146,6 +154,79 @@ interface TaskWriteState {
 }
 
 const taskWriteStates = new Map<string, TaskWriteState>()
+let restoreWriteLocked = false
+let agentRestoreEpoch = 0
+const agentRoundExecutions = new Map<string, Promise<void>>()
+
+export function isRestoreWriteLocked() {
+  return restoreWriteLocked
+}
+
+async function acquireRestoreWriteLock() {
+  if (restoreWriteLocked) throw new Error('已有恢复任务正在进行')
+  restoreWriteLocked = true
+  agentRestoreEpoch += 1
+  const state = useStore.getState()
+  const activeTaskIds = state.tasks
+    .filter((task) => task.status === 'running')
+    .map((task) => task.id)
+  try {
+    const runningConversationIds = state.agentConversations
+      .filter((conversation) => conversation.rounds.some((round) => round.status === 'running'))
+      .map((conversation) => conversation.id)
+    await Promise.allSettled(activeTaskIds.map((taskId) => stopTask(taskId)))
+    for (const controller of agentRoundControllers.values()) controller.abort()
+    agentRecoveryContinuations.clear()
+    for (const conversationId of runningConversationIds) {
+      await stopAgentResponse(conversationId)
+    }
+    await waitForAgentRoundExecutionsToDrain()
+    await drainAgentConversationsForRestore()
+    for (const taskId of activeTaskIds) {
+      setTaskWritesBlocked(taskId, true)
+      clearFalRecoveryTimer(taskId)
+      clearCustomRecoveryTimer(taskId)
+      clearRecoveryStarted(taskId)
+      clearOpenAIWatchdogTimer(taskId)
+    }
+    await Promise.all(state.tasks.map((task) => waitForTaskWrites(task.id)))
+    await flushTauriStorageStrict()
+    return activeTaskIds
+  } catch (err) {
+    releaseRestoreWriteLock(activeTaskIds, false)
+    throw err
+  }
+}
+
+async function waitForAgentRoundExecutionsToDrain() {
+  if (agentRoundExecutions.size === 0) return
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled([...agentRoundExecutions.values()]),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Agent 响应仍未结束，恢复已中止')),
+          AGENT_RESTORE_DRAIN_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+  if (agentRoundExecutions.size > 0) {
+    throw new Error('Agent 响应仍未排空，恢复已中止')
+  }
+}
+
+function releaseRestoreWriteLock(taskIds: string[], committed: boolean) {
+  for (const taskId of taskIds) {
+    setTaskWritesBlocked(taskId, false)
+    clearTaskWriteState(taskId)
+  }
+  if (!committed) restoreWriteLocked = false
+  else restoreWriteLocked = false
+}
 
 function getTaskWriteState(taskId: string) {
   const existing = taskWriteStates.get(taskId)
@@ -1083,6 +1164,10 @@ export const useStore = create<AppState>()(
       agentEditingConversationId: null,
       agentGeneratingTitleIds: {},
       createAgentConversation: () => {
+        if (restoreWriteLocked) {
+          get().showToast('数据恢复正在进行，暂时不能新建对话', 'info')
+          return get().activeAgentConversationId ?? ''
+        }
         const now = Date.now()
         const latestConversation = getLatestAgentConversation(get().agentConversations)
         if (latestConversation && isEmptyAgentConversation(latestConversation)) {
@@ -1405,23 +1490,35 @@ useStore.subscribe((state, previous) => {
 })
 let agentConversationPersistRunning = false
 let agentConversationPersistQueued = false
+let agentConversationPersistTask: Promise<void> = Promise.resolve()
 
 async function flushAgentConversationsToIndexedDB() {
   if (agentConversationPersistRunning) {
     agentConversationPersistQueued = true
-    return
+    return agentConversationPersistTask
   }
 
   agentConversationPersistRunning = true
-  try {
-    do {
-      agentConversationPersistQueued = false
-      const conversations = useStore.getState().agentConversations
-      await replaceStoredAgentConversations(conversations)
-      lastStoredAgentConversations = conversations
-    } while (agentConversationPersistQueued || useStore.getState().agentConversations !== lastStoredAgentConversations)
-  } finally {
-    agentConversationPersistRunning = false
+  agentConversationPersistTask = (async () => {
+    try {
+      do {
+        agentConversationPersistQueued = false
+        const conversations = useStore.getState().agentConversations
+        await replaceStoredAgentConversations(conversations)
+        lastStoredAgentConversations = conversations
+      } while (agentConversationPersistQueued || useStore.getState().agentConversations !== lastStoredAgentConversations)
+    } finally {
+      agentConversationPersistRunning = false
+    }
+  })()
+  return agentConversationPersistTask
+}
+
+async function drainAgentConversationsForRestore() {
+  agentConversationPersistQueued = true
+  await flushAgentConversationsToIndexedDB()
+  if (agentConversationPersistRunning || agentConversationPersistQueued) {
+    throw new Error('Agent 对话写入仍未排空，恢复已中止')
   }
 }
 
@@ -2165,6 +2262,10 @@ export interface SubmitTaskOptions {
 export async function submitTask(options: SubmitTaskOptions = {}): Promise<string[]> {
   const state = useStore.getState()
   const { settings, params, showToast, setConfirmDialog } = state
+  if (restoreWriteLocked) {
+    showToast('数据恢复正在进行，暂时不能提交任务。', 'info')
+    return []
+  }
   if (state.pendingInputs > 0) {
     showToast('参考图正在加入，请稍候再提交。', 'info')
     return []
@@ -2709,6 +2810,7 @@ async function generateAgentConversationTitle(
   activeProfile: ApiProfile,
   fallbackTitle: string,
 ) {
+  const restoreEpoch = agentRestoreEpoch
   useStore.setState((state) => {
     const next = { ...state.agentGeneratingTitleIds, [conversationId]: true as const }
     return { agentGeneratingTitleIds: next }
@@ -2722,6 +2824,7 @@ async function generateAgentConversationTitle(
       imageDataUrls,
     })
     if (!title || title === fallbackTitle) return
+    if (restoreWriteLocked || restoreEpoch !== agentRestoreEpoch) return
 
     updateAgentConversation(conversationId, (current) => {
       const firstRound = current.rounds[0]
@@ -2991,6 +3094,7 @@ function appendAgentRecoveredToolOutputs(conversationId: string, roundId: string
 }
 
 async function continueRecoveredAgentRound(taskId: string) {
+  if (restoreWriteLocked) return
   const state = useStore.getState()
   const task = state.tasks.find((item) => item.id === taskId)
   if (!task?.agentConversationId || !task.agentRoundId) return
@@ -3083,6 +3187,10 @@ async function continueRecoveredAgentRound(taskId: string) {
 export async function submitAgentMessage() {
   const state = useStore.getState()
   const { settings, prompt, inputImages, maskDraft, params, showToast } = state
+  if (restoreWriteLocked) {
+    showToast('数据恢复正在进行，暂时不能提交 Agent 消息', 'info')
+    return
+  }
   if (state.batchProgress) {
     showToast('画廊批量任务进行中，请等待完成或回到画廊停止后再提交', 'error')
     return
@@ -3135,6 +3243,10 @@ export async function submitAgentMessage() {
 
   for (const image of orderedInputImages) {
     await storeImage(image.dataUrl)
+  }
+  if (restoreWriteLocked) {
+    showToast('数据恢复已开始，本次 Agent 消息未提交', 'info')
+    return
   }
 
   const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
@@ -3237,6 +3349,10 @@ export async function submitAgentMessage() {
 export async function regenerateAgentAssistantMessage(conversationId: string, roundId: string) {
   const state = useStore.getState()
   const { settings, params, showToast } = state
+  if (restoreWriteLocked) {
+    showToast('数据恢复正在进行，暂时不能重新生成', 'info')
+    return
+  }
   const normalizedSettings = normalizeSettings(settings)
 
   const agentValidationError = getAgentProfileValidationError(normalizedSettings)
@@ -3343,7 +3459,34 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   void executeAgentRound(conversationId, newRoundId, normalizedParams, requestSettings, activeProfile, imageProfile)
 }
 
-async function executeAgentRound(
+function executeAgentRound(
+  conversationId: string,
+  roundId: string,
+  params: TaskParams,
+  requestSettings: AppSettings,
+  activeProfile: ApiProfile,
+  imageProfile: ApiProfile,
+  resume?: { responseOutput: ResponsesOutputItem[]; recoveredTaskIds: string[]; toolCallsUsed: number },
+) {
+  const controllerKey = getAgentRoundControllerKey(conversationId, roundId)
+  const execution = runAgentRound(
+    conversationId,
+    roundId,
+    params,
+    requestSettings,
+    activeProfile,
+    imageProfile,
+    resume,
+  )
+  agentRoundExecutions.set(controllerKey, execution)
+  const clearExecution = () => {
+    if (agentRoundExecutions.get(controllerKey) === execution) agentRoundExecutions.delete(controllerKey)
+  }
+  void execution.then(clearExecution, clearExecution)
+  return execution
+}
+
+async function runAgentRound(
   conversationId: string,
   roundId: string,
   params: TaskParams,
@@ -5568,6 +5711,7 @@ export interface ClearOptions {
 
 /** 清空数据 */
 export async function clearData(options: ClearOptions = { clearConfig: true, clearTasks: true }) {
+  if (restoreWriteLocked) throw new Error('数据恢复正在进行，暂时不能清空数据。')
   const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
   // 清空后剩余的批量提示词已没有对应的任务、配置或图片，直接结束批量
   if (useStore.getState().batchProgress) endBatch(activeBatchId)
@@ -5754,9 +5898,7 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
     })
   }
   const state = useStore.getState()
-  const skills = useSkillStore.getState().skills
-  const capabilitySkills = useCapabilitySkillStore.getState().mine
-  const capabilityOverrides = useCapabilitySkillStore.getState().builtinOverrides
+  const { promptSkills: skills, capabilitySkills, overrides: capabilityOverrides } = getRegisteredSkillSnapshot()
   const selectedIds = new Set(taskIds ?? state.tasks.map((task) => task.id))
   const allTasks = await getAllTasks()
   const tasks = allTasks.filter((task) => selectedIds.has(task.id))
@@ -5785,6 +5927,10 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
   const skillCoverImageIds = [...collectSkillCoverImageIds(skills), ...collectCapabilityCoverImageIds(capabilitySkills), ...collectCapabilityOverrideCoverIds(capabilityOverrides)]
     .filter((id) => availableImageIds.has(id))
   const imageIds = [...new Set([...referencedImageIds, ...skillCoverImageIds])]
+  const workflowBackup = await collectWorkflowBackup()
+  if (workflowBackup.missingImageIds.length) {
+    throw new Error(`有 ${workflowBackup.missingImageIds.length} 张工作流结果图无法读取，删除快照不完整，已中止删除。`)
+  }
   const exportedAt = Date.now()
   const params = {
     options: { exportConfig: true, exportTasks: true },
@@ -5800,6 +5946,8 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
     defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
     agentConversations: getPersistableAgentConversations(agentConversations),
     workspace: workspaceSnapshot,
+    savedWorkflows: workflowBackup.workflows,
+    workflowImages: workflowBackup.workflowImages,
   }
   const { images, thumbnailsByImageId } = await readExportImages(imageIds)
   const written = new Set(images.map((image) => image.id))
@@ -5824,6 +5972,7 @@ export async function createDeleteSnapshot(reason: string, taskIds?: Iterable<st
 
 /** 导出数据为 ZIP */
 export async function exportData(options: ExportOptions = { exportConfig: true, exportTasks: true }) {
+  if (restoreWriteLocked) throw new Error('数据恢复正在进行，暂时不能导出。')
   // 导出全程可取消：网页版放弃后续下载，客户端丢弃正在写入的临时文件
   const signal = startDataProgress('export', true)
   let savedParts = 0
@@ -5843,12 +5992,16 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       })
     }
     const state = useStore.getState()
-    const skills = useSkillStore.getState().skills
-    const capabilitySkills = useCapabilitySkillStore.getState().mine
-    const capabilityOverrides = useCapabilitySkillStore.getState().builtinOverrides
+    const { promptSkills: skills, capabilitySkills, overrides: capabilityOverrides } = getRegisteredSkillSnapshot()
     if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导出。')
     const tasks = options.exportTasks ? await getAllTasks() : []
     const imageIds = options.exportTasks ? await getAllImageIds() : []
+    const workflowBackup = options.exportTasks
+      ? await collectWorkflowBackup()
+      : { workflows: [], workflowImages: [], missingImageIds: [] }
+    if (workflowBackup.missingImageIds.length) {
+      throw new Error(`有 ${workflowBackup.missingImageIds.length} 张工作流结果图不在图片库中，备份会缺图，已中止。`)
+    }
     const { settings, agentConversations, favoriteCollections, defaultFavoriteCollectionId } = state
     const workspace = useWorkspaceStore.getState()
     if (options.exportTasks) {
@@ -5881,6 +6034,8 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       defaultFavoriteCollectionId,
       agentConversations: options.exportTasks ? getPersistableAgentConversations(agentConversations) : [],
       workspace: options.exportTasks ? getPersistedWorkspace(workspace, true) : undefined,
+      savedWorkflows: options.exportTasks ? workflowBackup.workflows : undefined,
+      workflowImages: options.exportTasks ? workflowBackup.workflowImages : undefined,
     }
     // 进度回调中检查取消，逐张读取时也能及时中断
     const imageSizes = await getExportImageSizes(imageIds, (done) => {
@@ -5888,7 +6043,11 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       updateDataProgress('统计图片', done, imageIds.length, 'image')
     })
     throwIfAborted(signal)
-    const plan = getExportZipPlan(params, imageSizes)
+    const workflowImageSizes = workflowBackup.workflowImages.map((image) => ({
+      id: image.id,
+      bytes: dataUrlToBytes(image.dataUrl).bytes.byteLength,
+    }))
+    const plan = getExportZipPlan(params, imageSizes, { workflowImages: workflowImageSizes })
     const backupId = `${exportedAt}`
     // 客户端分卷备份时先选择目录，一次写入全部分卷，替代浏览器的多文件下载
     if (isTauri && plan.length > 1) updateDataProgress('选择保存位置')
@@ -5915,12 +6074,14 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       throwIfAborted(signal)
       updateDataProgress(`打包${partLabel}`)
 
+      const workflowImageIds = new Set(plan[index].workflowImageIds)
       const result = await buildExportZip({
         ...params,
         tasks: plan[index].tasks,
         agentConversations: plan[index].agentConversations,
         images,
         thumbnailsByImageId,
+        workflowImages: workflowBackup.workflowImages.filter((image) => workflowImageIds.has(image.id)),
         includeManifestData: plan[index].includeBaseData,
         backupPart: plan.length > 1 ? { id: backupId, index: partNumber, total: plan.length } : undefined,
       })
@@ -5962,6 +6123,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
 export interface ImportOptions {
   importConfig?: boolean
   importTasks?: boolean
+  restoreMode?: RestoreMode
 }
 
 export async function restoreExplicitPresetConfig(ids: { providerIds: string[], profileIds: string[] }) {
@@ -5977,6 +6139,323 @@ export async function restoreExplicitPresetConfig(ids: { providerIds: string[], 
   const presetConfig = getPresetConfig()
   if (presetConfig) await useStore.getState().setPresetImportedSettings(presetConfig)
   return true
+}
+
+async function restoreV5Data(
+  selected: Array<{ file: File; manifest: ExportData }>,
+  options: ImportOptions,
+  signal: AbortSignal,
+) {
+  const operationId = `restore-${Date.now().toString(36)}-${crypto.randomUUID()}`
+  const mode = options.restoreMode
+    ?? (window.confirm('是否用备份替换现有数据？\n确定：替换所选数据\n取消：合并（同 ID 保留现有数据）')
+      ? 'replace'
+      : 'merge')
+  const zipParts: Array<Awaited<ReturnType<typeof readExportZip>>> = []
+  for (const part of selected) {
+    zipParts.push(await readExportZip(new Uint8Array(await part.file.arrayBuffer())))
+  }
+  throwIfAborted(signal)
+
+  const importedTasks = zipParts.flatMap((part) => part.manifest.tasks ?? [])
+  const importedAgentConversations = zipParts.flatMap((part) => part.manifest.agentConversations ?? [])
+  const importedSavedWorkflows = zipParts.flatMap((part) => part.manifest.savedWorkflows ?? [])
+  const importedWorkflowImages: Record<string, string> = {}
+  for (const part of zipParts) {
+    for (const [id, info] of Object.entries(part.manifest.workflowImageFiles ?? {})) {
+      const dataUrl = readExportZipFileAsDataUrl(part.files, info.path)
+      if (dataUrl) importedWorkflowImages[id] = dataUrl
+    }
+  }
+  const importedImageIds = [...new Set(zipParts.flatMap((part) => [
+    ...Object.keys(part.manifest.imageFiles ?? {}),
+    ...Object.keys(part.manifest.thumbnailFiles ?? {}),
+  ]))]
+  const imageRemap = createImageRestoreMap(importedImageIds, operationId)
+  const stagedImageFiles = zipParts.flatMap((part) =>
+    Object.entries(part.manifest.imageFiles ?? {}).flatMap(([id, info]) => {
+      const dataUrl = readExportZipFileAsDataUrl(part.files, info.path)
+      const newId = imageRemap.get(id)
+      if (!dataUrl || !newId) return []
+      return [{ oldId: id, newId, dataUrl, info }]
+    }),
+  )
+  const stagedThumbnailFiles = zipParts.flatMap((part) =>
+    Object.entries(part.manifest.thumbnailFiles ?? {}).flatMap(([id, info]) => {
+      const dataUrl = readExportZipFileAsDataUrl(part.files, info.path)
+      const newId = imageRemap.get(id)
+      if (!dataUrl || !newId) return []
+      return [{ oldId: id, newId, dataUrl, info }]
+    }),
+  )
+
+  setDataProgressCancelable(false)
+  throwIfAborted(signal)
+  const activeTaskIds = await acquireRestoreWriteLock()
+  const stagedImageIds = stagedImageFiles.map((image) => image.newId)
+  const stagedThumbnailIds = stagedThumbnailFiles.map((thumbnail) => thumbnail.newId)
+  const stagedWorkflowImageIds: string[] = []
+  const writtenImageIds: string[] = []
+  let committed = false
+
+  try {
+    updateDataProgress('创建恢复前安全快照')
+    await createDeleteSnapshot('恢复前安全快照')
+
+    const currentState = useStore.getState()
+    const currentWorkspace = useWorkspaceStore.getState()
+    const importedTasksNormalized = importedTasks
+      .map(normalizeImportedTask)
+      .map((task) => remapImageIdsDeep(task, imageRemap))
+    const importedConversationsNormalized = normalizeAgentConversations(importedAgentConversations)
+      .map((conversation) => remapImageIdsDeep(conversation, imageRemap))
+      .filter((conversation) => !isEmptyAgentConversation(conversation))
+    const agentMerge = options.importTasks
+      ? mergeRestoreTasks(
+          currentState.tasks,
+          currentState.agentConversations,
+          importedTasksNormalized,
+          importedConversationsNormalized,
+          mode,
+        )
+      : { tasks: currentState.tasks, conversations: currentState.agentConversations }
+    const finalTasks = agentMerge.tasks.map(normalizeImportedTask)
+    const finalConversations = agentMerge.conversations
+
+    const importedWorkspaceRaw = zipParts.map((part) => part.manifest.workspace).find(Boolean)
+    const importedWorkspace = importedWorkspaceRaw
+      ? remapImageIdsDeep(importedWorkspaceRaw, imageRemap)
+      : undefined
+    const mergedWorkspaceResult = mergeImportedWorkspace(
+      currentWorkspace,
+      importedWorkspace,
+      finalTasks,
+    )
+    const finalWorkspace = options.importTasks
+      ? mode === 'replace' && importedWorkspace
+        ? normalizeWorkspace(importedWorkspace)
+        : mergedWorkspaceResult.workspace
+      : getPersistedWorkspace(currentWorkspace, true)
+
+    const settingsManifests = zipParts.map((part) => part.manifest.settings).filter(Boolean) as NonNullable<ExportData['settings']>[]
+    const importedSettings = normalizeSettings(settingsManifests.reduce(
+      (current, settings) => mergeImportedSettings(current, settings, { preserveInternalIds: true }),
+      mode === 'replace' ? DEFAULT_SETTINGS : currentState.settings,
+    ))
+    const finalSettings = options.importConfig && settingsManifests.length
+      ? importedSettings
+      : currentState.settings
+
+    const importedFavoriteCollections = zipParts.flatMap((part) => part.manifest.favoriteCollections ?? [])
+    const importedDefaultFavoriteCollectionId = zipParts
+      .map((part) => part.manifest.defaultFavoriteCollectionId)
+      .find((id) => id != null)
+    const finalFavorites = options.importTasks
+      ? mode === 'replace'
+        ? ensureDefaultFavoriteCollection(normalizeFavoriteCollections(importedFavoriteCollections))
+        : mergeFavoriteCollections(currentState.favoriteCollections, importedFavoriteCollections).collections
+      : currentState.favoriteCollections
+    const finalDefaultFavoriteCollectionId = options.importTasks
+      ? mode === 'replace'
+        ? resolveDefaultFavoriteCollectionId(finalFavorites, importedDefaultFavoriteCollectionId ?? null)
+        : resolveDefaultFavoriteCollectionId(
+            finalFavorites,
+            currentState.defaultFavoriteCollectionId ?? importedDefaultFavoriteCollectionId ?? null,
+          )
+      : currentState.defaultFavoriteCollectionId
+
+    const importedSkills = zipParts.some((part) => Array.isArray(part.manifest.skills))
+      ? remapImageIdsDeep(zipParts.flatMap((part) => part.manifest.skills ?? []), imageRemap)
+      : undefined
+    const skillSnapshot = getRegisteredSkillSnapshot()
+    const finalPromptSkills = importedSkills === undefined
+      ? skillSnapshot.promptSkills
+      : mergeImportedSkills(mode === 'replace' ? [] : skillSnapshot.promptSkills, importedSkills)
+    const importedCapabilitySkills = zipParts.some((part) => Array.isArray(part.manifest.capabilitySkills))
+      ? remapImageIdsDeep(zipParts.flatMap((part) => part.manifest.capabilitySkills ?? []), imageRemap)
+      : undefined
+    const finalCapabilitySkills = importedCapabilitySkills === undefined
+      ? skillSnapshot.capabilitySkills
+      : mergeImportedCapabilitySkills(
+          mode === 'replace' ? [] : skillSnapshot.capabilitySkills,
+          importedCapabilitySkills,
+        )
+    const importedOverrides = remapImageIdsDeep(Object.assign(
+      {},
+      ...zipParts.map((part) => part.manifest.capabilityOverrides ?? {}),
+    ) as Record<string, SkillOverride>, imageRemap)
+    const finalOverrides = mode === 'replace'
+      ? importedOverrides
+      : { ...skillSnapshot.overrides, ...importedOverrides }
+
+    await initializeSavedWorkflows()
+    const currentWorkflows = listWorkflows()
+    const workflowPlan = planWorkflowRestore(
+      importedSavedWorkflows,
+      importedWorkflowImages,
+      operationId,
+    )
+    const workflowMerge = options.importTasks
+      ? mergeRestoreWorkflows(
+          currentWorkflows.map((workflow) => ({
+            ...workflow,
+            results: workflow.results.map((result) => ({
+              ...result,
+              record: result.record as unknown as Record<string, unknown>,
+            })),
+          })),
+          workflowPlan.workflows.map((workflow) => ({
+            ...workflow,
+            results: workflow.results.map((result) => ({
+              ...result,
+              record: result.record as unknown as Record<string, unknown>,
+            })),
+          })),
+          mode,
+        )
+      : { workflows: currentWorkflows }
+    const finalWorkflows = workflowMerge.workflows as ProjectWorkflow[]
+
+    stagedWorkflowImageIds.push(...workflowPlan.stagedImages.map((image) => image.id))
+    if (isTauri) {
+      await beginRestoreJournal(operationId, {
+        stagedImageIds,
+        stagedThumbnailIds,
+        stagedWorkflowImageIds,
+      })
+    }
+    await writePlannedWorkflowImages(workflowPlan.stagedImages)
+
+    const imageSourceUrls = { ...currentState.imageSourceUrls }
+    const fileTotal = stagedImageFiles.length + stagedThumbnailFiles.length
+    let filesDone = 0
+    for (const image of stagedImageFiles) {
+      await putImage({
+        id: image.newId,
+        dataUrl: image.dataUrl,
+        createdAt: image.info.createdAt,
+        source: image.info.source,
+        width: image.info.width,
+        height: image.info.height,
+      })
+      writtenImageIds.push(image.newId)
+      if (isHttpUrl(image.info.sourceUrl)) imageSourceUrls[image.newId] = image.info.sourceUrl
+      filesDone += 1
+      updateDataProgress('暂存图片', filesDone, fileTotal, 'file')
+    }
+    for (const thumbnail of stagedThumbnailFiles) {
+      await putImageThumbnail({
+        id: thumbnail.newId,
+        thumbnailDataUrl: thumbnail.dataUrl,
+        width: thumbnail.info.width,
+        height: thumbnail.info.height,
+        thumbnailVersion: thumbnail.info.thumbnailVersion,
+      })
+      filesDone += 1
+      updateDataProgress('暂存缩略图', filesDone, fileTotal, 'file')
+    }
+
+    const persistedSettings = createPersistedState({
+      ...currentState,
+      settings: finalSettings,
+      agentConversations: finalConversations,
+      favoriteCollections: finalFavorites,
+      defaultFavoriteCollectionId: finalDefaultFavoriteCollectionId,
+    }, false)
+    const persistedSettingsJson = JSON.stringify({ state: persistedSettings, version: 2 })
+    const settingsKvValue = isTauri
+      ? await encryptPersistedSettings(persistedSettingsJson)
+      : persistedSettingsJson
+    const kvWrites = [
+      { key: 'gpt-image-playground', value: settingsKvValue },
+      { key: 'panpan-workspace-v1', value: JSON.stringify({ state: finalWorkspace, version: 1 }) },
+      { key: 'panpan-prompt-skills-v1', value: JSON.stringify({ state: { skills: finalPromptSkills }, version: 1 }) },
+      {
+        key: 'panpan-capability-skills-v1',
+        value: JSON.stringify({ state: { mine: finalCapabilitySkills, builtinOverrides: finalOverrides }, version: 2 }),
+      },
+      { key: SAVED_WORKFLOWS_MIGRATION_KEY, value: '1' },
+    ]
+
+    updateDataProgress('提交恢复事务')
+    if (isTauri) {
+      await commitRestore({
+        operationId,
+        tasks: finalTasks,
+        conversations: finalConversations,
+        savedWorkflows: finalWorkflows,
+        kvWrites,
+        replaceTasks: Boolean(options.importTasks),
+        replaceConversations: Boolean(options.importTasks),
+        replaceSavedWorkflows: Boolean(options.importTasks),
+      })
+    } else {
+      if (options.importTasks) {
+        await dbClearTasks()
+        await dbClearAgentConversations()
+        for (const task of finalTasks) await putTask(task)
+        await replaceAgentConversations(finalConversations)
+      }
+      for (const write of kvWrites) localStorage.setItem(write.key, write.value)
+    }
+    committed = true
+
+    clearImageCaches()
+    for (const image of stagedImageFiles) cacheImage(image.newId, image.dataUrl)
+    for (const thumbnail of stagedThumbnailFiles) {
+      cacheThumbnail(thumbnail.newId, {
+        src: thumbnail.dataUrl,
+        width: thumbnail.info.width,
+        height: thumbnail.info.height,
+        thumbnailVersion: thumbnail.info.thumbnailVersion,
+      })
+    }
+
+    useWorkspaceStore.setState(finalWorkspace)
+    replaceRegisteredSkillState({
+      promptSkills: finalPromptSkills,
+      capabilitySkills: finalCapabilitySkills,
+      overrides: finalOverrides,
+    })
+    await replaceSavedWorkflowState(finalWorkflows)
+    useStore.setState({
+      tasks: finalTasks,
+      settings: finalSettings,
+      agentConversations: finalConversations,
+      activeAgentConversationId: finalConversations.some(
+        (conversation) => conversation.id === currentState.activeAgentConversationId,
+      )
+        ? currentState.activeAgentConversationId
+        : finalConversations[0]?.id ?? null,
+      favoriteCollections: finalFavorites,
+      defaultFavoriteCollectionId: finalDefaultFavoriteCollectionId,
+      imageSourceUrls,
+    })
+    skipSupportPromptForImportedData(finalTasks)
+    if (workflowPlan.missingImageIds.length) {
+      useStore.getState().showToast(
+        `已恢复，但有 ${workflowPlan.missingImageIds.length} 张工作流结果图缺失，对应记录已保留并标记缺图`,
+        'info',
+      )
+    } else {
+      useStore.getState().showToast(
+        mode === 'replace' ? '备份已替换恢复' : '备份已合并恢复',
+        'success',
+      )
+    }
+    if (isTauri) await deleteRestoreJournal(operationId).catch((err) => console.warn('清理恢复 journal 失败：', err))
+    void cleanupUnreferencedImages()
+    return true
+  } catch (err) {
+    if (!committed) {
+      if (writtenImageIds.length) await Promise.allSettled(writtenImageIds.map((id) => deleteImage(id)))
+      if (stagedWorkflowImageIds.length) await cleanupPreparedWorkflowImages(stagedWorkflowImageIds)
+      if (isTauri) await deleteRestoreJournal(operationId).catch(() => {})
+    }
+    throw err
+  } finally {
+    releaseRestoreWriteLock(activeTaskIds, committed)
+  }
 }
 
 /** 导入 ZIP 数据 */
@@ -5996,8 +6475,6 @@ export async function importData(input: File | File[], options: ImportOptions = 
     tasks: ReturnType<typeof useStore.getState>['tasks']
   } | null = null
   try {
-    const state = useStore.getState()
-    if (options.importTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导入。')
     const files = Array.isArray(input) ? input : [input]
     if (!files.length) throw new Error('没有选择备份文件。')
     if (files.some((file) => file.size >= MAX_EXPORT_ZIP_BYTES)) {
@@ -6028,11 +6505,16 @@ export async function importData(input: File | File[], options: ImportOptions = 
     }
 
     const settingsManifests = selected.filter((part) => part.manifest.settings)
-    const futureVersion = selected.find((part) => typeof part.manifest.version === 'number' && part.manifest.version > 4)
+    const futureVersion = selected.find((part) => typeof part.manifest.version === 'number' && part.manifest.version > 5)
     if (futureVersion) {
-      throw new Error(`备份版本 ${futureVersion.manifest.version} 高于当前支持的版本 4，请升级盼盼工作台后再导入。`)
+      throw new Error(`备份版本 ${futureVersion.manifest.version} 高于当前支持的版本 5，请升级盼盼工作台后再导入。`)
     }
     if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('这份备份里没有配置。')
+    if (selected.some((part) => part.manifest.version >= 5)) {
+      return await restoreV5Data(selected, options, signal)
+    }
+    const state = useStore.getState()
+    if (options.importTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导入。')
     const importedTasks = selected.flatMap((part) => part.manifest.tasks ?? [])
     const importedAgentConversations = selected.flatMap((part) => part.manifest.agentConversations ?? [])
     const hasTaskData = selected.some((part) => part.manifest.tasks != null || part.manifest.imageFiles != null)
@@ -6199,23 +6681,27 @@ export async function importData(input: File | File[], options: ImportOptions = 
     // 技能库：仅当备份确实带 skills 字段才合并（旧 v4 备份完全不动现有技能库）
     const importedSkills = selected.flatMap((part) => part.manifest.skills ?? [])
     if (selected.some((part) => Array.isArray(part.manifest.skills))) {
-      useSkillStore.getState().replaceSkills(
-        mergeImportedSkills(useSkillStore.getState().skills, importedSkills),
-      )
+      const snapshot = getRegisteredSkillSnapshot()
+      replaceRegisteredSkillBackup({
+        promptSkills: mergeImportedSkills(snapshot.promptSkills, importedSkills),
+      })
     }
 
     // 能力技能：旧 v4 备份没有该字段时不动现有数据；内置技能不写入「我的」
     const importedCapabilitySkills = selected.flatMap((part) => part.manifest.capabilitySkills ?? [])
     if (selected.some((part) => Array.isArray(part.manifest.capabilitySkills))) {
-      useCapabilitySkillStore.getState().replaceMine(
-        mergeImportedCapabilitySkills(useCapabilitySkillStore.getState().mine, importedCapabilitySkills),
-      )
+      const snapshot = getRegisteredSkillSnapshot()
+      replaceRegisteredSkillBackup({
+        capabilitySkills: mergeImportedCapabilitySkills(snapshot.capabilitySkills, importedCapabilitySkills),
+      })
     }
     const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
     if (Object.keys(importedOverrides).length) {
-      useCapabilitySkillStore.getState().replaceOverrides({
-        ...useCapabilitySkillStore.getState().builtinOverrides,
-        ...importedOverrides,
+      replaceRegisteredSkillBackup({
+        overrides: {
+          ...getRegisteredSkillSnapshot().overrides,
+          ...importedOverrides,
+        },
       })
     }
 

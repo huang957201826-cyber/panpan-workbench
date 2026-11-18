@@ -1,41 +1,29 @@
 // @vitest-environment jsdom
+import { beforeEach, describe, expect, it } from 'vitest'
+import { saveNewSkill, useSkillStore } from './skillStore'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPromptSkill } from './promptSkills'
-
-beforeEach(() => {
-  window.localStorage.clear()
-  vi.resetModules()
-})
-
-describe('skillStore', () => {
-  it('supports CRUD, pin and localStorage persistence', async () => {
-    const { useSkillStore } = await import('./skillStore')
-    const skill = createPromptSkill({ title: '夜景', prompt: 'prompt', tags: ['建筑'] }, 100)
-    useSkillStore.getState().addSkill(skill)
-    expect(useSkillStore.getState().skills).toHaveLength(1)
-
-    useSkillStore.getState().updateSkill(skill.id, { title: '夜景 2' })
-    expect(useSkillStore.getState().skills[0].title).toBe('夜景 2')
-
-    useSkillStore.getState().togglePinned(skill.id)
-    expect(useSkillStore.getState().skills[0].pinned).toBe(true)
-
-    const stored = JSON.parse(window.localStorage.getItem('panpan-prompt-skills-v1')!)
-    expect(stored.state.skills[0].title).toBe('夜景 2')
-
-    useSkillStore.getState().removeSkill(skill.id)
-    expect(useSkillStore.getState().skills).toEqual([])
+describe('技能存储', () => {
+  beforeEach(() => {
+    useSkillStore.getState().replaceSkills([])
   })
 
-  it('restores persisted skills and empty library is valid', async () => {
-    const { useSkillStore } = await import('./skillStore')
-    expect(useSkillStore.getState().skills).toEqual([])
+  it('saveNewSkill 会立即加入列表', () => {
+    const skill = saveNewSkill({ title: 'TestSkill1750', prompt: 'interiorshowroom,warmlight' })
+    const skills = useSkillStore.getState().skills
+    expect(skills).toHaveLength(1)
+    const found = skills.find((item) => item.id === skill.id)
+    expect(found?.title).toBe('TestSkill1750')
+    expect(found?.prompt).toBe('interiorshowroom,warmlight')
+  })
 
-    const skill = createPromptSkill({ title: 'A', prompt: 'p' }, 100)
-    window.localStorage.setItem('panpan-prompt-skills-v1', JSON.stringify({ state: { skills: [skill] }, version: 1 }))
-    vi.resetModules()
-    const reloaded = await import('./skillStore')
-    expect(reloaded.useSkillStore.getState().skills[0].title).toBe('A')
+  it('updateSkill 改标题与正文，removeSkill 能删掉', () => {
+    const skill = saveNewSkill({ title: 'Before', prompt: 'old' })
+    useSkillStore.getState().updateSkill(skill.id, { title: 'After', prompt: 'new' })
+    const updated = useSkillStore.getState().skills.find((item) => item.id === skill.id)
+    expect(updated?.title).toBe('After')
+    expect(updated?.prompt).toBe('new')
+
+    useSkillStore.getState().removeSkill(skill.id)
+    expect(useSkillStore.getState().skills.some((item) => item.id === skill.id)).toBe(false)
   })
 })

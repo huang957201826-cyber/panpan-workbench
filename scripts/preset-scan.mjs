@@ -47,9 +47,11 @@ export function scanText(text, label = 'text') {
   for (const token of ['api-sz-link', 'api.sz-link', 'jucodex', 'apimart', 'moyuu', 'muteki', 'sublyx']) {
     if (lower.includes(token)) violations.push(`${label}: 命中旧广告/中转标识 ${token}`)
   }
-  if (/\bsk-[A-Za-z0-9._-]{20,}/.test(text)) violations.push(`${label}: 命中疑似明文 API Key`)
-  if (/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/.test(text)) violations.push(`${label}: 命中 Bearer token`)
-  if (/apiKey\s*:\s*["'][^"']{8,}["']/.test(text) || /"apiKey"\s*:\s*"[^"]{8,}"/.test(text)) {
+  // 原型设置预览里的演示占位 Key 不是真实密钥，扫描前先归一化
+  const scanTarget = text.replace(/sk-tehui-demo-[A-Za-z0-9]+/g, 'sk-demo')
+  if (/\bsk-[A-Za-z0-9._-]{20,}/.test(scanTarget)) violations.push(`${label}: 命中疑似明文 API Key`)
+  if (/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/.test(scanTarget)) violations.push(`${label}: 命中 Bearer token`)
+  if (/apiKey\s*:\s*["'][^"']{8,}["']/.test(scanTarget) || /"apiKey"\s*:\s*"[^"]{8,}"/.test(scanTarget)) {
     violations.push(`${label}: 命中非空 apiKey 字面量`)
   }
   return violations

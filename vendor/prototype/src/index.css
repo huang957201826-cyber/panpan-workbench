@@ -1,0 +1,130 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-surface-dim: #f1f3f5;
+  --color-surface: #ffffff;
+  --color-surface-sidebar: #f8f9fa;
+  --color-surface-card: #ffffff;
+  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Space Grotesk", sans-serif;
+
+  /* 4px Rhythm Spacing System */
+  --spacing-0_5: 2px;
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-7: 28px;
+  --spacing-8: 32px;
+  --spacing-9: 36px;
+  --spacing-10: 40px;
+  --spacing-11: 44px;
+  --spacing-12: 48px;
+
+  /* Strict Radii Standard: 8px and 12px */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+}
+
+/* Hide scrollbars for clean horizontal pill bars */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Crisp Native Application Base with Soft Warm Tint (Reference UI) */
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #f3f4f8;
+  color: #0f172a;
+}
+html.dark, html.dark body, html.dark #root {
+  background-color: #0c0e14;
+  color: #f8fafc;
+}
+
+/* Reference UI Soft Ambient Shadow Systems */
+.soft-card-shadow {
+  box-shadow: 0 10px 30px -4px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.02);
+}
+.soft-float-shadow {
+  box-shadow: 0 16px 40px -6px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+html.dark .soft-card-shadow {
+  box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+html.dark .soft-float-shadow {
+  box-shadow: 0 20px 48px -6px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* Solid Clean Light Canvas with Subtle Dot Grid */
+.stitch-dot-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: #fbfcfd;
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.16) 1px, transparent 1px);
+  background-size: 24px 24px;
+  transition: background-color 0.2s ease;
+}
+html.dark .stitch-dot-canvas {
+  background-color: #0c0e14;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+}
+
+/* Precision Pointer Highlight */
+.stitch-dot-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.6) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(circle 140px at var(--mx, -500px) var(--my, -500px), black 0%, rgba(0,0,0,0.3) 45%, transparent 100%);
+  mask-image: radial-gradient(circle 140px at var(--mx, -500px) var(--my, -500px), black 0%, rgba(0,0,0,0.3) 45%, transparent 100%);
+  transition: opacity 0.2s ease-out;
+  opacity: 0.75;
+}
+html.dark .stitch-dot-highlight {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.7) 1.2px, transparent 1.2px);
+}
+
+/* Crisp Clean Popovers and Menus (Solid surface with subtle drop shadow) */
+.glass-panel {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+html.dark .glass-panel {
+  background: #151822;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Custom Slim Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 9999px;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}

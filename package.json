@@ -1,7 +1,7 @@
 {
   "name": "panpan-workbench",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.8.0",
   "license": "MIT",
   "author": "panpan",
   "repository": {
@@ -17,13 +17,24 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:interaction": "vitest run src/studio/components/BottomPromptBar.interaction.test.tsx src/lib/workspaceState.test.ts",
+    "gate:dev": "npm run process:check && node scripts/verify-vendor.mjs && npm run scan:typography && npm run build && npm test && npm run sast && node scripts/release-check.mjs --no-gates",
+    "sast": "node scripts/sast-check.mjs",
+    "security:check": "node scripts/sast-check.mjs --audit",
+    "process:check": "node scripts/process-check.mjs",
+    "push:safe": "node scripts/push-safe.mjs",
+    "e2e": "playwright test",
+    "gate:all": "npm run gate:dev && cargo test --manifest-path src-tauri/Cargo.toml && npm run e2e",
+    "state": "node scripts/workflow-state.mjs",
+    "review:packet": "node scripts/review-packet.mjs",
+    "hooks:install": "node scripts/install-hooks.mjs",
     "sync:skills": "node scripts/sync-skill-kit.mjs",
     "predev": "npm run sync:skills",
     "prebuild": "npm run sync:skills",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "updater:manifest": "node scripts/make-update-manifest.mjs",
-    "notices": "node scripts/build-notices.mjs"
+    "notices": "node scripts/build-notices.mjs",
+    "scan:typography": "node scripts/scan-typography.mjs"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.0",

@@ -44,9 +44,12 @@ fn protect(raw: &[u8]) -> Result<Vec<u8>, String> {
         )
     };
     if ok == 0 {
-        return Err(format!("DPAPI 加密失败（{}）", unsafe { GetLastError() }));
+        return Err(format!("DPAPI 加密失败（{}）", unsafe {
+            GetLastError()
+        }));
     }
-    let bytes = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
+    let bytes =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
     unsafe {
         LocalFree(output.pbData as *mut core::ffi::c_void);
     }
@@ -86,9 +89,12 @@ fn unprotect(raw: &[u8]) -> Result<Vec<u8>, String> {
         )
     };
     if ok == 0 {
-        return Err(format!("DPAPI 解密失败（{}）", unsafe { GetLastError() }));
+        return Err(format!("DPAPI 解密失败（{}）", unsafe {
+            GetLastError()
+        }));
     }
-    let bytes = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
+    let bytes =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
     unsafe {
         LocalFree(output.pbData as *mut core::ffi::c_void);
     }

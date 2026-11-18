@@ -9,8 +9,8 @@ use tauri::State;
 
 use super::images::encode_file;
 use super::{
-    Doc, FileMeta, ImageStat, Kind, Result, Storage, StorageError, StorageInfo, StorageState,
-    CONVERSATIONS, TASKS,
+    Doc, FileMeta, ImageStat, Kind, RestoreCommit, RestoreJournalRow, Result, Storage,
+    StorageError, StorageInfo, StorageState, CONVERSATIONS, SAVED_WORKFLOWS, TASKS,
 };
 
 const SOURCES: [&str; 3] = ["upload", "generated", "mask"];
@@ -140,6 +140,47 @@ pub async fn conversations_replace(
 }
 
 #[tauri::command]
+pub async fn saved_workflows_get_all(state: State<'_, StorageState>) -> Result<Response> {
+    run(state, |s| s.docs_get_all(SAVED_WORKFLOWS))
+        .await
+        .map(Response::new)
+}
+
+#[tauri::command]
+pub async fn saved_workflows_replace(
+    state: State<'_, StorageState>,
+    workflows: Vec<Doc>,
+) -> Result<()> {
+    run(state, move |s| s.replace_saved_workflows(&workflows)).await
+}
+
+#[tauri::command]
+pub async fn restore_journal_begin(
+    state: State<'_, StorageState>,
+    id: String,
+    data: String,
+) -> Result<()> {
+    run(state, move |s| s.restore_journal_begin(&id, &data)).await
+}
+
+#[tauri::command]
+pub async fn restore_journal_list(
+    state: State<'_, StorageState>,
+) -> Result<Vec<RestoreJournalRow>> {
+    run(state, |s| s.restore_journal_list()).await
+}
+
+#[tauri::command]
+pub async fn restore_journal_delete(state: State<'_, StorageState>, id: String) -> Result<()> {
+    run(state, move |s| s.restore_journal_delete(&id)).await
+}
+
+#[tauri::command]
+pub async fn restore_commit(state: State<'_, StorageState>, commit: RestoreCommit) -> Result<()> {
+    run(state, move |s| s.restore_commit(commit)).await
+}
+
+#[tauri::command]
 pub async fn image_get(state: State<'_, StorageState>, id: String) -> Result<Response> {
     run(state, move |s| s.get_file(Kind::Image, &id))
         .await
@@ -167,7 +208,10 @@ pub async fn image_ids(state: State<'_, StorageState>) -> Result<Vec<String>> {
 }
 
 #[tauri::command]
-pub async fn image_paths(state: State<'_, StorageState>, ids: Vec<String>) -> Result<Vec<Option<String>>> {
+pub async fn image_paths(
+    state: State<'_, StorageState>,
+    ids: Vec<String>,
+) -> Result<Vec<Option<String>>> {
     run(state, move |s| s.image_paths(&ids)).await
 }
 

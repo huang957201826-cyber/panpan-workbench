@@ -1,0 +1,59 @@
+{
+  "batch": "B02-2",
+  "plan": "docs/execution/PLAN-B02.md",
+  "planSha256": "D167732252396120F0EA32F60EAEEA67B0024AC8647F99CD40CF800FBF10E679",
+  "checklist": "docs/execution/B02-CHECKLIST.md",
+  "checklistFrozenSha256": "26407F6881F6D548E3ADD5B435D9076374B00D4793669267E7C17C419C2148F1",
+  "checklistSha256": "507AA7BAF091265E2D17C29DD000EB186BBB659472903DDA7E57F55B9C848417",
+  "branch": "b02",
+  "branchStart": "d07e677",
+  "head": "479db8a",
+  "diffRange": "d07e677..479db8a",
+  "gates": {
+    "tsc": "pass",
+    "viteBuild": "pass",
+    "presetScan": "pass",
+    "vitest": {
+      "files": 80,
+      "tests": 1016,
+      "failed": 0
+    },
+    "cargoTest": null,
+    "tauriBuild": "pass",
+    "installer": "PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerBytes": 29086684,
+    "installerSha256": "BDF944626DD0825F7CDC7A596618BB2E3E8859DF3A61ABAF8D41A720D43EA977",
+    "builtExePath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\gpt-image-playground.exe",
+    "builtExeSha256": "0CADE2DC426248429AAB88E0E328172F5BE611D48423F9023A506E54E8276076",
+    "buildSourceCommit": "479db8a",
+    "install": "pass; installed exe sha256 0CADE2DC426248429AAB88E0E328172F5BE611D48423F9023A506E54E8276076",
+    "u2": "partial: 右下角缩放/全览与右上视图切换真实点击通过；拖入/拾取/@/IME/手动队列待抽查",
+    "realData": "not touched; test copy used"
+  },
+  "focusedRegression": {
+    "canvasToolbarLayout": "pass",
+    "canvasKeyboardModalGuard": "pass",
+    "canvasResetOnSwitch": "pass",
+    "canvasDropPlacement": "pending U2 (store-level test pass)",
+    "canvasPickMode": "pending U2",
+    "mentionMenuKeyboard": "pending U2",
+    "compositionGuard": "pending U2",
+    "promptLengthLimit": "pending U2",
+    "urlImageEdgeLimit": "pending U2",
+    "batchFailedPromptRetention": "pass",
+    "manualTaskQueue": "pending U2 (unit test pass)",
+    "compactTaskNodeSize": "pass",
+    "unusedWeightSliderRemoved": "pass",
+    "fakeSidebarEntriesRemoved": "pass"
+  },
+  "firstFailingGate": null,
+  "knownLimits": [
+    "P1-03 Studio 输入台为纯文本 @图N 插入，没有 contentEditable 胶囊；旧布局 InputBar 仍保留胶囊渲染",
+    "P1-01 的落点作用于下一次提交生成的任务节点，不是把拖入图片立即生成为独立画布节点",
+    "P1-05 排序重编号由现有 store 逻辑与单测覆盖，未做真实拖拽 U2",
+    "P2-23 手动队列使用计数器并发池，批量队列仍由 runWithConcurrency 控制",
+    "拖入/拾取、@ 菜单、composition、长度上限、URL 校验、手动队列的界面流程待 U2 点击回归",
+    "本批未执行安装、真实数据操作与 U2 点击回归"
+  ]
+}

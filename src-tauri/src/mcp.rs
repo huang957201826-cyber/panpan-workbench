@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use axum::Router;
+use axum::{Json, Router};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use rmcp::handler::server::ServerHandler;
@@ -18,18 +18,18 @@ use rmcp::model::{
     JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
+use rmcp::transport::stdio;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::tower::{
     StreamableHttpServerConfig, StreamableHttpService,
 };
-use rmcp::transport::stdio;
 use rmcp::{ErrorData as McpError, RoleServer, ServiceExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
-use crate::storage::{FileMeta, Storage, StorageState, TASKS};
+use crate::storage::{FileMeta, Storage, StorageState, CONVERSATIONS, SAVED_WORKFLOWS, TASKS};
 
 pub const DEFAULT_PORT: u16 = 7331;
 const MAX_REQUESTS_PER_MINUTE: usize = 60;
@@ -55,7 +55,11 @@ fn default_port() -> u16 {
 
 impl Default for McpConfig {
     fn default() -> Self {
-        Self { enabled: false, port: DEFAULT_PORT, write_enabled: false }
+        Self {
+            enabled: false,
+            port: DEFAULT_PORT,
+            write_enabled: false,
+        }
     }
 }
 
@@ -142,7 +146,9 @@ impl McpServer {
 
     fn settings_value(&self) -> Option<Value> {
         let root = self.kv_value("gpt-image-playground")?;
-        root.get("state").and_then(|state| state.get("settings")).cloned()
+        root.get("state")
+            .and_then(|state| state.get("settings"))
+            .cloned()
     }
 
     fn workspace_value(&self) -> Option<Value> {
@@ -157,7 +163,9 @@ impl McpServer {
         };
         let mut tasks: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
         tasks.sort_by(|a, b| {
-            b.get("createdAt").and_then(Value::as_i64).unwrap_or(0)
+            b.get("createdAt")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
                 .cmp(&a.get("createdAt").and_then(Value::as_i64).unwrap_or(0))
         });
         tasks.into_iter().map(sanitize_task).collect()
@@ -172,16 +180,20 @@ impl McpServer {
         }
         let id = random_id();
         let (sender, receiver) = oneshot::channel();
-        self.shared.pending.lock().unwrap().insert(id.clone(), PendingWrite { sender });
+        self.shared
+            .pending
+            .lock()
+            .unwrap()
+            .insert(id.clone(), PendingWrite { sender });
         let payload = write_request_payload(&id, tool, args);
         if app.emit("mcp-write-request", payload).is_err() {
             self.shared.pending.lock().unwrap().remove(&id);
             return Err("无法通知主窗口确认".to_string());
         }
         match tokio::time::timeout(WRITE_TIMEOUT, receiver).await {
-            Ok(Ok(decision)) if decision.approved => {
-                decision.result.ok_or_else(|| "写入没有返回结果".to_string())
-            }
+            Ok(Ok(decision)) if decision.approved => decision
+                .result
+                .ok_or_else(|| "写入没有返回结果".to_string()),
             Ok(Ok(decision)) => Err(decision.error.unwrap_or_else(|| "用户拒绝".to_string())),
             Ok(Err(_)) => Err("写入确认通道已关闭".to_string()),
             Err(_) => {
@@ -212,7 +224,9 @@ fn write_request_payload(id: &str, tool: &str, args: &JsonObject) -> Value {
 }
 
 fn sanitize_task(task: Value) -> Value {
-    let Some(obj) = task.as_object() else { return Value::Null };
+    let Some(obj) = task.as_object() else {
+        return Value::Null;
+    };
     let failed = obj.get("status").and_then(Value::as_str) == Some("error");
     json!({
         "id": obj.get("id").cloned().unwrap_or(Value::Null),
@@ -231,25 +245,316 @@ fn sanitize_task(task: Value) -> Value {
     })
 }
 
+fn structured_error_result(code: &str, summary: &str) -> CallToolResponse {
+    CallToolResult::error(vec![ContentBlock::json(json!({
+        "ok": false,
+        "error": { "code": code, "summary": summary }
+    }))
+    .unwrap_or_else(|_| ContentBlock::text(code))])
+    .into()
+}
+
+fn json_documents(storage: &Storage, table: &str) -> Result<Vec<Value>, &'static str> {
+    let raw = storage.docs_get_all(table).map_err(|_| "unavailable")?;
+    serde_json::from_str::<Vec<Value>>(&raw).map_err(|_| "unavailable")
+}
+
+fn kv_root(storage: &Storage, key: &str) -> Result<Option<Value>, &'static str> {
+    let kv = storage.kv_get_all().map_err(|_| "unavailable")?;
+    Ok(kv.get(key).and_then(|raw| serde_json::from_str(raw).ok()))
+}
+
+fn page(args: &JsonObject) -> Result<(usize, usize), &'static str> {
+    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0);
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20);
+    if limit == 0 || limit > 200 {
+        return Err("invalid_argument");
+    }
+    Ok((offset as usize, limit as usize))
+}
+
+fn canonical_skill_id(kind: &str, id: &str) -> String {
+    if kind == "capability" && id.starts_with("builtin:") {
+        return id.to_string();
+    }
+    let prefix = if kind == "prompt" {
+        "prompt:"
+    } else {
+        "capability:"
+    };
+    if id.starts_with(prefix) {
+        id.to_string()
+    } else {
+        format!("{prefix}{id}")
+    }
+}
+
+fn skill_items(storage: &Storage) -> Result<Vec<Value>, &'static str> {
+    let mut items = Vec::new();
+    let prompt_root = kv_root(storage, "panpan-prompt-skills-v1")?;
+    let capability_root = kv_root(storage, "panpan-capability-skills-v1")?;
+    let prompts = prompt_root
+        .as_ref()
+        .and_then(|root| root.pointer("/state/skills"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let capabilities = capability_root
+        .as_ref()
+        .and_then(|root| root.pointer("/state/mine"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for item in prompts {
+        let Some(id) = item.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        items.push(json!({
+            "id": canonical_skill_id("prompt", id),
+            "kind": "prompt",
+            "name": safe_text(item.get("title").and_then(Value::as_str).unwrap_or("未命名技能")),
+            "description": "",
+            "category": safe_text(item.get("category").and_then(Value::as_str).unwrap_or("我的技能")),
+            "tags": [],
+            "favorite": item.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+            "source": "mine",
+            "version": 1,
+            "updatedAt": item.get("updatedAt").and_then(Value::as_i64).unwrap_or(0),
+            "slotCount": item.get("variables").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+            "promptLength": item.get("prompt").and_then(Value::as_str).map(|value| value.chars().count()).unwrap_or(0),
+        }));
+    }
+    for item in capabilities {
+        let Some(id) = item.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if id.starts_with("prompt:") {
+            continue;
+        }
+        items.push(json!({
+            "id": canonical_skill_id("capability", id),
+            "kind": "capability",
+            "name": safe_text(item.get("name").and_then(Value::as_str).unwrap_or("未命名技能")),
+            "description": "",
+            "category": safe_text(item.get("category").and_then(Value::as_str).unwrap_or("我的")),
+            "tags": [],
+            "favorite": item.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+            "source": item.get("source").and_then(Value::as_str).unwrap_or("mine"),
+            "version": item.get("version").and_then(Value::as_i64).unwrap_or(1),
+            "updatedAt": item.get("updatedAt").and_then(Value::as_i64).unwrap_or(0),
+            "slotCount": item.get("slots").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+            "promptLength": item.get("basePrompt").and_then(Value::as_str).map(|value| value.chars().count()).unwrap_or(0),
+        }));
+    }
+    items.sort_by(|a, b| {
+        b.get("updatedAt")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .cmp(&a.get("updatedAt").and_then(Value::as_i64).unwrap_or(0))
+            .then_with(|| {
+                a.get("id")
+                    .and_then(Value::as_str)
+                    .cmp(&b.get("id").and_then(Value::as_str))
+            })
+    });
+    Ok(items)
+}
+
+fn workflow_items(storage: &Storage) -> Result<Vec<Value>, &'static str> {
+    let mut items = json_documents(storage, SAVED_WORKFLOWS)?;
+    items.sort_by(|a, b| {
+        b.get("updatedAt")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .cmp(&a.get("updatedAt").and_then(Value::as_i64).unwrap_or(0))
+    });
+    Ok(items)
+}
+
+fn safe_workflow_record(record: &Value) -> Value {
+    json!({
+        "id": record.get("id").cloned().unwrap_or(Value::Null),
+        "presetId": record.get("presetId").map(|value| Value::String(safe_text(value.as_str().unwrap_or("")))).unwrap_or(Value::Null),
+        "toolId": record.get("toolId").map(|value| Value::String(safe_text(value.as_str().unwrap_or("")))).unwrap_or(Value::Null),
+        "createdAt": record.get("createdAt").cloned().unwrap_or(Value::Null),
+        "duration": record.get("duration").map(|value| Value::String(safe_text(value.as_str().unwrap_or("")))).unwrap_or(Value::Null),
+        "resolution": record.get("resolution").map(|value| Value::String(safe_text(value.as_str().unwrap_or("")))).unwrap_or(Value::Null),
+    })
+}
+
+fn safe_workflow_values(values: &Value) -> Value {
+    const ALLOWED: &[&str] = &[
+        "flow",
+        "denoise",
+        "steps",
+        "seed",
+        "scale",
+        "model",
+        "aspectRatio",
+    ];
+    let mut safe = serde_json::Map::new();
+    if let Some(values) = values.as_object() {
+        for key in ALLOWED {
+            let Some(value) = values.get(*key) else {
+                continue;
+            };
+            let value = match value {
+                Value::String(text) => Value::String(safe_text(text)),
+                Value::Number(_) | Value::Bool(_) => value.clone(),
+                _ => continue,
+            };
+            safe.insert((*key).to_string(), value);
+        }
+    }
+    Value::Object(safe)
+}
+
+fn safe_text(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let bytes = input.as_bytes();
+    let has_drive_path = bytes.windows(3).enumerate().any(|(index, window)| {
+        window[0].is_ascii_alphabetic()
+            && window[1] == b':'
+            && matches!(window[2], b'/' | b'\\')
+            && (index == 0 || !bytes[index - 1].is_ascii_alphanumeric())
+    });
+    let posix_prefixes = [
+        "/users/",
+        "/home/",
+        "/root/",
+        "/var/",
+        "/tmp/",
+        "/mnt/",
+        "/opt/",
+        "/private/",
+        "/volumes/",
+        "/etc/",
+        "/usr/",
+        "/library/",
+        "/workspace/",
+        "/data/",
+        "/srv/",
+        "/app/",
+    ];
+    let sensitive = has_drive_path
+        || input.contains("//")
+        || input.contains("\\\\")
+        || input.trim_start().starts_with('/')
+        || lower.contains("file://")
+        || posix_prefixes.iter().any(|prefix| lower.contains(prefix))
+        || lower.contains("bearer")
+        || lower.contains("sk-")
+        || lower.contains("token=")
+        || lower.contains("api_key=")
+        || lower.contains("apikey=")
+        || lower.contains("?key=")
+        || lower.contains("&key=")
+        || lower.contains("password")
+        || lower.contains("secret")
+        || lower.contains("authorization")
+        || lower.contains("cookie");
+    if sensitive {
+        "[redacted]".to_string()
+    } else {
+        input.chars().take(240).collect()
+    }
+}
+
 fn schema(value: Value) -> Arc<JsonObject> {
     Arc::new(value.as_object().cloned().unwrap_or_default())
 }
 
 fn tools() -> Vec<Tool> {
     vec![
-        Tool::new("project.list", "列出项目", schema(json!({"type":"object","properties":{}}))),
-        Tool::new("canvas.list", "列出画布", schema(json!({"type":"object","properties":{"projectId":{"type":"string"}}}))),
-        Tool::new("task.list", "分页列出任务", schema(json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"offset":{"type":"integer","minimum":0},"projectId":{"type":"string"},"canvasId":{"type":"string"}}}))),
-        Tool::new("task.get", "读取单个任务", schema(json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}))),
-        Tool::new("image.get", "读取图片内容", schema(json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}))),
-        Tool::new("settings.get", "读取脱敏设置", schema(json!({"type":"object","properties":{}}))),
-        Tool::new("task.create", "创建生成任务（默认关闭，需 UI 确认）", schema(json!({"type":"object","required":["prompt"],"properties":{"prompt":{"type":"string"},"imageIds":{"type":"array","items":{"type":"string"}},"projectId":{"type":"string"},"canvasId":{"type":"string"}}}))),
-        Tool::new("image.attach", "把图库图片加入当前参考图（默认关闭，需 UI 确认）", schema(json!({"type":"object","required":["imageIds"],"properties":{"imageIds":{"type":"array","items":{"type":"string"}}}}))),
+        Tool::new(
+            "project.list",
+            "列出项目",
+            schema(json!({"type":"object","properties":{}})),
+        ),
+        Tool::new(
+            "canvas.list",
+            "列出画布",
+            schema(json!({"type":"object","properties":{"projectId":{"type":"string"}}})),
+        ),
+        Tool::new(
+            "task.list",
+            "分页列出任务",
+            schema(
+                json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"offset":{"type":"integer","minimum":0},"projectId":{"type":"string"},"canvasId":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "task.get",
+            "读取单个任务",
+            schema(
+                json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "image.get",
+            "读取图片内容",
+            schema(
+                json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "settings.get",
+            "读取脱敏设置",
+            schema(json!({"type":"object","properties":{}})),
+        ),
+        Tool::new(
+            "skill.list",
+            "分页列出脱敏技能元数据",
+            schema(
+                json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"offset":{"type":"integer","minimum":0},"kind":{"type":"string","enum":["prompt","capability"]}}}),
+            ),
+        ),
+        Tool::new(
+            "workflow.list",
+            "分页列出保存的工作流",
+            schema(
+                json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200},"offset":{"type":"integer","minimum":0},"workspaceProjectId":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "workflow.get",
+            "读取保存的工作流",
+            schema(
+                json!({"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "diagnostics.get",
+            "读取脱敏诊断摘要",
+            schema(json!({"type":"object","properties":{}})),
+        ),
+        Tool::new(
+            "backup.verify",
+            "检查本地数据类别完整性",
+            schema(json!({"type":"object","properties":{}})),
+        ),
+        Tool::new(
+            "task.create",
+            "创建生成任务（默认关闭，需 UI 确认）",
+            schema(
+                json!({"type":"object","required":["prompt"],"properties":{"prompt":{"type":"string"},"imageIds":{"type":"array","items":{"type":"string"}},"projectId":{"type":"string"},"canvasId":{"type":"string"}}}),
+            ),
+        ),
+        Tool::new(
+            "image.attach",
+            "把图库图片加入当前参考图（默认关闭，需 UI 确认）",
+            schema(
+                json!({"type":"object","required":["imageIds"],"properties":{"imageIds":{"type":"array","items":{"type":"string"}}}}),
+            ),
+        ),
     ]
 }
 
 fn text_result(value: Value) -> CallToolResponse {
-    CallToolResult::success(vec![ContentBlock::json(value).unwrap_or_else(|_| ContentBlock::text("{}"))]).into()
+    CallToolResult::success(vec![
+        ContentBlock::json(value).unwrap_or_else(|_| ContentBlock::text("{}"))
+    ])
+    .into()
 }
 
 fn error_result(message: &str) -> CallToolResponse {
@@ -257,14 +562,22 @@ fn error_result(message: &str) -> CallToolResponse {
 }
 
 fn host_only(base_url: &str) -> String {
-    url::Url::parse(base_url).ok().and_then(|url| url.host_str().map(str::to_string)).unwrap_or_default()
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("panpan-workbench", env!("CARGO_PKG_VERSION")))
-            .with_instructions("盼盼工作台本机 MCP；只读工具直接可用，写入工具默认关闭且必须由主窗口确认。")
+            .with_server_info(Implementation::new(
+                "panpan-workbench",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(
+                "盼盼工作台本机 MCP；只读工具直接可用，写入工具默认关闭且必须由主窗口确认。",
+            )
     }
 
     async fn list_tools(
@@ -274,7 +587,9 @@ impl ServerHandler for McpServer {
     ) -> Result<ListToolsResult, McpError> {
         let mut list = tools();
         if self.shared.app.is_none() {
-            list.retain(|tool| tool.name.as_ref() != "task.create" && tool.name.as_ref() != "image.attach");
+            list.retain(|tool| {
+                tool.name.as_ref() != "task.create" && tool.name.as_ref() != "image.attach"
+            });
         }
         Ok(ListToolsResult::with_all_items(list))
     }
@@ -303,12 +618,24 @@ impl ServerHandler for McpServer {
                     .unwrap_or_default()
                     .into_iter()
                     .filter(|canvas| {
-                        project.is_none_or(|project| canvas.get("projectId").and_then(Value::as_str) == Some(project))
+                        project.is_none_or(|project| {
+                            canvas.get("projectId").and_then(Value::as_str) == Some(project)
+                        })
                     })
                     .map(|canvas| {
-                        let nodes = canvas.get("imageNodes").and_then(Value::as_array).cloned().unwrap_or_default();
-                        let node_ids = nodes.iter().filter_map(|node| node.get("id").and_then(Value::as_str)).collect::<Vec<_>>();
-                        let image_ids = nodes.iter().filter_map(|node| node.get("imageId").and_then(Value::as_str)).collect::<Vec<_>>();
+                        let nodes = canvas
+                            .get("imageNodes")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        let node_ids = nodes
+                            .iter()
+                            .filter_map(|node| node.get("id").and_then(Value::as_str))
+                            .collect::<Vec<_>>();
+                        let image_ids = nodes
+                            .iter()
+                            .filter_map(|node| node.get("imageId").and_then(Value::as_str))
+                            .collect::<Vec<_>>();
                         json!({
                             "id": canvas.get("id"),
                             "projectId": canvas.get("projectId"),
@@ -324,22 +651,40 @@ impl ServerHandler for McpServer {
             }
             "task.list" => {
                 let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-                let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20).clamp(1, 200) as usize;
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(20)
+                    .clamp(1, 200) as usize;
                 let project = args.get("projectId").and_then(Value::as_str);
                 let canvas = args.get("canvasId").and_then(Value::as_str);
-                let filtered = self.tasks().into_iter().filter(|task| {
-                    project.is_none_or(|project| task.get("projectId").and_then(Value::as_str) == Some(project))
-                        && canvas.is_none_or(|canvas| task.get("canvasId").and_then(Value::as_str) == Some(canvas))
-                }).collect::<Vec<_>>();
+                let filtered = self
+                    .tasks()
+                    .into_iter()
+                    .filter(|task| {
+                        project.is_none_or(|project| {
+                            task.get("projectId").and_then(Value::as_str) == Some(project)
+                        }) && canvas.is_none_or(|canvas| {
+                            task.get("canvasId").and_then(Value::as_str) == Some(canvas)
+                        })
+                    })
+                    .collect::<Vec<_>>();
                 let total = filtered.len();
-                let items = filtered.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
-                text_result(json!({"total": total, "offset": offset, "limit": limit, "items": items}))
+                let items = filtered
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>();
+                text_result(
+                    json!({"total": total, "offset": offset, "limit": limit, "items": items}),
+                )
             }
             "task.get" => {
                 let Some(id) = args.get("id").and_then(Value::as_str) else {
                     return Ok(error_result("缺少 id"));
                 };
-                self.tasks().into_iter()
+                self.tasks()
+                    .into_iter()
                     .find(|task| task.get("id").and_then(Value::as_str) == Some(id))
                     .map(text_result)
                     .unwrap_or_else(|| error_result("任务不存在"))
@@ -350,11 +695,20 @@ impl ServerHandler for McpServer {
                 };
                 match self.storage.get_file(crate::storage::Kind::Image, id) {
                     Ok(Some((meta, bytes))) => {
-                        let FileMeta { mime, width, height, .. } = meta;
+                        let FileMeta {
+                            mime,
+                            width,
+                            height,
+                            ..
+                        } = meta;
                         CallToolResult::success(vec![
                             ContentBlock::image(BASE64.encode(bytes), mime.clone()),
-                            ContentBlock::json(json!({"id": id, "mime": mime, "width": width, "height": height})).unwrap(),
-                        ]).into()
+                            ContentBlock::json(
+                                json!({"id": id, "mime": mime, "width": width, "height": height}),
+                            )
+                            .unwrap(),
+                        ])
+                        .into()
                     }
                     _ => error_result("图片不存在"),
                 }
@@ -363,7 +717,11 @@ impl ServerHandler for McpServer {
                 let Some(settings) = self.settings_value() else {
                     return Ok(error_result("没有设置数据"));
                 };
-                let profiles = settings.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
+                let profiles = settings
+                    .get("profiles")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let safe_profiles = profiles.into_iter().map(|profile| {
                     json!({
                         "id": profile.get("id"),
@@ -381,6 +739,200 @@ impl ServerHandler for McpServer {
                     "batchPromptEnabled": settings.get("batchPromptEnabled"),
                 }))
             }
+            "skill.list" => {
+                let (offset, limit) = match page(&args) {
+                    Ok(value) => value,
+                    Err(code) => return Ok(structured_error_result(code, "分页参数无效")),
+                };
+                let kind = args.get("kind").and_then(Value::as_str);
+                if kind.is_some_and(|value| value != "prompt" && value != "capability") {
+                    return Ok(structured_error_result(
+                        "invalid_argument",
+                        "kind 只允许 prompt 或 capability",
+                    ));
+                }
+                match skill_items(&self.storage) {
+                    Ok(items) => {
+                        let filtered = items
+                            .into_iter()
+                            .filter(|item| {
+                                kind.is_none_or(|kind| {
+                                    item.get("kind").and_then(Value::as_str) == Some(kind)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let total = filtered.len();
+                        let page_items = filtered
+                            .into_iter()
+                            .skip(offset)
+                            .take(limit)
+                            .collect::<Vec<_>>();
+                        text_result(
+                            json!({"total": total, "offset": offset, "limit": limit, "items": page_items}),
+                        )
+                    }
+                    Err(code) => structured_error_result(code, "技能数据不可用"),
+                }
+            }
+            "workflow.list" => {
+                let (offset, limit) = match page(&args) {
+                    Ok(value) => value,
+                    Err(code) => return Ok(structured_error_result(code, "分页参数无效")),
+                };
+                let workspace_project_id = args.get("workspaceProjectId").and_then(Value::as_str);
+                match workflow_items(&self.storage) {
+                    Ok(items) => {
+                        let filtered = items
+                            .into_iter()
+                            .filter(|item| {
+                                workspace_project_id.is_none_or(|id| {
+                                    item.get("workspaceProjectId").and_then(Value::as_str)
+                                        == Some(id)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let total = filtered.len();
+                        let page_items = filtered.into_iter().skip(offset).take(limit).map(|item| {
+                            let results = item.get("results").and_then(Value::as_array).cloned().unwrap_or_default();
+                            json!({
+                                "id": item.get("id"),
+                                "name": item.get("name").and_then(Value::as_str).map(safe_text).unwrap_or_else(|| "未命名工作流".to_string()),
+                                "presetId": item.get("presetId").and_then(Value::as_str).map(safe_text).unwrap_or_default(),
+                                "workspaceProjectId": item.get("workspaceProjectId").and_then(Value::as_str).map(safe_text),
+                                "resultCount": results.len(),
+                                "hasMissingImages": results.iter().any(|result| {
+                                    result.get("missingImageIds").and_then(Value::as_array).is_some_and(|ids| !ids.is_empty())
+                                }),
+                                "updatedAt": item.get("updatedAt"),
+                            })
+                        }).collect::<Vec<_>>();
+                        text_result(
+                            json!({"total": total, "offset": offset, "limit": limit, "items": page_items}),
+                        )
+                    }
+                    Err(code) => structured_error_result(code, "工作流数据不可用"),
+                }
+            }
+            "workflow.get" => {
+                let Some(id) = args.get("id").and_then(Value::as_str) else {
+                    return Ok(structured_error_result("invalid_argument", "缺少 id"));
+                };
+                match workflow_items(&self.storage) {
+                    Ok(items) => match items
+                        .into_iter()
+                        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+                    {
+                        Some(item) => {
+                            let results = item.get("results").and_then(Value::as_array).cloned().unwrap_or_default()
+                                .into_iter()
+                                .map(|result| json!({
+                                    "imageId": result.get("imageId"),
+                                    "inputImageId": result.get("inputImageId"),
+                                    "createdAt": result.get("createdAt"),
+                                    "missingImageIds": result.get("missingImageIds").cloned().unwrap_or_else(|| json!([])),
+                                    "record": safe_workflow_record(result.get("record").unwrap_or(&Value::Null)),
+                                }))
+                                .collect::<Vec<_>>();
+                            text_result(json!({
+                                "id": item.get("id"),
+                                "name": item.get("name").and_then(Value::as_str).map(safe_text).unwrap_or_else(|| "未命名工作流".to_string()),
+                                "presetId": item.get("presetId").and_then(Value::as_str).map(safe_text).unwrap_or_default(),
+                                "workspaceProjectId": item.get("workspaceProjectId").and_then(Value::as_str).map(safe_text),
+                                "values": safe_workflow_values(item.get("values").unwrap_or(&Value::Null)),
+                                "results": results,
+                            }))
+                        }
+                        None => structured_error_result("not_found", "工作流不存在"),
+                    },
+                    Err(code) => structured_error_result(code, "工作流数据不可用"),
+                }
+            }
+            "diagnostics.get" => {
+                let info = self.storage.info();
+                let storage_ok = info.is_ok();
+                let tasks = json_documents(&self.storage, TASKS)
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                let conversations = json_documents(&self.storage, CONVERSATIONS)
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                let workflows = workflow_items(&self.storage)
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                let skills = skill_items(&self.storage).unwrap_or_default();
+                let prompt_skills = skills
+                    .iter()
+                    .filter(|item| item.get("kind").and_then(Value::as_str) == Some("prompt"))
+                    .count();
+                let capability_skills = skills
+                    .iter()
+                    .filter(|item| item.get("kind").and_then(Value::as_str) == Some("capability"))
+                    .count();
+                let recent_errors = self
+                    .shared
+                    .audit
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|entry| !entry.ok)
+                    .take(10)
+                    .map(|entry| {
+                        json!({
+                            "code": "tool_error",
+                            "at": entry.at,
+                        "summary": safe_text(&format!("{} 调用失败", entry.tool)),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                text_result(json!({
+                    "appVersion": env!("CARGO_PKG_VERSION"),
+                    "platform": std::env::consts::OS,
+                    "databaseOk": storage_ok,
+                    "storageOk": storage_ok,
+                    "engineStatus": "unknown",
+                    "counts": {
+                        "tasks": tasks,
+                        "images": info.as_ref().map(|value| value.image_count).unwrap_or(0),
+                        "agentConversations": conversations,
+                        "savedWorkflows": workflows,
+                        "promptSkills": prompt_skills,
+                        "capabilitySkills": capability_skills,
+                    },
+                    "recentErrors": recent_errors,
+                }))
+            }
+            "backup.verify" => {
+                let kv = match self.storage.kv_get_all() {
+                    Ok(value) => value,
+                    Err(_) => return Ok(structured_error_result("unavailable", "数据存储不可用")),
+                };
+                let settings = kv
+                    .get("gpt-image-playground")
+                    .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+                let tasks = json_documents(&self.storage, TASKS);
+                let conversations = json_documents(&self.storage, CONVERSATIONS);
+                let workflows = workflow_items(&self.storage);
+                let skills = skill_items(&self.storage);
+                let favorites = settings
+                    .as_ref()
+                    .and_then(|root| root.pointer("/state/favoriteCollections"))
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                let categories = vec![
+                    json!({"name":"tasks","exists":tasks.is_ok(),"count":tasks.as_ref().map(Vec::len).unwrap_or(0),"errorCode":tasks.err()}),
+                    json!({"name":"agentConversations","exists":conversations.is_ok(),"count":conversations.as_ref().map(Vec::len).unwrap_or(0),"errorCode":conversations.err()}),
+                    json!({"name":"favoriteCollections","exists":settings.is_some(),"count":favorites,"errorCode":if settings.is_some(){Value::Null}else{json!("unavailable")}}),
+                    json!({"name":"promptSkills","exists":kv.contains_key("panpan-prompt-skills-v1"),"count":skills.as_ref().map(|items| items.iter().filter(|item| item.get("kind").and_then(Value::as_str)==Some("prompt")).count()).unwrap_or(0),"errorCode":skills.as_ref().err()}),
+                    json!({"name":"capabilitySkills","exists":kv.contains_key("panpan-capability-skills-v1"),"count":skills.as_ref().map(|items| items.iter().filter(|item| item.get("kind").and_then(Value::as_str)==Some("capability")).count()).unwrap_or(0),"errorCode":skills.as_ref().err()}),
+                    json!({"name":"savedWorkflows","exists":workflows.is_ok(),"count":workflows.as_ref().map(Vec::len).unwrap_or(0),"errorCode":workflows.as_ref().err()}),
+                    json!({"name":"images","exists":self.storage.info().is_ok(),"count":self.storage.info().map(|value| value.image_count).unwrap_or(0),"errorCode":Value::Null}),
+                ];
+                let ok = categories
+                    .iter()
+                    .all(|category| category.get("exists").and_then(Value::as_bool) == Some(true));
+                text_result(json!({"ok": ok, "manifestVersion": 5, "categories": categories}))
+            }
             "task.create" => match self.write_request("task.create", &args).await {
                 Ok(value) => text_result(value),
                 Err(err) => error_result(&err),
@@ -395,7 +947,8 @@ impl ServerHandler for McpServer {
             CallToolResponse::Complete(result) => result.is_error != Some(true),
             _ => false,
         };
-        self.shared.push_audit(&name, at, started, ok, if ok { "ok" } else { "error" });
+        self.shared
+            .push_audit(&name, at, started, ok, if ok { "ok" } else { "error" });
         Ok(result)
     }
 }
@@ -414,30 +967,47 @@ fn token_matches(expected: &str, provided: &str) -> bool {
 }
 
 fn local_host(value: &str) -> bool {
-    let host = value.rsplit_once(':').map(|(host, _)| host).unwrap_or(value);
+    let host = value
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(value);
     host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+}
+
+fn guard_error(status: StatusCode, code: &str) -> Response {
+    (status, Json(json!({"error": {"code": code}}))).into_response()
 }
 
 async fn guard(State(shared): State<Arc<Shared>>, request: Request, next: Next) -> Response {
     {
         let mut rate = shared.rate.lock().unwrap();
         let now = Instant::now();
-        while rate.front().is_some_and(|entry| now.duration_since(*entry) > Duration::from_secs(60)) {
+        while rate
+            .front()
+            .is_some_and(|entry| now.duration_since(*entry) > Duration::from_secs(60))
+        {
             rate.pop_front();
         }
         if rate.len() >= MAX_REQUESTS_PER_MINUTE {
-            return (StatusCode::TOO_MANY_REQUESTS, "rate limit").into_response();
+            return guard_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
         }
         rate.push_back(now);
     }
     let headers: &HeaderMap = request.headers();
-    if !headers.get("host").and_then(|value| value.to_str().ok()).is_some_and(local_host) {
-        return (StatusCode::FORBIDDEN, "host").into_response();
+    if !headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(local_host)
+    {
+        return guard_error(StatusCode::FORBIDDEN, "forbidden");
     }
     if let Some(origin) = headers.get("origin").and_then(|value| value.to_str().ok()) {
-        let origin_host = origin.split_once("://").map(|(_, rest)| rest).unwrap_or(origin);
+        let origin_host = origin
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(origin);
         if !local_host(origin_host) {
-            return (StatusCode::FORBIDDEN, "origin").into_response();
+            return guard_error(StatusCode::FORBIDDEN, "forbidden");
         }
     }
     let provided = headers
@@ -446,7 +1016,7 @@ async fn guard(State(shared): State<Arc<Shared>>, request: Request, next: Next) 
         .and_then(|value| value.strip_prefix("Bearer "));
     let token = shared.token.lock().unwrap().clone();
     if !provided.is_some_and(|provided| token_matches(&token, provided)) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        return guard_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
     next.run(request).await
 }
@@ -458,7 +1028,10 @@ fn new_token() -> Result<String, String> {
 }
 
 fn read_config(storage: &Storage) -> McpConfig {
-    storage.meta_get(CONFIG_KEY).ok().flatten()
+    storage
+        .meta_get(CONFIG_KEY)
+        .ok()
+        .flatten()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
 }
@@ -472,12 +1045,16 @@ fn read_token(storage: &Storage) -> Result<String, String> {
 
 fn save_token(storage: &Storage, token: &str) -> Result<(), String> {
     let encrypted = crate::secret::secret_encrypt(token.to_string())?;
-    storage.meta_set(TOKEN_KEY, &encrypted).map_err(|err| err.to_string())
+    storage
+        .meta_set(TOKEN_KEY, &encrypted)
+        .map_err(|err| err.to_string())
 }
 
 fn save_config(storage: &Storage, config: &McpConfig) -> Result<(), String> {
     let raw = serde_json::to_string(config).map_err(|err| err.to_string())?;
-    storage.meta_set(CONFIG_KEY, &raw).map_err(|err| err.to_string())
+    storage
+        .meta_set(CONFIG_KEY, &raw)
+        .map_err(|err| err.to_string())
 }
 
 fn ensure_token(storage: &Storage) -> Result<String, String> {
@@ -492,7 +1069,10 @@ fn ensure_token(storage: &Storage) -> Result<String, String> {
 
 pub fn init(app: AppHandle, storage: Option<Arc<Storage>>) -> McpRuntimeState {
     let (config, token) = match storage.as_ref() {
-        Some(storage) => (read_config(storage), read_token(storage).unwrap_or_default()),
+        Some(storage) => (
+            read_config(storage),
+            read_token(storage).unwrap_or_default(),
+        ),
         None => (McpConfig::default(), String::new()),
     };
     let shared = Arc::new(Shared {
@@ -505,7 +1085,12 @@ pub fn init(app: AppHandle, storage: Option<Arc<Storage>>) -> McpRuntimeState {
     });
     McpRuntimeState {
         shared,
-        running: AsyncMutex::new(RunningServer { shutdown: None, task: None, port: None, error: None }),
+        running: AsyncMutex::new(RunningServer {
+            shutdown: None,
+            task: None,
+            port: None,
+            error: None,
+        }),
         config: Mutex::new(config),
         storage,
     }
@@ -515,7 +1100,12 @@ fn build_router(storage: Arc<Storage>, shared: Arc<Shared>) -> Router {
     let factory = {
         let storage = storage.clone();
         let shared = shared.clone();
-        move || Ok(McpServer { storage: storage.clone(), shared: shared.clone() })
+        move || {
+            Ok(McpServer {
+                storage: storage.clone(),
+                shared: shared.clone(),
+            })
+        }
     };
     let service = StreamableHttpService::new(
         factory,
@@ -533,7 +1123,10 @@ async fn stop_running(running: &mut RunningServer) {
         let _ = shutdown.send(());
     }
     if let Some(mut task) = running.task.take() {
-        if tokio::time::timeout(Duration::from_secs(5), &mut task).await.is_err() {
+        if tokio::time::timeout(Duration::from_secs(5), &mut task)
+            .await
+            .is_err()
+        {
             task.abort();
             let _ = task.await;
         }
@@ -586,7 +1179,10 @@ pub async fn apply_config(
         let mut current = state.config.lock().unwrap();
         *current = config.clone();
     }
-    state.shared.write_enabled.store(config.write_enabled, Ordering::Relaxed);
+    state
+        .shared
+        .write_enabled
+        .store(config.write_enabled, Ordering::Relaxed);
     let Some(storage) = state.storage.clone() else {
         return Err("存储未就绪".to_string());
     };
@@ -627,14 +1223,22 @@ pub async fn apply_config(
 
 fn status_of(state: &McpRuntimeState) -> McpStatus {
     let config = state.config.lock().unwrap().clone();
-    let port = state.running.try_lock().ok().and_then(|running| running.port);
+    let port = state
+        .running
+        .try_lock()
+        .ok()
+        .and_then(|running| running.port);
     McpStatus {
         enabled: config.enabled,
         running: port.is_some(),
         port: config.port,
         write_enabled: config.write_enabled,
         token: state.shared.token.lock().unwrap().clone(),
-        error: state.running.try_lock().ok().and_then(|running| running.error.clone()),
+        error: state
+            .running
+            .try_lock()
+            .ok()
+            .and_then(|running| running.error.clone()),
     }
 }
 
@@ -651,7 +1255,16 @@ pub async fn mcp_configure(
     port: u16,
     write_enabled: bool,
 ) -> Result<McpStatus, String> {
-    apply_config(&app, &state, McpConfig { enabled, port, write_enabled }).await
+    apply_config(
+        &app,
+        &state,
+        McpConfig {
+            enabled,
+            port,
+            write_enabled,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -687,7 +1300,11 @@ pub async fn mcp_write_response(
     let Some(pending) = state.shared.pending.lock().unwrap().remove(&id) else {
         return Err("写入请求已失效".to_string());
     };
-    let _ = pending.sender.send(WriteDecision { approved, result, error });
+    let _ = pending.sender.send(WriteDecision {
+        approved,
+        result,
+        error,
+    });
     Ok(())
 }
 
@@ -783,15 +1400,33 @@ mod tests {
 
     #[test]
     fn settings_host_only_strips_path_and_key() {
-        assert_eq!(host_only("https://api.example.com/v1?key=sk-x"), "api.example.com");
+        assert_eq!(
+            host_only("https://api.example.com/v1?key=sk-x"),
+            "api.example.com"
+        );
         assert_eq!(host_only("http://127.0.0.1:8080/v1"), "127.0.0.1");
         assert_eq!(host_only(""), "");
     }
 
     #[test]
     fn read_only_tools_are_exposed() {
-        let names = tools().into_iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>();
-        for required in ["project.list", "canvas.list", "task.list", "task.get", "image.get", "settings.get"] {
+        let names = tools()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+        for required in [
+            "project.list",
+            "canvas.list",
+            "task.list",
+            "task.get",
+            "image.get",
+            "settings.get",
+            "skill.list",
+            "workflow.list",
+            "workflow.get",
+            "diagnostics.get",
+            "backup.verify",
+        ] {
             assert!(names.iter().any(|name| name == required));
         }
         assert!(names.iter().any(|name| name == "task.create"));
@@ -807,6 +1442,150 @@ mod tests {
         with_images.insert("imageIds".into(), json!(["a", "b"]));
         let payload = write_request_payload("id", "task.create", &with_images);
         assert_eq!(payload["imageIds"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn skill_list_uses_canonical_ids_and_filters_legacy_mirrors() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage
+            .kv_set(
+                "panpan-prompt-skills-v1",
+                &json!({
+                    "state": {"skills": [{
+                        "id": "shared",
+                        "title": "C:/Users/me/secret skill.txt",
+                        "category": "//server/share/private",
+                        "prompt": "body",
+                        "tags": ["desc:private description"],
+                        "favorite": true,
+                        "variables": [{"key":"x","label":"X","defaultValue":"1"}],
+                        "createdAt": 1,
+                        "updatedAt": 2
+                    }]}
+                })
+                .to_string(),
+            )
+            .unwrap();
+        storage.kv_set("panpan-capability-skills-v1", &json!({
+            "state": {"mine": [
+                {"id":"shared","name":"/Users/alice/private skill","category":"Bearer secret","basePrompt":"body","source":"mine","updatedAt":3},
+                {"id":"prompt:shared","name":"旧镜像","basePrompt":"body","source":"mine","updatedAt":4}
+            ]}
+        }).to_string()).unwrap();
+
+        let items = skill_items(&storage).unwrap();
+        let ids = items
+            .iter()
+            .filter_map(|item| item.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["capability:shared", "prompt:shared"]);
+        assert!(items
+            .iter()
+            .all(|item| item.get("description").and_then(Value::as_str) == Some("")));
+        assert!(!items
+            .iter()
+            .any(|item| item.get("name").and_then(Value::as_str) == Some("旧镜像")));
+        let serialized = Value::Array(items).to_string();
+        for secret in [
+            "C:/Users",
+            "//server/share",
+            "/Users/alice",
+            "Bearer",
+            "secret",
+        ] {
+            assert!(
+                !serialized.contains(secret),
+                "leaked {secret}: {serialized}"
+            );
+        }
+    }
+
+    #[test]
+    fn workflow_read_views_exclude_raw_text_and_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        storage.doc_put(SAVED_WORKFLOWS, &crate::storage::Doc {
+            id: "wf-1".to_string(),
+            data: json!({
+                "id":"wf-1",
+                "name":"/home/alice/private workflow with spaces.json",
+                "presetId":"//server/share/preset",
+                "workspaceProjectId":"C:/Users/me/workspace with spaces",
+                "values":{
+                    "flow":"upscale",
+                    "positivePrompt":"private prompt",
+                    "model":r"C:\Users\secret\model.safetensors",
+                    "scale":2
+                },
+                "results":[{
+                    "imageId":"img-1",
+                    "record":{"id":"rec-1","title":"private title","summary":"private summary","presetId":"/Users/alice/preset","toolId":"/home/alice/tool","resolution":"/var/private/image with spaces.png","duration":"01:00"},
+                    "missingImageIds":["img-2"]
+                }],
+                "updatedAt": 2
+            }).to_string(),
+        }).unwrap();
+
+        let items = workflow_items(&storage).unwrap();
+        let item = items.first().unwrap();
+        assert_eq!(
+            safe_workflow_values(&item["values"]),
+            json!({"flow":"upscale","model":"[redacted]","scale":2})
+        );
+        let record = safe_workflow_record(&item["results"][0]["record"]);
+        assert!(record.get("title").is_none());
+        assert!(record.get("summary").is_none());
+        assert!(!record.to_string().contains("private"));
+        let serialized = json!({
+            "name": safe_text(item["name"].as_str().unwrap()),
+            "presetId": safe_text(item["presetId"].as_str().unwrap()),
+            "workspaceProjectId": safe_text(item["workspaceProjectId"].as_str().unwrap()),
+            "record": record,
+        })
+        .to_string();
+        for secret in [
+            "/home/alice",
+            "//server/share",
+            "C:/Users",
+            "/Users/alice",
+            "/var/private",
+        ] {
+            assert!(
+                !serialized.contains(secret),
+                "leaked {secret}: {serialized}"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostics_summary_redacts_paths_and_secrets() {
+        let summary = safe_text(r"Bearer secret C:\Users\me\data.db sk-test token=abc");
+        assert_eq!(summary, "[redacted]");
+    }
+
+    #[test]
+    fn safe_text_handles_slash_paths_and_keeps_technical_ids() {
+        for value in [
+            "C:/Users/alice/private",
+            "//server/share/private",
+            "/Users/alice/private",
+            "/home/alice/private",
+            "/private with spaces/file.png",
+            "/Volumes/private/file with spaces.png",
+        ] {
+            assert_eq!(safe_text(value), "[redacted]", "{value}");
+        }
+        for value in [
+            "550e8400-e29b-41d4-a716-446655440000",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "wf-abc123",
+            "wfi-abc123",
+            "builtin:space.commercial-photo",
+            "qwen-upscale",
+        ] {
+            assert_eq!(safe_text(value), value);
+        }
     }
 
     #[tokio::test]
@@ -857,7 +1636,13 @@ mod tests {
 
         let missing = client.post(&url).json(&body).send().await.unwrap();
         assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
-        let wrong = client.post(&url).bearer_auth("wrong").json(&body).send().await.unwrap();
+        let wrong = client
+            .post(&url)
+            .bearer_auth("wrong")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
         let origin = client
             .post(&url)
@@ -868,7 +1653,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(origin.status(), StatusCode::FORBIDDEN);
-        let allowed = client.post(&url).bearer_auth("test-token").json(&body).send().await.unwrap();
+        let allowed = client
+            .post(&url)
+            .bearer_auth("test-token")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
         assert_ne!(allowed.status(), StatusCode::UNAUTHORIZED);
         assert_ne!(allowed.status(), StatusCode::FORBIDDEN);
 
@@ -892,7 +1683,12 @@ mod tests {
             .await
             .unwrap();
         assert!(init.status().is_success());
-        let session = init.headers().get("mcp-session-id").and_then(|value| value.to_str().ok()).unwrap_or("").to_string();
+        let session = init
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let init_text = init.text().await.unwrap();
         assert!(init_text.contains("serverInfo"));
         let list_body = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});

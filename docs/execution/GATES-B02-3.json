@@ -1,0 +1,64 @@
+{
+  "batch": "B02-3",
+  "plan": "docs/execution/PLAN-B02.md",
+  "planSha256": "D167732252396120F0EA32F60EAEEA67B0024AC8647F99CD40CF800FBF10E679",
+  "checklist": "docs/execution/B02-CHECKLIST.md",
+  "checklistSha256": "BD5A67E6C7346918E2E8F0C296352E50597FA9E6F80ACED38746AA0335B35A31",
+  "branch": "b02",
+  "branchStart": "3da0bab",
+  "head": "f4bebfb",
+  "diffRange": "3da0bab..f4bebfb",
+  "gates": {
+    "tsc": "pass",
+    "viteBuild": "pass",
+    "vitest": {
+      "files": 77,
+      "tests": 983,
+      "failed": 0
+    },
+    "cargoTest": {
+      "libTests": 96,
+      "failed": 0
+    },
+    "tauriAcl": "pass",
+    "releaseCheck": "pass",
+    "tauriBuild": "pass",
+    "installer": "PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_0.1.1_x64-setup.exe",
+    "installerBytes": 29114663,
+    "installerSha256": "B0BF2533BCB9828DE1D98AB7D83DAE8544BFB7FD088F871A7BD6216062079D15",
+    "builtExePath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\gpt-image-playground.exe",
+    "builtExeSha256": "DC1E027E9472659B9F42BDCF19029BD18F1B41A00622B36599DBC22AF4BF9B9D",
+    "buildSourceCommit": "f4bebfb",
+    "install": "pass; installed exe sha256 46C2FA69EBCE70B44997460C3917CCF8CD4710EE343284FAA5B4683119D5BC47",
+    "u2": "partial: Alt+F4 只隐藏（进程仍在）、托盘唤起主窗口、C 品牌界面通过；托盘退出菜单点击待抽查",
+    "realData": "not touched; test copy used"
+  },
+  "focusedRegression": {
+    "trayMenuAndExit": "pending U2",
+    "closeRequestHidesOnly": "pass (Rust test)",
+    "exitOnlyFromTrayMenu": "pass (Rust test)",
+    "trayShowRestoresWindow": "pending U2",
+    "windowDefaultSizeAndCenter": "pending U2",
+    "brandIcons": "pending U2",
+    "pwaPngIcons": "pass (files generated)",
+    "productIdentity": "pass",
+    "upstreamCleanup": "pass",
+    "devtoolsRemoved": "pass",
+    "configImportNoClipboard": "pending U2",
+    "connectionTest": "pass (unit test)",
+    "announcementsRemoved": "pass",
+    "prototypeDeadCodeRemoved": "pass",
+    "viewportZoomAllowed": "pass",
+    "studioFontVariables": "pass"
+  },
+  "firstFailingGate": null,
+  "knownLimits": [
+    "安装目录与数据目录保持旧值 %LOCALAPPDATA%\\PanPan Workbench，显示名改为盼盼工作台，不迁移/删除旧 data",
+    "窗口位置和大小不再持久化，每次启动居中；P1-35 多屏边界恢复压缩不做",
+    "关闭窗口 Rust 立即隐藏并 prevent_close，前端收到事件后写盘，Rust 5 秒兜底只隐藏；托盘退出前端写盘后退出，Rust 15 秒兜底退出",
+    "P1-24 快捷方式 E 盘与图标缓存、P1-26 旧协议清理压缩不做",
+    "字号/点击区/留白/可访问性等 UI 批次项压缩不做",
+    "本批未执行安装、快捷方式重建与 U2 点击回归"
+  ]
+}

@@ -15,6 +15,7 @@ const pathModes = new Set([
   'drop-image-tool',
   'empty',
   'http-error',
+  'http-401',
   'invalid-json',
   'no-recognizable',
   'slow',
@@ -374,6 +375,11 @@ async function handleApi(req, res, url) {
 
   if (mode === 'http-error') {
     sendJson(res, 500, { error: { message: 'Mock HTTP failure from local test API' } })
+    return
+  }
+
+  if (mode === 'http-401') {
+    sendJson(res, 401, { error: { message: 'Invalid API key (mock 401)', type: 'invalid_request_error' } })
     return
   }
 

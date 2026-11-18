@@ -159,7 +159,7 @@ export function normalizeWorkspace(value: unknown, now = Date.now()): WorkspaceS
     activeCanvasId,
     // 缺省/脏数据回落到新默认（canvas + bottom）；显式保存过的 grid/right 仍尊重老用户偏好。
     viewMode: value.viewMode === 'grid' ? 'grid' : 'canvas',
-    inputDockPosition: value.inputDockPosition === 'right' ? 'right' : 'bottom',
+    inputDockPosition: 'bottom',
   }
 }
 

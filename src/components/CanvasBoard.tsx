@@ -1195,7 +1195,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
 
       <div
         data-canvas-zoom-controls
-        className="absolute bottom-4 z-10 flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 text-body-sm text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300"
+        className="absolute top-4 z-10 flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 text-body-sm text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300"
         style={{ right: 16 + rightInset }}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}

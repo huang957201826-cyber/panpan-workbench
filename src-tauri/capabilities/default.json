@@ -21,6 +21,7 @@
     "app-update",
     "http-request",
     "network-proxy",
+    "engine",
     "close-watch",
     "mcp",
     "cli",

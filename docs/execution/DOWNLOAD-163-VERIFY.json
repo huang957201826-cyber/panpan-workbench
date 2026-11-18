@@ -1,0 +1,32 @@
+{
+  "downloads": [
+    {
+      "label": "连续下载-1",
+      "file": "C:\\Users\\95720\\Downloads\\panpan-qwen-upscale-1794920092259.png",
+      "size": 801250,
+      "failure": null,
+      "png": true
+    },
+    {
+      "label": "连续下载-2",
+      "file": "C:\\Users\\95720\\Downloads\\panpan-qwen-upscale-1794920093020.png",
+      "size": 801250,
+      "failure": null,
+      "png": true
+    },
+    {
+      "label": "历史记录下载",
+      "file": "C:\\Users\\95720\\Downloads\\panpan-qwen-upscale-1794920094913.png",
+      "size": 801250,
+      "failure": null,
+      "png": true
+    }
+  ],
+  "checks": {
+    "emptyToast": true,
+    "twoDownloads": true,
+    "historyDownload": true,
+    "consecutive": true
+  },
+  "consoleErrors": []
+}

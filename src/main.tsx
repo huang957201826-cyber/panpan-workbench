@@ -103,6 +103,8 @@ async function start() {
   if (isTauri) {
     await loadTauriStorage()
     void installTauriStorageFlush().catch((err) => console.error('注册关闭前保存失败：', err))
+    const { recoverPendingRestoreJournals } = await import('./lib/restoreRecovery')
+    await recoverPendingRestoreJournals().catch((err) => console.error('恢复 journal 清理失败：', err))
   }
   const { default: App } = await import('./App')
   const root = document.getElementById('root')

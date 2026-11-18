@@ -672,3 +672,10 @@ input[type="number"] {
 .dark [data-canvas-grid] {
   background-image: radial-gradient(circle, rgba(255, 255, 255, 0.18) 1px, transparent 1px);
 }
+
+/* 拖拽期间关闭所有背景模糊，减少合成开销 */
+[data-dragging] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+

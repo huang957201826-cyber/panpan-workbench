@@ -1,0 +1,28 @@
+{
+  "version": "1.2.0",
+  "date": "2026-11-12",
+  "gates": {
+    "gateDev": true,
+    "unitFiles": 102,
+    "unitTests": 1129,
+    "e2eTests": 58,
+    "rustTests": 107,
+    "sast": true,
+    "releaseCheck": true,
+    "signedBuild": true,
+    "installerPath": "C:\\Users\\95720\\生图软件二开\\gpt_image_playground-main\\src-tauri\\target\\release\\bundle\\nsis\\PanPan Workbench_1.2.0_x64-setup.exe",
+    "installerSha256": "72058841DBDF1EEC24FEF6E80ADAA40FD9236F73CE875A0466C926AEB9C9B403",
+    "installExit": 0,
+    "installedVersion": "1.2.0",
+    "tasksBefore": 17,
+    "imagesBefore": 18,
+    "tasksAfter": 17,
+    "imagesAfter": 18,
+    "quickCheck": "ok",
+    "review": "CODE_REVIEW=APPROVE (R1-R2, R3-R6); R7 conditional evidence closed before U2",
+    "backups": [
+      "E:\\02-RUANJIAN\\67-盼盼工作台\\backups\\20261112-1.2.0-a",
+      "E:\\02-RUANJIAN\\67-盼盼工作台\\backups\\20261112-1.2.0-b"
+    ]
+  }
+}

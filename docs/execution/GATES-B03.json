@@ -1,0 +1,51 @@
+{
+  "batch": "B03",
+  "version": "1.0.1",
+  "builtAt": "2026-11-10T01:50:00+08:00",
+  "installer": {
+    "path": "C:/Users/95720/生图软件二开/gpt_image_playground-main/src-tauri/target/release/bundle/nsis/PanPan Workbench_1.0.1_x64-setup.exe",
+    "bytes": 10526164,
+    "sha256": "4B2708F0008013D64839FDF995F517C127F53FCDE77DAE752438F991AC964403",
+    "signaturePath": "C:/Users/95720/生图软件二开/gpt_image_playground-main/src-tauri/target/release/bundle/nsis/PanPan Workbench_1.0.1_x64-setup.exe.sig",
+    "signatureBytes": 448,
+    "signatureSha256": "4381F192D6EEE363B3396EB50E3429C372098164727554E8642204F5DC1A6AFF"
+  },
+  "rollback": {
+    "path": "C:/Users/95720/生图软件二开/gpt_image_playground-main/src-tauri/target/release/bundle/nsis/PanPan Workbench_1.0.0_x64-setup.exe",
+    "bytes": 10448444,
+    "sha256": "49DD2D3A3A0E31B996248A1B5BAEB00DF09FD9FBF298540391706CC01626EB98",
+    "signature": true
+  },
+  "gates": {
+    "unit": "92 files / 1077 tests passed",
+    "e2e": "7 tests passed",
+    "rust": "105 tests passed",
+    "gateDev": "passed",
+    "tauriBuild": "passed"
+  },
+  "preInstall": {
+    "backupRoot": "E:/02-RUANJIAN/67-盼盼工作台/backups/b03-pre-install-20261110",
+    "dataBackup": "data",
+    "appBackup": "app",
+    "quickCheck": "ok",
+    "tasks": 12,
+    "images": 15
+  },
+  "postInstall": {
+    "version": "1.0.1",
+    "installPath": "E:/02-RUANJIAN/67-盼盼工作台/PanPan Workbench",
+    "quickCheck": "ok",
+    "tasks": 12,
+    "images": 15,
+    "lovartSkills": 27,
+    "windowTitle": "盼盼工作台",
+    "processRunning": true,
+    "completedAt": "2026-11-10T01:58:00+08:00"
+  },
+  "ci": {
+    "runId": 42671302913,
+    "status": "success",
+    "e2e": "6 passed / 1 skipped (Lovart no kit on CI)",
+    "url": "https://github.com/huang957201826-cyber/panpan-workbench-dev/actions/runs/42671302913"
+  }
+}

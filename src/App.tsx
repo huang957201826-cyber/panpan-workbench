@@ -19,7 +19,7 @@ import InputBar from './components/InputBar'
 import StudioShell from './studio/StudioShell'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
-import SettingsModal from './components/SettingsModal'
+import { SettingsPrototypeHost } from './studio/components/SettingsPrototypeHost'
 import ConfirmDialog from './components/ConfirmDialog'
 import DataProgressDialog from './components/DataProgressDialog'
 import Toast from './components/Toast'
@@ -59,6 +59,9 @@ export default function App() {
   // 设置页已移除传统布局出口，工作台恒为默认入口；旧布局代码保留待后续剥离
   const studioShellEnabled = true
   const [startupImportDone, setStartupImportDone] = useState(false)
+  const showSettings = useStore((s) => s.showSettings)
+  const setShowSettings = useStore((s) => s.setShowSettings)
+
   useDockerApiUrlMigrationNotice()
   useAppFonts()
   useColorMode()
@@ -235,7 +238,13 @@ export default function App() {
     <>
       <DetailModal key={`detail-${privacyModeEpoch}`} />
       <Lightbox key={`lightbox-${privacyModeEpoch}`} />
-      <SettingsModal key={`settings-${settingsModalEpoch}`} />
+      {showSettings && (
+        <SettingsPrototypeHost
+          key={`settings-${settingsModalEpoch}`}
+          open
+          onClose={() => setShowSettings(false)}
+        />
+      )}
       <DataProgressDialog />
       <ConfirmDialog />
       <FavoriteCollectionPickerModal />

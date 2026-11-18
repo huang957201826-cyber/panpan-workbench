@@ -3,7 +3,14 @@ import { Search, Sparkles, X } from 'lucide-react'
 import type { Skill, SkillSlot, SkillSlotValue } from '../../types'
 import { createInputImageFromFile, useStore } from '../../store'
 import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, validateSkillValues } from '../../lib/capabilitySkills'
-import { useCapabilitySkillStore, applySkillOverride } from '../../lib/capabilitySkillStore'
+import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
+import { useSkillStore } from '../../lib/skillStore'
+import {
+  buildRegisteredSkillCatalog,
+  resolveRegisteredSkill,
+  setRegisteredSkillCoverImage,
+  setRegisteredSkillReferenceImages,
+} from '../../lib/skillRegistry'
 import { ensureImageCached } from '../../lib/imageCache'
 import { Button } from '../../ui'
 
@@ -21,9 +28,8 @@ interface SkillPickerModalProps {
 
 export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave, onReset, canReset = false, detailOnly = false, activeSkillId, initialValues }: SkillPickerModalProps) {
   const mine = useCapabilitySkillStore((s) => s.mine)
+  const promptSkills = useSkillStore((s) => s.skills)
   const overrides = useCapabilitySkillStore((s) => s.builtinOverrides)
-  const setReferenceImages = useCapabilitySkillStore((s) => s.setReferenceImages)
-  const setCoverImage = useCapabilitySkillStore((s) => s.setCoverImage)
   const [builtin, setBuiltin] = useState<Skill[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -44,7 +50,15 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     return () => { cancelled = true }
   }, [])
 
-  const skills = useMemo(() => [...mine, ...builtin.map((skill) => applySkillOverride(skill, overrides))], [mine, builtin, overrides])
+  const skills = useMemo(
+    () => buildRegisteredSkillCatalog({
+      promptSkills,
+      capabilitySkills: mine,
+      builtinSkills: builtin,
+      overrides,
+    }),
+    [promptSkills, mine, builtin, overrides],
+  )
   const categoryCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const skill of skills) counts.set(skill.category, (counts.get(skill.category) ?? 0) + 1)
@@ -62,7 +76,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
 
   useEffect(() => {
     if (!activeSkillId) return
-    const skill = skills.find((item) => item.id === activeSkillId)
+    const skill = resolveRegisteredSkill(skills, activeSkillId)
     if (!skill) return
     setSelected(skill)
     setValues(initialValues ?? defaultSkillValues(skill))
@@ -123,7 +137,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     }
     if (!ids.length) return
     const next = [...(skill.referenceImageIds ?? []), ...ids]
-    setReferenceImages(skill.id, next)
+    setRegisteredSkillReferenceImages(skill.registryId ?? skill.id, next)
     setSelected({ ...skill, referenceImageIds: next })
   }
 
@@ -195,10 +209,10 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                   <div className="grid grid-cols-1 gap-2">
                     {filtered.map((skill) => (
                       <button
-                        key={skill.id}
+                        key={skill.registryId ?? skill.id}
                         type="button"
                         onClick={() => choose(skill)}
-                        className={`group overflow-hidden rounded-xl border text-left transition-all ${selected?.id === skill.id ? 'border-black/40 ring-1 ring-black/30 dark:border-white/40 dark:ring-white/30' : 'border-black/[0.08] hover:border-black/25 dark:border-white/[0.1] dark:hover:border-white/25'}`}
+                        className={`group overflow-hidden rounded-xl border text-left transition-all ${selected && (selected.registryId ?? selected.id) === (skill.registryId ?? skill.id) ? 'border-black/40 ring-1 ring-black/30 dark:border-white/40 dark:ring-white/30' : 'border-black/[0.08] hover:border-black/25 dark:border-white/[0.1] dark:hover:border-white/25'}`}
                       >
                         <div className="relative flex h-16 items-center justify-center" style={{ backgroundColor: skill.coverColor }}>
                           <span className="text-body font-semibold text-black/60">{skill.name.slice(0, 6)}</span>
@@ -276,7 +290,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                             imageId={selected.coverImageId}
                             label="主图"
                             onRemove={() => {
-                              setCoverImage(selected.id, undefined)
+                              setRegisteredSkillCoverImage(selected.registryId ?? selected.id, undefined)
                               setSelected({ ...selected, coverImageId: undefined })
                             }}
                           />
@@ -287,12 +301,12 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                             imageId={imageId}
                             label="参考"
                             onSetCover={() => {
-                              setCoverImage(selected.id, imageId)
+                              setRegisteredSkillCoverImage(selected.registryId ?? selected.id, imageId)
                               setSelected({ ...selected, coverImageId: imageId })
                             }}
                             onRemove={() => {
                               const next = (selected.referenceImageIds ?? []).filter((id) => id !== imageId)
-                              setReferenceImages(selected.id, next)
+                              setRegisteredSkillReferenceImages(selected.registryId ?? selected.id, next)
                               setSelected({ ...selected, referenceImageIds: next })
                             }}
                           />

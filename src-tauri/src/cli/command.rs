@@ -51,12 +51,20 @@ fn is_image_id(text: &str) -> bool {
 }
 
 fn text(v: OsString, what: &str) -> Result<String, String> {
-    v.into_string().map_err(|_| format!("{what} 含有无法识别的字符"))
+    v.into_string()
+        .map_err(|_| format!("{what} 含有无法识别的字符"))
 }
 
 /// `-` 从标准输入读取，其余按 JSON 解析为对象
-fn read_object(arg: String, read_stdin: impl FnOnce() -> io::Result<String>) -> Result<Value, String> {
-    let raw = if arg == "-" { read_stdin().map_err(|err| format!("读取标准输入失败：{err}"))? } else { arg };
+fn read_object(
+    arg: String,
+    read_stdin: impl FnOnce() -> io::Result<String>,
+) -> Result<Value, String> {
+    let raw = if arg == "-" {
+        read_stdin().map_err(|err| format!("读取标准输入失败：{err}"))?
+    } else {
+        arg
+    };
     match serde_json::from_str::<Value>(raw.trim_start_matches('\u{feff}')) {
         Ok(v) if v.is_object() => Ok(v),
         Ok(_) => Err("<JSON> 应为一个对象".into()),
@@ -70,15 +78,28 @@ fn reference_image(item: &str, cwd: &Path) -> Result<Value, String> {
         return Ok(Value::String(item.into()));
     }
     let path = cwd.join(item);
-    let mime = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    let mime = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
         Some("gif") => "image/gif",
-        _ => return Err(format!("不支持的参考图格式（需要 png、jpg、webp 或 gif）：{item}")),
+        _ => {
+            return Err(format!(
+                "不支持的参考图格式（需要 png、jpg、webp 或 gif）：{item}"
+            ))
+        }
     };
-    let bytes = std::fs::read(&path).map_err(|err| format!("读取参考图 {} 失败：{err}", path.display()))?;
-    Ok(Value::String(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))))
+    let bytes =
+        std::fs::read(&path).map_err(|err| format!("读取参考图 {} 失败：{err}", path.display()))?;
+    Ok(Value::String(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )))
 }
 
 fn need(words: &mut impl Iterator<Item = String>, what: &str) -> Result<String, String> {
@@ -92,7 +113,11 @@ pub fn parse(
     read_stdin: impl FnOnce() -> io::Result<String>,
 ) -> Result<Command, String> {
     let mut args = args.into_iter();
-    let cmd = args.next().map(|a| text(a, "命令")).transpose()?.unwrap_or_default();
+    let cmd = args
+        .next()
+        .map(|a| text(a, "命令"))
+        .transpose()?
+        .unwrap_or_default();
     let mut words = Vec::new();
     let mut opts: Vec<(String, Option<OsString>)> = Vec::new();
     let mut json = false;
@@ -112,7 +137,16 @@ pub fn parse(
     }
     let allowed: &[&str] = match (cmd.as_str(), words.first().map(String::as_str)) {
         ("generate", _) => &[
-            "--prompt", "--image", "--size", "--quality", "-n", "--format", "--compression", "--moderation", "--transparent", "--output",
+            "--prompt",
+            "--image",
+            "--size",
+            "--quality",
+            "-n",
+            "--format",
+            "--compression",
+            "--moderation",
+            "--transparent",
+            "--output",
         ],
         ("history", _) => &["--limit", "--offset"],
         ("image", _) => &["--output"],
@@ -120,7 +154,10 @@ pub fn parse(
         ("provider", Some("save")) => &["--id"],
         _ => &[],
     };
-    if let Some((flag, _)) = opts.iter().find(|(flag, _)| !allowed.contains(&flag.as_str())) {
+    if let Some((flag, _)) = opts
+        .iter()
+        .find(|(flag, _)| !allowed.contains(&flag.as_str()))
+    {
         return Err(format!("无法识别的参数：{flag}"));
     }
 
@@ -174,7 +211,11 @@ pub fn parse(
     let tool = match cmd.as_str() {
         "generate" => {
             let first = (words.len() > 0).then(|| words.by_ref().collect::<Vec<_>>().join(" "));
-            let prompts: Vec<_> = first.into_iter().chain(prompts).filter(|p| !p.trim().is_empty()).collect();
+            let prompts: Vec<_> = first
+                .into_iter()
+                .chain(prompts)
+                .filter(|p| !p.trim().is_empty())
+                .collect();
             if prompts.is_empty() {
                 return Err("请给出提示词".into());
             }
@@ -193,7 +234,15 @@ pub fn parse(
         }
         "image" => {
             let id = need(&mut words, "图片 ID 或任务 ID")?;
-            a.insert(if is_image_id(&id) { "image_id" } else { "task_id" }.into(), id.into());
+            a.insert(
+                if is_image_id(&id) {
+                    "image_id"
+                } else {
+                    "task_id"
+                }
+                .into(),
+                id.into(),
+            );
             "get_image"
         }
         "settings" => match words.next().as_deref() {
@@ -216,17 +265,36 @@ pub fn parse(
             let action = need(&mut words, "操作（save、delete 等）")?;
             match (cmd.as_str(), action.as_str()) {
                 ("profile", "use") => {
-                    a.insert("active_profile_id".into(), need(&mut words, "配置 ID")?.into());
+                    a.insert(
+                        "active_profile_id".into(),
+                        need(&mut words, "配置 ID")?.into(),
+                    );
                     "update_settings"
                 }
                 (_, "save") => {
                     let body = read_object(need(&mut words, "<JSON>")?, read_stdin)?;
-                    a.insert(if cmd == "profile" { "profile" } else { "provider" }.into(), body);
-                    if cmd == "profile" { "save_api_profile" } else { "save_custom_provider" }
+                    a.insert(
+                        if cmd == "profile" {
+                            "profile"
+                        } else {
+                            "provider"
+                        }
+                        .into(),
+                        body,
+                    );
+                    if cmd == "profile" {
+                        "save_api_profile"
+                    } else {
+                        "save_custom_provider"
+                    }
                 }
                 (_, "delete") => {
                     a.insert("id".into(), need(&mut words, "ID")?.into());
-                    if cmd == "profile" { "delete_api_profile" } else { "delete_custom_provider" }
+                    if cmd == "profile" {
+                        "delete_api_profile"
+                    } else {
+                        "delete_custom_provider"
+                    }
                 }
                 _ => return Err(format!("无法识别的操作：{cmd} {action}")),
             }
@@ -237,7 +305,12 @@ pub fn parse(
     if let Some(extra) = words.next() {
         return Err(format!("多余的参数：{extra}"));
     }
-    Ok(Command { tool, arguments: a, json, output })
+    Ok(Command {
+        tool,
+        arguments: a,
+        json,
+        output,
+    })
 }
 
 /// 把 `\u{80}` 以上的字符写成 `\uXXXX`（超出基本平面的写成代理对）
@@ -275,17 +348,25 @@ async fn forward(tool: &str, args: &Map<String, Value>) -> Result<Value, String>
         Err(err) => return Err(format!("无法连接 GPT Image Playground：{err}")),
     };
     let (read, mut write) = tokio::io::split(pipe);
-    let mut request = json!({ "tool": tool, "arguments": args }).to_string().into_bytes();
+    let mut request = json!({ "tool": tool, "arguments": args })
+        .to_string()
+        .into_bytes();
     request.push(b'\n');
-    write.write_all(&request).await.map_err(|err| format!("发送命令失败：{err}"))?;
+    write
+        .write_all(&request)
+        .await
+        .map_err(|err| format!("发送命令失败：{err}"))?;
     let mut read = BufReader::new(read);
     loop {
         let mut line = Vec::new();
-        read.read_until(b'\n', &mut line).await.map_err(|err| format!("读取应用的回复失败：{err}"))?;
+        read.read_until(b'\n', &mut line)
+            .await
+            .map_err(|err| format!("读取应用的回复失败：{err}"))?;
         if line.is_empty() {
             return Err("应用没有回复就断开了连接，可能已经退出".into());
         }
-        let reply: Value = serde_json::from_slice(&line).map_err(|err| format!("应用的回复无法识别：{err}"))?;
+        let reply: Value =
+            serde_json::from_slice(&line).map_err(|err| format!("应用的回复无法识别：{err}"))?;
         // 进度写到 stderr，stdout 只留最终结果（--json 时为一行 JSON）
         if let Some(text) = reply["progress"].as_str() {
             eprintln!("{text}");
@@ -312,7 +393,8 @@ fn copy_files(dir: &Path, files: &[Value]) -> Result<Vec<String>, String> {
         .map(|(file, name)| {
             let from = Path::new(file);
             let to = dir.join(name);
-            std::fs::copy(from, &to).map_err(|err| format!("复制 {file} 到 {} 失败：{err}", to.display()))?;
+            std::fs::copy(from, &to)
+                .map_err(|err| format!("复制 {file} 到 {} 失败：{err}", to.display()))?;
             Ok(to.to_string_lossy().into_owned())
         })
         .collect()
@@ -322,7 +404,11 @@ pub fn run() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         emit(USAGE);
-        return if args.is_empty() { ExitCode::from(2) } else { ExitCode::SUCCESS };
+        return if args.is_empty() {
+            ExitCode::from(2)
+        } else {
+            ExitCode::SUCCESS
+        };
     }
     if args[0] == "--version" {
         emit(env!("CARGO_PKG_VERSION"));
@@ -336,24 +422,29 @@ pub fn run() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("无法启动异步运行时：{err}");
             return ExitCode::from(1);
         }
     };
-    let reply = runtime.block_on(forward(cmd.tool, &cmd.arguments)).and_then(|mut reply| {
-        if let Some(dir) = &cmd.output {
-            let files = reply["files"].as_array().cloned().unwrap_or_default();
-            let copied = copy_files(dir, &files)?;
-            reply["data"]["copied"] = copied.clone().into();
-            let text = reply["text"].as_str().unwrap_or_default().to_string();
-            let lines: Vec<_> = copied.iter().map(|p| format!("已复制到：{p}")).collect();
-            reply["text"] = format!("{text}\n{}", lines.join("\n")).into();
-        }
-        Ok(reply)
-    });
+    let reply = runtime
+        .block_on(forward(cmd.tool, &cmd.arguments))
+        .and_then(|mut reply| {
+            if let Some(dir) = &cmd.output {
+                let files = reply["files"].as_array().cloned().unwrap_or_default();
+                let copied = copy_files(dir, &files)?;
+                reply["data"]["copied"] = copied.clone().into();
+                let text = reply["text"].as_str().unwrap_or_default().to_string();
+                let lines: Vec<_> = copied.iter().map(|p| format!("已复制到：{p}")).collect();
+                reply["text"] = format!("{text}\n{}", lines.join("\n")).into();
+            }
+            Ok(reply)
+        });
     match reply {
         Ok(reply) if cmd.json => emit(&ascii_json(&reply["data"])),
         Ok(reply) => emit(reply["text"].as_str().unwrap_or_default()),

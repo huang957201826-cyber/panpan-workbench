@@ -1,6 +1,6 @@
 import { strFromU8, strToU8, type AsyncUnzipOptions, unzip, zip } from 'fflate'
 
-import type { AgentConversation, AppSettings, ExportData, FavoriteCollection, PromptSkill, Skill, StoredImage, StoredImageThumbnail, TaskRecord, WorkspaceState } from '../types'
+import type { AgentConversation, AppSettings, ExportData, FavoriteCollection, PromptSkill, SavedWorkflowBackup, Skill, StoredImage, StoredImageThumbnail, TaskRecord, WorkspaceState } from '../types'
 import { bytesToDataUrl, dataUrlToBytes } from './dataUrl'
 import { getNumberedFileNameBase, sanitizeFileNamePart } from './exportFileName'
 import { normalizePromptSkills } from './promptSkills'
@@ -31,6 +31,12 @@ export interface ExportThumbnailFile extends Omit<StoredImageThumbnail, 'thumbna
   bytes: Uint8Array
 }
 
+export interface ExportWorkflowImage {
+  id: string
+  dataUrl: string
+  createdAt?: number
+}
+
 export interface BuildExportZipParams {
   options: BuildExportZipOptions
   exportedAt: number
@@ -52,6 +58,8 @@ export interface BuildExportZipParams {
   capabilitySkills?: Skill[]
   /** 内置技能覆盖层；调用方从 useCapabilitySkillStore.getState().builtinOverrides 取 */
   capabilityOverrides?: Record<string, SkillOverride>
+  savedWorkflows?: SavedWorkflowBackup[]
+  workflowImages?: ExportWorkflowImage[]
 }
 
 export interface ExportZipContents {
@@ -66,17 +74,52 @@ export interface ExportImageSize {
 
 export interface ExportZipPlanPart {
   imageIds: string[]
+  workflowImageIds: string[]
   tasks: TaskRecord[]
   agentConversations: AgentConversation[]
   includeBaseData: boolean
 }
 
-function scrubApiKeys<T>(value: T): T {
-  if (Array.isArray(value)) return value.map((item) => scrubApiKeys(item)) as T
+const SAFE_SETTINGS_KEYS = new Set([
+  'baseUrl', 'model', 'timeout', 'apiMode', 'codexCli', 'apiProxy', 'streamImages',
+  'streamPartialImages', 'customProviders', 'providerOrder', 'clearInputAfterSubmit',
+  'persistInputOnRestart', 'reuseTaskApiProfileTemporarily', 'alwaysShowRetryButton',
+  'saveTasksToActiveFavoriteCollection', 'retryMode', 'allowPromptRewrite',
+  'taskCompletionNotification', 'writeLogFile', 'enterSubmit', 'privacyModeShortcut',
+  'colorMode', 'uiFont', 'uiFontName', 'monoFont', 'monoFontName', 'showBatchPrompt',
+  'batchPromptEnabled', 'batchPromptMode', 'batchPromptConcurrencyLimited',
+  'batchPromptConcurrency', 'referenceImageEditAction', 'zipDownloadRoutes',
+  'saveLocationMode', 'agentScrollToBottomAfterSubmit', 'agentMaxToolRounds',
+  'agentWebSearch', 'agentMathFormattingPrompt', 'agentApiConfigMode',
+  'agentTextProfileId', 'agentImageProfileId', 'studioShellEnabled', 'uiScale',
+  'profiles', 'activeProfileId',
+])
+
+const SENSITIVE_KEY_PARTS = [
+  'apikey', 'accesskey', 'privatekey', 'signingkey', 'mcptoken', 'accesstoken',
+  'refreshtoken', 'clientsecret', 'token', 'secret', 'password', 'passwd',
+  'authorization', 'credential', 'cookie', 'bearer',
+]
+
+function isSensitiveKey(key: string) {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return SENSITIVE_KEY_PARTS.some((part) => normalized.includes(part)) || normalized === 'auth'
+}
+
+function scrubSecretText(value: string) {
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, '$1***')
+    .replace(/\bsk-[A-Za-z0-9._-]{4,}/g, 'sk-***')
+    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)\s*[:=]\s*[^\s"'&,}]+/gi, '$1=***')
+}
+
+function scrubSensitive<T>(value: T): T {
+  if (typeof value === 'string') return scrubSecretText(value) as T
+  if (Array.isArray(value)) return value.map((item) => scrubSensitive(item)) as T
   if (value && typeof value === 'object') {
     const next: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      next[key] = key === 'apiKey' ? '' : scrubApiKeys(item)
+      next[key] = isSensitiveKey(key) ? '' : scrubSensitive(item)
     }
     return next as T
   }
@@ -84,19 +127,23 @@ function scrubApiKeys<T>(value: T): T {
 }
 
 function getExportSettings(settings: AppSettings): NonNullable<ExportData['settings']> {
-  const scrubbed = scrubApiKeys(settings)
-  if (scrubbed.customProviders.length) return scrubbed
-  const { customProviders, ...rest } = scrubbed
-  return rest
+  const allowed = Object.fromEntries(
+    Object.entries(settings).filter(([key]) => SAFE_SETTINGS_KEYS.has(key)),
+  ) as unknown as AppSettings
+  return scrubSensitive({
+    ...allowed,
+    profiles: allowed.profiles,
+    customProviders: allowed.customProviders,
+  }) as NonNullable<ExportData['settings']>
 }
 
 /**
  * 导出边界：技能先按 promptSkills 的既有语义归一化（只保留白名单字段），
- * 再整体过一遍 scrubApiKeys，与 settings 完全相同的密钥清洗口径。
+ * 再整体过一遍 scrubSensitive，与 settings 完全相同的密钥清洗口径。
  * 提示词 / 负向提示词 / 变量默认值等文本不做内容改写，未知字段（含可能的密钥字段）不会进入备份。
  */
 export function serializeSkillsForExport(skills: PromptSkill[]): PromptSkill[] {
-  return scrubApiKeys(normalizePromptSkills(skills))
+  return scrubSensitive(normalizePromptSkills(skills))
 }
 
 /** 技能封面图 id 去重列表，供调用方并入待打包图片集合，复用现有 imageFiles / thumbnailFiles 收集逻辑 */
@@ -125,7 +172,7 @@ export function mergeImportedSkills(existing: PromptSkill[], incoming: PromptSki
 
 /** 能力技能导出边界：白名单归一并清掉可能的密钥字段 */
 export function serializeCapabilitySkillsForExport(skills: Skill[]): Skill[] {
-  return scrubApiKeys(normalizeCapabilitySkills(skills))
+  return scrubSensitive(normalizeCapabilitySkills(skills))
 }
 
 export function collectCapabilityCoverImageIds(skills: Skill[] | undefined): string[] {
@@ -163,6 +210,7 @@ export async function buildExportZip(params: BuildExportZipParams) {
   const imageFileNameBases = getImageFileNameBases(imageTasks)
   const imageFiles: ExportData['imageFiles'] = {}
   const thumbnailFiles: NonNullable<ExportData['thumbnailFiles']> = {}
+  const workflowImageFiles: NonNullable<ExportData['workflowImageFiles']> = {}
   const zipFiles: ZipFiles = {}
   const usedImagePaths = new Set<string>()
 
@@ -201,10 +249,18 @@ export async function buildExportZip(params: BuildExportZipParams) {
         zipFiles[thumbnailPath] = [thumbnailBytes, { mtime: new Date(createdAt), level: 0 }]
       }
     }
+    for (const image of params.workflowImages ?? []) {
+      const { ext, bytes } = dataUrlToBytes(image.dataUrl)
+      const path = `workflow-images/${sanitizeFileNamePart(image.id) || 'workflow-image'}.${ext}`
+      const createdAt = image.createdAt ?? params.exportedAt
+      workflowImageFiles[image.id] = { path, createdAt }
+      zipFiles[path] = [bytes, { mtime: new Date(createdAt), level: 0 }]
+    }
   }
 
   const manifest: ExportData = {
-    version: 4,
+    version: 5,
+    appVersion: __APP_VERSION__,
     exportedAt: exportedAtDate.toISOString(),
   }
 
@@ -216,7 +272,7 @@ export async function buildExportZip(params: BuildExportZipParams) {
     manifest.capabilitySkills = serializeCapabilitySkillsForExport(params.capabilitySkills)
   }
   if (params.capabilityOverrides !== undefined && params.includeManifestData !== false) {
-    manifest.capabilityOverrides = scrubApiKeys(params.capabilityOverrides)
+    manifest.capabilityOverrides = scrubSensitive(params.capabilityOverrides)
   }
   if (params.options.exportConfig && params.includeManifestData !== false) {
     manifest.settings = getExportSettings(params.settings)
@@ -236,6 +292,10 @@ export async function buildExportZip(params: BuildExportZipParams) {
     }
     manifest.imageFiles = imageFiles
     manifest.thumbnailFiles = thumbnailFiles
+    manifest.workflowImageFiles = workflowImageFiles
+    if (params.includeManifestData !== false && params.savedWorkflows !== undefined) {
+      manifest.savedWorkflows = scrubSensitive(params.savedWorkflows)
+    }
   }
 
   zipFiles['manifest.json'] = [strToU8(JSON.stringify(manifest, null, 2)), { mtime: exportedAtDate }]
@@ -257,7 +317,7 @@ export async function buildExportZip(params: BuildExportZipParams) {
 export function getExportZipPlan(
   params: Omit<BuildExportZipParams, 'images' | 'thumbnailsByImageId'>,
   images: ExportImageSize[],
-  options: { maxBytes?: number; partBytes?: number } = {},
+  options: { maxBytes?: number; partBytes?: number; workflowImages?: ExportImageSize[] } = {},
 ) {
   const maxBytes = options.maxBytes ?? MAX_EXPORT_ZIP_BYTES
   const safetyBytes = Math.min(EXPORT_PART_SAFETY_BYTES, Math.floor(maxBytes * 0.1))
@@ -265,6 +325,7 @@ export function getExportZipPlan(
   const manifestBytes = getBaseManifestEstimatedBytes(params)
   const plannedTasks = params.options.exportTasks ? params.tasks : []
   const plannedConversations = params.options.exportTasks ? params.agentConversations : []
+  const plannedWorkflowImages = params.options.exportTasks ? options.workflowImages ?? [] : []
   const taskBytes = plannedTasks.map(getJsonEstimatedBytes)
   const conversationBytes = plannedConversations.map(getJsonEstimatedBytes)
   const plannedImages = params.options.exportTasks ? images : []
@@ -272,22 +333,24 @@ export function getExportZipPlan(
     + taskBytes.reduce((total, bytes) => total + bytes, 0)
     + conversationBytes.reduce((total, bytes) => total + bytes, 0)
     + plannedImages.reduce((total, image) => total + image.bytes, 0)
+    + plannedWorkflowImages.reduce((total, image) => total + image.bytes, 0)
   if (estimatedBytes < partBytes) {
     return [{
       imageIds: plannedImages.map((image) => image.id),
+      workflowImageIds: plannedWorkflowImages.map((image) => image.id),
       tasks: plannedTasks,
       agentConversations: plannedConversations,
       includeBaseData: true,
     }]
   }
 
-  const parts: ExportZipPlanPart[] = [{ imageIds: [], tasks: [], agentConversations: [], includeBaseData: true }]
+  const parts: ExportZipPlanPart[] = [{ imageIds: [], workflowImageIds: [], tasks: [], agentConversations: [], includeBaseData: true }]
   const sizes = [manifestBytes]
   const addItem = (bytes: number, errorMessage: string, append: (part: ExportZipPlanPart) => void) => {
     let index = parts.length - 1
-    const hasItems = parts[index].imageIds.length > 0 || parts[index].tasks.length > 0 || parts[index].agentConversations.length > 0
+    const hasItems = parts[index].imageIds.length > 0 || parts[index].workflowImageIds.length > 0 || parts[index].tasks.length > 0 || parts[index].agentConversations.length > 0
     if (hasItems && sizes[index] + bytes >= partBytes) {
-      parts.push({ imageIds: [], tasks: [], agentConversations: [], includeBaseData: false })
+      parts.push({ imageIds: [], workflowImageIds: [], tasks: [], agentConversations: [], includeBaseData: false })
       sizes.push(ZIP_BASE_OVERHEAD_BYTES)
       index++
     }
@@ -304,6 +367,9 @@ export function getExportZipPlan(
   }
   for (const image of plannedImages) {
     addItem(image.bytes, `图片 ${image.id} 过大，无法放入小于 2 GB 的备份分卷。`, (part) => part.imageIds.push(image.id))
+  }
+  for (const image of plannedWorkflowImages) {
+    addItem(image.bytes, `工作流图片 ${image.id} 过大，无法放入小于 2 GB 的备份分卷。`, (part) => part.workflowImageIds.push(image.id))
   }
   return parts
 }
@@ -362,6 +428,7 @@ function assertExportZipFiles(manifest: ExportData, hasFile: (path: string) => b
   const paths = [
     ...Object.values(manifest.imageFiles ?? {}).map((file) => file.path),
     ...Object.values(manifest.thumbnailFiles ?? {}).map((file) => file.path),
+    ...Object.values(manifest.workflowImageFiles ?? {}).map((file) => file.path),
   ]
   const missingPath = paths.find((path) => !hasFile(path))
   if (missingPath) throw new Error(`ZIP 中缺少 ${missingPath}`)
@@ -369,7 +436,8 @@ function assertExportZipFiles(manifest: ExportData, hasFile: (path: string) => b
 
 function getBaseManifestEstimatedBytes(params: Omit<BuildExportZipParams, 'images' | 'thumbnailsByImageId'>) {
   const manifest = {
-    version: 4,
+    version: 5,
+    appVersion: __APP_VERSION__,
     exportedAt: new Date(params.exportedAt).toISOString(),
     ...(params.skills !== undefined ? { skills: serializeSkillsForExport(params.skills) } : {}),
     ...(params.capabilitySkills !== undefined ? { capabilitySkills: serializeCapabilitySkillsForExport(params.capabilitySkills) } : {}),
@@ -380,6 +448,7 @@ function getBaseManifestEstimatedBytes(params: Omit<BuildExportZipParams, 'image
       favoriteCollections: params.favoriteCollections,
       defaultFavoriteCollectionId: params.defaultFavoriteCollectionId,
       agentConversations: [],
+      ...(params.savedWorkflows !== undefined ? { savedWorkflows: scrubSensitive(params.savedWorkflows) } : {}),
       ...(params.workspace ? { workspace: params.workspace } : {}),
     } : {}),
   }

@@ -34,7 +34,7 @@ describe('skill library zip round trip with the persisted store', () => {
       agentConversations: [],
     })
     const manifest = (await readExportZip(bytes)).manifest
-    expect(manifest.version).toBe(4)
+    expect(manifest.version).toBe(5)
     expect(manifest.skills).toHaveLength(2)
 
     // 模拟换机 / 清 WebView 数据后的空库

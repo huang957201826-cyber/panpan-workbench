@@ -52,12 +52,17 @@ pub struct Info {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 fn bundled_skill(app: &AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("src-tauri 在仓库根目录下");
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri 在仓库根目录下");
         return Ok(repo.join("skills").join(NAME));
     }
     let res = app.path().resource_dir().map_err(|err| {
@@ -77,7 +82,8 @@ fn skill_path(target: SkillTarget) -> Option<PathBuf> {
 
 /// 文件夹中的 SKILL.md 是本应用的，才能覆盖或删除
 fn is_ours(dir: &Path) -> bool {
-    fs::read_to_string(dir.join("SKILL.md")).is_ok_and(|s| s.lines().any(|l| l.trim() == format!("name: {NAME}")))
+    fs::read_to_string(dir.join("SKILL.md"))
+        .is_ok_and(|s| s.lines().any(|l| l.trim() == format!("name: {NAME}")))
 }
 
 /// 安装包中的每个文件都在目标中且内容相同
@@ -113,7 +119,11 @@ fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
 
 fn skill_status(target: SkillTarget, src: &Path) -> SkillStatus {
     let Some(dst) = skill_path(target) else {
-        return SkillStatus { id: target, path: String::new(), state: State::NotFound };
+        return SkillStatus {
+            id: target,
+            path: String::new(),
+            state: State::NotFound,
+        };
     };
     let state = if !dst.exists() {
         State::Absent
@@ -129,18 +139,36 @@ fn skill_status(target: SkillTarget, src: &Path) -> SkillStatus {
             }
         }
     };
-    SkillStatus { id: target, path: dst.to_string_lossy().into_owned(), state }
+    SkillStatus {
+        id: target,
+        path: dst.to_string_lossy().into_owned(),
+        state,
+    }
 }
 
 fn edit_skill(target: SkillTarget, src: &Path, install: bool) -> Result<(), String> {
     let dst = skill_path(target).ok_or("找不到用户文件夹，请手动复制 Skill")?;
     if dst.exists() && !is_ours(&dst) {
-        return Err(format!("这个位置已有另一个名为 {NAME} 的 Skill，请先手动处理"));
+        return Err(format!(
+            "这个位置已有另一个名为 {NAME} 的 Skill，请先手动处理"
+        ));
     }
-    let result = if dst.exists() { fs::remove_dir_all(&dst) } else { Ok(()) };
-    let result = if install { result.and_then(|_| copy_dir(src, &dst)) } else { result };
+    let result = if dst.exists() {
+        fs::remove_dir_all(&dst)
+    } else {
+        Ok(())
+    };
+    let result = if install {
+        result.and_then(|_| copy_dir(src, &dst))
+    } else {
+        result
+    };
     result.map_err(|err| {
-        log::warn!("无法{} Skill {}：{err}", if install { "安装" } else { "移除" }, dst.display());
+        log::warn!(
+            "无法{} Skill {}：{err}",
+            if install { "安装" } else { "移除" },
+            dst.display()
+        );
         if install {
             "无法安装 Skill，请稍后重试，或打开 Skill 文件夹手动复制".to_string()
         } else {
@@ -150,12 +178,18 @@ fn edit_skill(target: SkillTarget, src: &Path, install: bool) -> Result<(), Stri
 }
 
 /// 在阻塞线程中执行修改（可为空），再读出最新状态
-async fn run(app: AppHandle, edit: impl FnOnce(&Path) -> Result<(), String> + Send + 'static) -> Result<Info, String> {
+async fn run(
+    app: AppHandle,
+    edit: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
+) -> Result<Info, String> {
     let src = bundled_skill(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         edit(&src)?;
         Ok(Info {
-            skills: [SkillTarget::Claude, SkillTarget::Agents].iter().map(|&t| skill_status(t, &src)).collect(),
+            skills: [SkillTarget::Claude, SkillTarget::Agents]
+                .iter()
+                .map(|&t| skill_status(t, &src))
+                .collect(),
             skill_dir: src.to_string_lossy().into_owned(),
         })
     })

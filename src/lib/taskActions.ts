@@ -3,7 +3,7 @@ import { editOutputs, removeMultipleTasks, removeTask, reuseConfig, retryTask, u
 import { putTask as dbPutTask, storeImage } from './db'
 import { ensureImageCached } from './imageCache'
 import { skillCoverColor } from './capabilitySkills'
-import { useCapabilitySkillStore } from './capabilitySkillStore'
+import { saveCapabilitySkill } from './skillRegistry'
 import { removeCanvasImageNodes } from './canvasImageNodes'
 import { assertCanvasUndoActive, CanvasUndoCancelled, createCanvasUndoEntry, pushCanvasUndo, runCanvasUndo } from './canvasUndo'
 import { useWorkspaceStore } from './workspaceStore'
@@ -247,7 +247,7 @@ export function saveTaskAsSkill(task: TaskRecord): Skill {
     createdAt: now,
     updatedAt: now,
   }
-  useCapabilitySkillStore.getState().addMine(skill)
+  saveCapabilitySkill(skill)
   return skill
 }
 

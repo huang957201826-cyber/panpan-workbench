@@ -185,7 +185,11 @@ impl Writes {
     /// 把临时文件改名为目标文件，返回实际写入的路径；失败时临时文件随之删除，用户原有的同名文件不受影响
     fn commit(&self, id: u32) -> Result<PathBuf, String> {
         let pending = self.lock().1.remove(&id).ok_or(WRITE_GONE)?;
-        pending.tmp.as_file().sync_all().map_err(|err| format!("刷新文件失败：{err}"))?;
+        pending
+            .tmp
+            .as_file()
+            .sync_all()
+            .map_err(|err| format!("刷新文件失败：{err}"))?;
         match pending.target {
             Target::Replace(path) => match pending.tmp.persist(&path) {
                 Ok(_) => Ok(path),
@@ -273,33 +277,54 @@ pub async fn save_file(
 #[cfg(windows)]
 fn save_dialog(window: WebviewWindow, name: &str) -> Result<Option<PathBuf>, String> {
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetSaveFileNameW, OPENFILENAMEW, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
+        GetSaveFileNameW, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
 
-    let ext = Path::new(name).extension().and_then(|value| value.to_str()).unwrap_or("");
-    let label = if ext.is_empty() { "所有文件".to_string() } else { format!("{} 文件", ext.to_uppercase()) };
-    let pattern = if ext.is_empty() { "*.*".to_string() } else { format!("*.{ext}") };
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let label = if ext.is_empty() {
+        "所有文件".to_string()
+    } else {
+        format!("{} 文件", ext.to_uppercase())
+    };
+    let pattern = if ext.is_empty() {
+        "*.*".to_string()
+    } else {
+        format!("*.{ext}")
+    };
     let mut filter = Vec::new();
     for part in [label, pattern, "所有文件".to_string(), "*.*".to_string()] {
         filter.extend(part.encode_utf16());
         filter.push(0);
     }
     filter.push(0);
-    let title: Vec<u16> = "保存文件".encode_utf16().chain(std::iter::once(0)).collect();
+    let title: Vec<u16> = "保存文件"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let default_ext: Vec<u16> = ext.encode_utf16().chain(std::iter::once(0)).collect();
     let mut file: Vec<u16> = name.encode_utf16().collect();
     file.resize(32768, 0);
 
     let mut dialog = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
-        hwndOwner: window.hwnd().map(|handle| handle.0 as _).unwrap_or(std::ptr::null_mut()),
+        hwndOwner: window
+            .hwnd()
+            .map(|handle| handle.0 as _)
+            .unwrap_or(std::ptr::null_mut()),
         lpstrFilter: filter.as_ptr(),
         nFilterIndex: 1,
         lpstrFile: file.as_mut_ptr(),
         nMaxFile: file.len() as u32,
         lpstrTitle: title.as_ptr(),
         Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
-        lpstrDefExt: if ext.is_empty() { std::ptr::null() } else { default_ext.as_ptr() },
+        lpstrDefExt: if ext.is_empty() {
+            std::ptr::null()
+        } else {
+            default_ext.as_ptr()
+        },
         ..Default::default()
     };
     let ok = unsafe { GetSaveFileNameW(&mut dialog) };
@@ -310,7 +335,9 @@ fn save_dialog(window: WebviewWindow, name: &str) -> Result<Option<PathBuf>, Str
     if length == 0 {
         return Ok(None);
     }
-    Ok(Some(PathBuf::from(String::from_utf16_lossy(&file[..length]))))
+    Ok(Some(PathBuf::from(String::from_utf16_lossy(
+        &file[..length],
+    ))))
 }
 
 #[cfg(windows)]
@@ -338,20 +365,35 @@ pub(crate) fn pick_folder(
         0
     }
 
-    let title: Vec<u16> = "选择文件夹".encode_utf16().chain(std::iter::once(0)).collect();
+    let title: Vec<u16> = "选择文件夹"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let start_wide: Vec<u16> = start
         .as_ref()
-        .map(|path| path.as_os_str().encode_wide().chain(std::iter::once(0)).collect())
+        .map(|path| {
+            path.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        })
         .unwrap_or_default();
     let mut display = vec![0u16; 260];
     let info = BROWSEINFOW {
-        hwndOwner: window.hwnd().map(|handle| handle.0 as _).unwrap_or(std::ptr::null_mut()),
+        hwndOwner: window
+            .hwnd()
+            .map(|handle| handle.0 as _)
+            .unwrap_or(std::ptr::null_mut()),
         pidlRoot: std::ptr::null_mut(),
         pszDisplayName: display.as_mut_ptr(),
         lpszTitle: title.as_ptr(),
         ulFlags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE,
         lpfn: Some(browse_callback),
-        lParam: if start_wide.is_empty() { 0 } else { start_wide.as_ptr() as isize },
+        lParam: if start_wide.is_empty() {
+            0
+        } else {
+            start_wide.as_ptr() as isize
+        },
         iImage: 0,
     };
     let id_list = unsafe { SHBrowseForFolderW(&info) };
@@ -811,12 +853,17 @@ pub async fn backups_dir_use(dirs: State<'_, SaveDirs>) -> Result<SaveDir, Strin
 pub async fn backup_list() -> Result<Vec<BackupFile>, String> {
     let dir = backups_dir()?;
     let mut files = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|err| format!("读取备份目录失败：{err}"))?.flatten() {
+    for entry in fs::read_dir(&dir)
+        .map_err(|err| format!("读取备份目录失败：{err}"))?
+        .flatten()
+    {
         let path = entry.path();
         if !path.is_file() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
         if !name.starts_with("delete-") || !name.ends_with(".zip") || !is_plain_file_name(name) {
             continue;
         }
@@ -830,7 +877,11 @@ pub async fn backup_list() -> Result<Vec<BackupFile>, String> {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0);
-        files.push(BackupFile { name: name.to_string(), bytes: meta.len(), modified });
+        files.push(BackupFile {
+            name: name.to_string(),
+            bytes: meta.len(),
+            modified,
+        });
     }
     files.sort_by(|a, b| b.modified.cmp(&a.modified));
     Ok(files)

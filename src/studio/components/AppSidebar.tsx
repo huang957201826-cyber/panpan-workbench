@@ -13,6 +13,19 @@ import {
 import type { ActiveActivity } from '../types.ts';
 import { AppLogo } from './AppLogo.tsx';
 import { UpdateEntry } from './UpdateEntry.tsx';
+import {
+  SIDEBAR_BODY_CLASS,
+  SIDEBAR_FOOTER_BUTTON_CLASS,
+  SIDEBAR_FOOTER_CLASS,
+  SIDEBAR_HEADER_CLASS,
+  SIDEBAR_ICON_BUTTON_CLASS,
+  SIDEBAR_ITEM_ACTIVE_CLASS,
+  SIDEBAR_ITEM_CLASS,
+  SIDEBAR_ITEM_IDLE_CLASS,
+  SIDEBAR_PANEL_CLASS,
+  SIDEBAR_SUBTITLE_CLASS,
+  SIDEBAR_TITLE_CLASS,
+} from './sidebarStyles';
 
 export interface SidebarProject {
   id: string;
@@ -181,11 +194,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       </aside>
 
       {!isCollapsed && activeActivity === 'projects' && (
-        <div className="z-10 flex h-full w-[256px] shrink-0 flex-col border-r border-black/[0.04] bg-[#fbfcfd] transition-all duration-150 dark:border-white/[0.05] dark:bg-[#12141c]">
-          <div className="flex items-start justify-between px-3 pb-3 pt-2">
+        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} z-10 transition-all duration-150`}>
+          <div className={SIDEBAR_HEADER_CLASS}>
             <div>
-              <h2 className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-white">项目</h2>
-              <p className="mt-0.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">共 {projects.length} 个项目</p>
+              <h2 className={SIDEBAR_TITLE_CLASS}>项目</h2>
+              <p className={SIDEBAR_SUBTITLE_CLASS}>共 {projects.length} 个项目</p>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -193,7 +206,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                   if (isSearching) setSearchQuery('')
                   setIsSearching(!isSearching)
                 }}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-black/5 hover:text-slate-800 dark:hover:bg-white/10 dark:hover:text-white"
+                className={SIDEBAR_ICON_BUTTON_CLASS}
                 title="搜索项目"
                 aria-label="搜索项目"
                 aria-pressed={isSearching}
@@ -202,7 +215,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               </button>
               <button
                 onClick={onCollapse}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-black/5 hover:text-slate-800 dark:hover:bg-white/10 dark:hover:text-white"
+                className={SIDEBAR_ICON_BUTTON_CLASS}
                 title="收起侧栏"
                 aria-label="收起方案侧栏"
               >
@@ -233,7 +246,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </div>
           )}
 
-          <div className="flex-1 space-y-1 overflow-y-auto px-2 py-1 no-scrollbar">
+          <div className={`${SIDEBAR_BODY_CLASS} space-y-1 no-scrollbar`}>
             {filteredProjects.map((project) => {
               const isActive = project.id === activeProjectId;
               return (
@@ -251,11 +264,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                     setEditingProjectId(project.id);
                     setEditingName(project.name);
                   }}
-                  className={`group flex h-[42px] cursor-pointer items-center justify-between rounded-xl px-2.5 text-[12.5px] transition ${
-                    isActive
-                      ? 'bg-black text-white shadow-sm dark:bg-white dark:text-black'
-                      : 'text-slate-600 hover:bg-black/[0.04] dark:text-slate-400 dark:hover:bg-white/[0.05]'
-                  }`}
+                  className={`${SIDEBAR_ITEM_CLASS} group cursor-pointer justify-between ${isActive ? SIDEBAR_ITEM_ACTIVE_CLASS : SIDEBAR_ITEM_IDLE_CLASS}`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     {project.isFavorites ? (
@@ -317,11 +326,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             )}
           </div>
 
-          <div className="border-t border-black/[0.04] p-2 dark:border-white/[0.05]">
+          <div className={SIDEBAR_FOOTER_CLASS}>
             <button
               disabled={!canManageProjects}
               onClick={onNewProject}
-              className="flex h-9 w-full items-center justify-center gap-1.5 rounded-2xl bg-[#f3f4f8] text-[11.5px] font-medium text-slate-700 transition hover:bg-[#eaecee] disabled:opacity-35 dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/[0.1]"
+              className={`${SIDEBAR_FOOTER_BUTTON_CLASS} disabled:opacity-35`}
               title={canManageProjects ? '新建项目' : '项目/画布管理尚未开放'}
             >
               <Plus className="h-3.5 w-3.5 stroke-[2]" />

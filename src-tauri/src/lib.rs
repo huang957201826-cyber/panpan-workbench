@@ -1,12 +1,13 @@
+mod cli;
 mod close_watch;
 mod data_dir;
 mod diagnostics;
+mod engine;
 mod files;
 mod http;
 mod maintenance;
-mod cli;
-mod migrate;
 mod mcp;
+mod migrate;
 mod proxy;
 mod secret;
 mod storage;
@@ -69,6 +70,7 @@ fn request_tray_exit(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(15));
+        engine::shutdown(&handle);
         handle.exit(0);
     });
 }
@@ -134,6 +136,12 @@ pub fn run() {
             storage::commands::conversation_put,
             storage::commands::conversations_clear,
             storage::commands::conversations_replace,
+            storage::commands::saved_workflows_get_all,
+            storage::commands::saved_workflows_replace,
+            storage::commands::restore_journal_begin,
+            storage::commands::restore_journal_list,
+            storage::commands::restore_journal_delete,
+            storage::commands::restore_commit,
             storage::commands::image_get,
             storage::commands::image_put,
             storage::commands::image_delete,
@@ -197,6 +205,9 @@ pub fn run() {
             cli::skill::skill_install,
             cli::skill::skill_remove,
             cli::skill::skill_open_dir,
+            engine::comfy_engine_status,
+            engine::comfy_engine_start,
+            engine::comfy_engine_stop,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -213,6 +224,7 @@ pub fn run() {
         .manage(data_dir::PickedDir::default())
         .manage(http::Requests::default())
         .manage(cli::Cli::default())
+        .manage(engine::EngineProcess::default())
         // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开；未提交的保存也无人继续，删除临时文件；
         // 等待旧页面回复的命令行命令也中断
         .on_page_load(|webview, payload| {
@@ -227,7 +239,9 @@ pub fn run() {
             // 托盘只保留“显示主窗口/退出”；关闭窗口不退出，托盘退出才真正结束进程
             let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let tray_menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
+            let tray_menu = MenuBuilder::new(app)
+                .items(&[&show_item, &quit_item])
+                .build()?;
             let mut tray = TrayIconBuilder::with_id("main-tray")
                 .tooltip("盼盼工作台")
                 .menu(&tray_menu)
@@ -370,7 +384,12 @@ fn show_startup_error(message: &str) {
         .chain(std::iter::once(0))
         .collect();
     unsafe {
-        MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
+        MessageBoxW(
+            std::ptr::null_mut(),
+            body.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
     }
 }
 

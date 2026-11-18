@@ -1,0 +1,8 @@
+[[permission]]
+identifier = "engine"
+description = "允许主窗口启动、停止并查询本地图像引擎"
+commands.allow = [
+  "comfy_engine_start",
+  "comfy_engine_stop",
+  "comfy_engine_status",
+]

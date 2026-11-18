@@ -1,0 +1,128 @@
+{
+  "batch": "1.8.0-LAUNCH",
+  "stage": "S1",
+  "status": "approved",
+  "reviewRound": 2,
+  "baseCommit": "f40777c",
+  "planSha256": "B343E0CF467E2381239F36026D63581CE8955F84AB15D5C23846395938533728",
+  "gates": [
+    {
+      "id": "S1-G01",
+      "command": "npm run gate:dev",
+      "exitCode": 0,
+      "result": "build + 1160 frontend tests + SAST + release-check passed"
+    },
+    {
+      "id": "S1-G02",
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+      "exitCode": 0,
+      "result": "110 Rust tests passed"
+    },
+    {
+      "id": "S1-G03",
+      "command": "TypeScript build",
+      "exitCode": 0
+    }
+  ],
+  "implemented": {
+    "sqliteSchemaVersion": 3,
+    "savedWorkflowsTable": true,
+    "restoreJournalTable": true,
+    "workflowLocalStorageMigration": true,
+    "backupManifestVersion": 5,
+    "agentConversationsInManifest": true,
+    "defaultFavoriteCollectionInManifest": true,
+    "workflowImagesInSeparateZipEntries": true,
+    "safeSettingsTopLevelAllowlist": true,
+    "recursiveSensitiveKeyRejection": true,
+    "restoreMergeMode": true,
+    "restoreReplaceMode": true,
+    "restoreWriteLock": true,
+    "agentRestoreDrain": true,
+    "immutableImageRestoreIds": true,
+    "journalRecoveryBeforeHydration": true,
+    "tauriAtomicRestoreCommand": true,
+    "tauriAclUpdated": true
+  },
+  "failureInjection": [
+    {
+      "id": "S1-FI01",
+      "case": "invalid task JSON during restore commit",
+      "expected": "transaction rolls back all categories",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI02",
+      "case": "invalid kv write during restore commit",
+      "expected": "tasks, conversations, workflows and kv remain unchanged",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI03",
+      "case": "strict tauriStorage flush fails",
+      "expected": "restore receives an error and dirty keys remain",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI04",
+      "case": "missing workflow result image",
+      "expected": "keep missing records, preserve IDs and mark unavailable images",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI05",
+      "case": "staging restore journal remains after crash",
+      "expected": "staged workflow images are deleted before hydration",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI06",
+      "case": "committed restore journal remains after crash",
+      "expected": "referenced images remain and journal is removed",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI07",
+      "case": "running task exists before v5 restore",
+      "expected": "task is stopped and writes drained before restore",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI08",
+      "case": "same-ID image and thumbnail have different bytes and commit fails",
+      "expected": "existing image, thumbnail and source URL remain byte-for-byte unchanged",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI09",
+      "case": "Agent text request is running when v5 restore starts",
+      "expected": "request is aborted, execution and conversation persistence drain before restore",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI10",
+      "case": "Agent persistence drain fails while acquiring restore lock",
+      "expected": "restore aborts, lock is released and a new task remains submittable",
+      "result": "pass"
+    },
+    {
+      "id": "S1-FI11",
+      "case": "legacy workflow localStorage is non-empty after restore marker is committed",
+      "expected": "SQLite workflows win and stale localStorage is not re-imported",
+      "result": "pass"
+    }
+  ],
+  "u2Conditions": [
+    "Create non-empty workflow, Agent and favorite fixtures through the real UI; verify export, multipart merge/replace and restart restore.",
+    "Inject token/password/authorization/Bearer/sk values into customProviders query/body and inspect real export, diagnostics and logs for raw values.",
+    "After S2, verify capability/prompt same-ID conflict remap preserves activeSkillId, covers and reference images."
+  ],
+  "notYetVerified": [
+    "Installed Tauri real-data workflow migration",
+    "Installed crash recovery before hydration",
+    "Real UI-created non-empty workflow backup/restore",
+    "Skill same-ID remap before S2"
+  ],
+  "reviewResult": "CODE_REVIEW=APPROVE",
+  "reviewRequired": false
+}

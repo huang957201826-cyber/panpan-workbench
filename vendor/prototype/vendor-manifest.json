@@ -1,0 +1,136 @@
+{
+  "root": "vendor/prototype/src",
+  "count": 26,
+  "files": [
+    {
+      "path": "src/App.tsx",
+      "bytes": 49413,
+      "sha256": "3ba0c228ef767ebe95fc95dff954d9ba05bfc0fffff2ecc821a1a0739753a639"
+    },
+    {
+      "path": "src/assets/images/workflow_armchair_product_1794812377724.jpg",
+      "bytes": 569242,
+      "sha256": "78b9b76bf9326a6290f87dcf152d462aa95f59291030b7242bffc7d9b6a8fb59"
+    },
+    {
+      "path": "src/assets/images/workflow_clay_model_1794812376184.jpg",
+      "bytes": 937149,
+      "sha256": "d209d2c2e59894482349a641622cc3af3be826c8303b2f2e56127d8886c65d81"
+    },
+    {
+      "path": "src/assets/images/workflow_rendered_atrium_1794812377268.jpg",
+      "bytes": 1023200,
+      "sha256": "33f4893b0b1dbdb09fd17d21a5beebfcaf06d5f91310e7b5448ad02ae1edf904"
+    },
+    {
+      "path": "src/components/AppLogo.tsx",
+      "bytes": 677,
+      "sha256": "a26647996703dbedc8b2c81b9f488e03293995276ff6a49f56a477b50cec631f"
+    },
+    {
+      "path": "src/components/AppSidebar.tsx",
+      "bytes": 30268,
+      "sha256": "9fa7eb38e1e06ce47709db88e7d9401fdf0eca9f7b8b1471ebeb5860c490a752"
+    },
+    {
+      "path": "src/components/BottomPromptBar.tsx",
+      "bytes": 29534,
+      "sha256": "5058bc348272363f4415f58b4ea851f962b00d104096bcb22654e0bd3b08bf81"
+    },
+    {
+      "path": "src/components/CardGridView.tsx",
+      "bytes": 12701,
+      "sha256": "eedfa2212267fc2acdc30bfd3c41ffc9fc4de2adfe0312db0984469700103d63"
+    },
+    {
+      "path": "src/components/ComfySidebar.tsx",
+      "bytes": 6810,
+      "sha256": "1fff04fb7c5ea4c0acc5a558c2207735757f19de19682a99176ffaadb497f6d6"
+    },
+    {
+      "path": "src/components/ComfyWorkflowView.tsx",
+      "bytes": 120159,
+      "sha256": "a2392f41c16a615300f898553eb1f6360de6ba6a54a439ee11265326939101f4"
+    },
+    {
+      "path": "src/components/HomeHubView.tsx",
+      "bytes": 6837,
+      "sha256": "a36dc2e5ca8def9f2aa8b1c3e3dc832cf48d74d20282a45c2ebe6570e8c62071"
+    },
+    {
+      "path": "src/components/ImageDetailModal.tsx",
+      "bytes": 17269,
+      "sha256": "3a44094bc02607d695356e5ed4976c0ef0df3b91df7b948ad0b81d475bc566e3"
+    },
+    {
+      "path": "src/components/InfiniteCanvas.tsx",
+      "bytes": 29295,
+      "sha256": "6df666d0e261c12bd33a7014ce1467f6ae2dacff469a97f8e2fdff2e0872a145"
+    },
+    {
+      "path": "src/components/InteractiveDotGrid.tsx",
+      "bytes": 7361,
+      "sha256": "4cd6d31f79889008a602c0ab1266816f4dcf9cc3ae09c6d04a5fa5fe91a9ce50"
+    },
+    {
+      "path": "src/components/RightGeneratorDrawer.tsx",
+      "bytes": 36965,
+      "sha256": "8fe74ff795ae9a5e4936d094d762afd6f5b37be9cff39d5ed6b3ad2bc806f3b2"
+    },
+    {
+      "path": "src/components/SettingsModal.tsx",
+      "bytes": 126193,
+      "sha256": "777f1fef063cb5f264659b43beaa69d0e0b2fe58f5d6c1c64ffdb941603d4271"
+    },
+    {
+      "path": "src/components/SkillHubView.tsx",
+      "bytes": 35723,
+      "sha256": "b3053a5da9f6809d71e85477538b4aa6b159352e28d5bf705695ffe777d23729"
+    },
+    {
+      "path": "src/components/Taskbar.tsx",
+      "bytes": 10733,
+      "sha256": "6c631ef3b26017a637cd5bd47335764f952762b7c38466ffccc4bd5ef1278591"
+    },
+    {
+      "path": "src/components/TitleBar.tsx",
+      "bytes": 3541,
+      "sha256": "830467fcb244439c7a2418b3af110f9d232645dbff2fd80d576216a1a8c82b0d"
+    },
+    {
+      "path": "src/components/WorkflowGalleryView.tsx",
+      "bytes": 32550,
+      "sha256": "f3959c1fd9a4f82d66264c4c6b482ff059a994b5c265a3cf5752f47346f2dd1c"
+    },
+    {
+      "path": "src/constants.ts",
+      "bytes": 9665,
+      "sha256": "92a0f5ba51951005454b930a4bb36da8af7483cee8a06f969f6aba7ea6fd89e2"
+    },
+    {
+      "path": "src/data/mockSkills.ts",
+      "bytes": 11354,
+      "sha256": "a76287522dd9e79e52b943f9e3ca1ab158146752bf4232c8ff80b94a2adf7f14"
+    },
+    {
+      "path": "src/data/mockWorkflows.ts",
+      "bytes": 30043,
+      "sha256": "2026338bd87e3e3c26c096e0319406772426269bd423fcf1918b1a34c9eb07dc"
+    },
+    {
+      "path": "src/index.css",
+      "bytes": 3787,
+      "sha256": "b5cacbe328d06970cbb098797a286119914117cff3f2654905885dbecd1f6614"
+    },
+    {
+      "path": "src/main.tsx",
+      "bytes": 159,
+      "sha256": "30d02ee59cb6576973dea4368093b2dcae692a40668f288fdbc66a114873fcd3"
+    },
+    {
+      "path": "src/types.ts",
+      "bytes": 4665,
+      "sha256": "2896ba21d68505793855af0675e352a1f984810e78bf9d9e8d982d3ede691221"
+    }
+  ]
+}
