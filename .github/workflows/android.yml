@@ -60,12 +60,28 @@ jobs:
           if [ -d "src-tauri/icons/android" ]; then
             cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/ || true
           fi
+          # Ensure monotonically increasing versionCode so new APKs upgrade in-place and preserve user data
+          APP_VERSION=$(node -p "require('./package.json').version")
+          VERSION_CODE=$((10000 + ${{ github.run_number }}))
+          PROPS_FILE="src-tauri/gen/android/app/tauri.properties"
+          if [ -f "$PROPS_FILE" ]; then
+            sed -i "s/^tauri\.android\.versionCode=.*/tauri.android.versionCode=${VERSION_CODE}/" "$PROPS_FILE"
+            sed -i "s/^tauri\.android\.versionName=.*/tauri.android.versionName=${APP_VERSION}/" "$PROPS_FILE"
+          else
+            printf "tauri.android.versionCode=%s\ntauri.android.versionName=%s\n" "$VERSION_CODE" "$APP_VERSION" > "$PROPS_FILE"
+          fi
+          cat "$PROPS_FILE"
 
       - name: Build Android APK (aarch64)
         run: npx tauri android build --apk --target aarch64
 
       - name: Sign Android APK
         id: sign_apk
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
           mkdir -p dist-apk
           APP_VERSION=$(node -p "require('./package.json').version")
@@ -74,27 +90,40 @@ jobs:
           ARTIFACT_NAME="PanPan-Workbench-v${APP_VERSION}-Android-arm64-${SHORT_SHA}"
           RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
           echo "Found APK: $RAW_APK"
-          keytool -genkeypair -v \
-            -keystore release.keystore \
-            -alias panpan \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass panpan123 \
-            -keypass panpan123 \
-            -dname "CN=PanPan Workbench, OU=AI, O=PanPan, L=Beijing, S=Beijing, C=CN"
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Using persistent release keystore from GitHub Secrets (in-place upgrade supported)"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            KS_PASS="${ANDROID_KEYSTORE_PASS}"
+            KS_ALIAS="${ANDROID_KEY_ALIAS:-panpan}"
+            KEY_PASS="${ANDROID_KEY_PASS:-$KS_PASS}"
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret found; generating ephemeral keystore"
+            KS_PASS="panpan123"
+            KS_ALIAS="panpan"
+            KEY_PASS="panpan123"
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias "$KS_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=PanPan Workbench, OU=AI, O=PanPan, L=Beijing, S=Beijing, C=CN"
+          fi
 
           BUILD_TOOLS_DIR="$ANDROID_SDK_ROOT/build-tools/35.0.0"
           "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$RAW_APK" dist-apk/aligned.apk
           "$BUILD_TOOLS_DIR/apksigner" sign \
             --ks release.keystore \
-            --ks-key-alias panpan \
-            --ks-pass pass:panpan123 \
-            --key-pass pass:panpan123 \
+            --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "pass:${KS_PASS}" \
+            --key-pass "pass:${KEY_PASS}" \
             --out "dist-apk/${APK_NAME}" \
             dist-apk/aligned.apk
           "$BUILD_TOOLS_DIR/apksigner" verify -v "dist-apk/${APK_NAME}"
-          rm -f dist-apk/aligned.apk
+          rm -f dist-apk/aligned.apk release.keystore
           echo "apk_path=dist-apk/${APK_NAME}" >> "$GITHUB_OUTPUT"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
           ls -lh dist-apk/
