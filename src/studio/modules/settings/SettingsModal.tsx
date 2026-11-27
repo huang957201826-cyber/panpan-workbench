@@ -893,7 +893,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div
       onClick={handleRequestClose}
-      className="fixed inset-0 z-50 bg-black/30 dark:bg-black/60 backdrop-blur-md flex items-center justify-center p-4 select-none animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 bg-black/30 dark:bg-black/60 backdrop-blur-md flex items-center justify-center p-0 md:p-4 select-none animate-in fade-in duration-150"
     >
       <div
         ref={modalRef}

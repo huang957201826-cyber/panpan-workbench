@@ -209,11 +209,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <div
           className={
             overlayDrawer
-              ? `fixed inset-0 z-40 flex ${hideRail ? '' : 'pl-[68px]'}`
+              ? `fixed inset-0 z-[60] flex ${hideRail ? '' : 'pl-[68px]'}`
               : 'contents'
           }
         >
-        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} ${overlayDrawer ? 'z-50 shadow-2xl' : 'z-10'} transition-all duration-150`}>
+        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} ${overlayDrawer ? 'z-50 shadow-2xl studio-safe-top studio-safe-bottom' : 'z-10'} transition-all duration-150`}>
           <div className={SIDEBAR_HEADER_CLASS}>
             <div>
               <h2 className={SIDEBAR_TITLE_CLASS}>项目</h2>

@@ -2138,7 +2138,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         {/* =====================================================================
             2. BOTTOM FLOATING ARCHIVE HISTORY DOCK (Subtle Folder Prefix + History)
             ===================================================================== */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto max-w-[76%] flex items-center justify-center">
+        <div className="absolute bottom-3 left-3 right-3 min-[680px]:bottom-4 min-[680px]:left-1/2 min-[680px]:right-auto min-[680px]:-translate-x-1/2 z-30 pointer-events-auto min-[680px]:max-w-[76%] flex items-center justify-center">
           {isHistoryCollapsed ? (
             <button
               type="button"
@@ -2270,7 +2270,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         {/* =====================================================================
             3. BOTTOM-RIGHT ZOOM & FIT CONTROLS
             ===================================================================== */}
-        <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1 bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2 py-1 soft-card-shadow text-[11px] font-mono">
+        <div className="absolute bottom-16 right-3 min-[680px]:bottom-4 min-[680px]:right-4 z-30 flex items-center gap-1 bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2 py-1 soft-card-shadow text-[11px] font-mono">
           <button
             type="button"
             onClick={() => handleCenterZoom(0.9)}

@@ -386,8 +386,8 @@ export function WorkflowHub() {
 
         <LocalEngineCard engine={engine} />
 
-        {/* 当前工作流 / 草稿状态 */}
-        <div className="absolute top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+        {/* 当前工作流 / 草稿状态（手机端底部栏已展示，隐藏顶部悬浮以免遮挡工具栏） */}
+        <div className="hidden min-[680px]:block absolute top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
           <div
             className={`h-8 px-3 rounded-full backdrop-blur-md border flex items-center gap-1.5 text-caption ${
               activeProject

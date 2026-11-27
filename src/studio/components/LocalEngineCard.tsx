@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { openExternal } from '../../lib/platform'
+import { isMobile, openExternal } from '../../lib/platform'
 import { ensureEngine, probeEngine, readEngineProcess, type EngineProbe } from '../../lib/comfyEngine'
 
 const DOWNLOAD_URL = 'https://github.com/comfyanonymous/ComfyUI/releases'
@@ -126,7 +126,10 @@ export function EngineRow({ engine }: { engine: EngineStatusState }) {
 
 /** 未运行时的居中引导卡片 */
 export function LocalEngineCard({ engine }: { engine: EngineStatusState }) {
+  const [dismissed, setDismissed] = useState(() => isMobile || window.innerWidth < 680)
   const installMissing = /未找到|不存在|no such|not found/i.test(engine.detail || engine.probe?.error || '')
+
+  if (dismissed) return null
 
   if (engine.checking && !engine.probe) {
     return (
@@ -141,7 +144,7 @@ export function LocalEngineCard({ engine }: { engine: EngineStatusState }) {
   if (engine.probe?.ok) return null
 
   return (
-    <div className="absolute inset-x-0 top-20 z-30 flex justify-center pointer-events-none px-6">
+    <div className="absolute inset-x-0 top-20 z-30 flex justify-center pointer-events-none px-4 sm:px-6">
       <div className="pointer-events-auto w-full max-w-[520px] rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] shadow-2xl p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -150,13 +153,24 @@ export function LocalEngineCard({ engine }: { engine: EngineStatusState }) {
               {installMissing ? '还没有检测到 ComfyUI' : '检测到引擎已安装但没有运行'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void engine.refresh()}
-            className="h-7 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer shrink-0"
-          >
-            重新检测
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => void engine.refresh()}
+              className="h-7 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
+            >
+              重新检测
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissed(true)}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-[13px] text-slate-500 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
+              title="关闭提示"
+              aria-label="关闭本地引擎提示"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="rounded-xl bg-[#f8f9fc] dark:bg-white/[0.03] p-3 space-y-1 text-[11.5px] text-slate-500 dark:text-slate-400">

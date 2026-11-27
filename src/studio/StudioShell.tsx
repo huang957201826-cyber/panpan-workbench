@@ -78,7 +78,7 @@ export default function StudioShell() {
     localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
   )
   const viewportLayout = useViewportLayout()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 1080)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
   const [mobileCanvasSheetOpen, setMobileCanvasSheetOpen] = useState(false)
   const prevTierRef = useRef(viewportLayout.tier)
   useEffect(() => {
@@ -931,7 +931,7 @@ export default function StudioShell() {
               </div>
             </header>
           )}
-          {sidebarCollapsed && !viewportLayout.isPhone && activeActivity === 'projects' && (
+          {sidebarCollapsed && !viewportLayout.isPhone && (
             <div className="absolute left-4 top-14 z-40">
               <button
                 type="button"

@@ -538,7 +538,11 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               onKeyDown={handleKeyDown}
               onCompositionStart={() => { isComposingRef.current = true; }}
               onCompositionEnd={() => { isComposingRef.current = false; }}
-              placeholder={`描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`}
+              placeholder={
+                compactMobile
+                  ? '描述你想生成的设计方案…（可输入 @图1 引用参考图）'
+                  : `描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`
+              }
               className={`relative w-full bg-transparent resize-none border-none p-1 pr-8 text-body-sm leading-relaxed text-transparent caret-slate-800 dark:caret-slate-100 placeholder-slate-400 focus:ring-0 outline-none font-sans no-scrollbar`}
             />
             <PromptMentionOverlay
@@ -882,15 +886,15 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
             <button
               onClick={() => setShowSkillPicker(true)}
-              className="flex h-6 items-center gap-1 rounded-full bg-black/[0.04] px-2 text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12]"
+              className={`flex h-6 items-center justify-center gap-1 rounded-full bg-black/[0.04] text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12] ${compactMobile ? 'w-6 px-0' : 'px-2'}`}
               title="选用技能"
               aria-label="选用技能"
             >
               <Sparkles className="h-3 w-3 stroke-[1.8]" />
-              选用技能
+              {!compactMobile && '选用技能'}
             </button>
 
-            {onSaveAsSkill && (
+            {onSaveAsSkill && !compactMobile && (
               <button
                 onClick={onSaveAsSkill}
                 disabled={!prompt.trim()}
@@ -902,7 +906,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </button>
             )}
 
-            {onViewModeChange && (
+            {onViewModeChange && !compactMobile && (
               <div role="tablist" aria-label="视图切换" className="flex h-6 items-center rounded-full bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
                 <button
                   type="button"
