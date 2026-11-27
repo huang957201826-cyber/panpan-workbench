@@ -6786,9 +6786,44 @@ export async function withInputPending<T>(run: () => Promise<T>): Promise<T> {
 const MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_INPUT_IMAGE_EDGE = 8192
 
+const IMAGE_FILE_EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  svg: 'image/svg+xml',
+}
+
+async function detectImageMime(file: File): Promise<string | null> {
+  if (file.type.startsWith('image/')) return file.type
+  if (file.type && file.type !== 'application/octet-stream') return null
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  if (ext && IMAGE_FILE_EXT_MIME[ext]) return IMAGE_FILE_EXT_MIME[ext]
+  try {
+    const buf = await file.slice(0, 12).arrayBuffer()
+    const b = new Uint8Array(buf)
+    if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+    if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+    if (b.length >= 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif'
+    if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return 'image/bmp'
+    if (
+      b.length >= 12 &&
+      b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+      b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+    ) return 'image/webp'
+  } catch { /* ignore */ }
+  return null
+}
+
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {
-  if (!file.type.startsWith('image/')) return null
-  let source: Blob = file
+  const detectedMime = await detectImageMime(file)
+  if (!detectedMime) return null
+  let source: Blob = file.type === detectedMime ? file : new Blob([file], { type: detectedMime })
   let needsCompress = file.size > MAX_INPUT_IMAGE_BYTES
   let bitmap: ImageBitmap | null = null
   try {

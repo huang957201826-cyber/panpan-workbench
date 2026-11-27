@@ -1192,9 +1192,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       )}
 
       {tasks.length === 0 && imageNodes.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center">
           <p className="text-body text-gray-500">
-            {allTaskCount && allTaskCount > 0 ? '没有匹配任务' : '还没有内容，拖入图片或在左侧输入提示词开始生成'}
+            {allTaskCount && allTaskCount > 0 ? '没有匹配任务' : '还没有内容，拖入或导入图片，或输入提示词开始生成'}
           </p>
         </div>
       )}

@@ -16,7 +16,7 @@ import type { GenerationParams, ReferenceImage } from '../types.ts';
 import type { Skill, SkillSlotValue } from '../../types';
 import { getAtImageQuery, imageMentionMatches } from '../../lib/promptImageMentions';
 import { MAX_PROMPT_LENGTH, clampPrompt } from '../../lib/promptLimits';
-import { submitShortcutHint } from '../../lib/platform';
+import { isMobile, isTouchDevice, submitShortcutHint } from '../../lib/platform';
 import { useStore } from '../../store';
 import { Menu as PopMenu } from '../../ui';
 import { PromptMentionOverlay } from './PromptMentionOverlay';
@@ -310,14 +310,14 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
   // Handle local file upload as reference
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
+    const files = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = '';
+    if (files.length === 0) return;
     if (onAddReferenceFile) {
-      onAddReferenceFile(file);
+      files.forEach((file) => onAddReferenceFile(file));
       return;
     }
+    const file = files[0];
     const reader = new FileReader();
     reader.onload = (event) => {
       if (event.target?.result && onAddReferenceImage) {
@@ -443,6 +443,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleFileUpload}
         className="hidden"
       />
@@ -755,7 +756,12 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                 </span>
                 <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
               </button>
-              <PopMenu open={activeDropdown === 'more'} anchorRef={moreMenuRef} width={280} onClose={() => setActiveDropdown(null)}>
+              <PopMenu
+                open={activeDropdown === 'more'}
+                anchorRef={moreMenuRef}
+                width={compactMobile ? Math.min(268, (typeof window !== 'undefined' ? window.innerWidth : 360) - 24) : 280}
+                onClose={() => setActiveDropdown(null)}
+              >
                   <div className="text-body-sm font-semibold text-slate-800 dark:text-white pb-1 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
                     <span>通道与元数据设置</span>
                     <Sliders className="w-3 h-3 stroke-[1.4]" />
@@ -865,7 +871,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                     ? 'bg-black text-white dark:bg-white dark:text-black'
                     : 'bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200'
                 }`}
-                title="从画布选择参考图（Esc 取消）"
+                title={isTouchDevice ? '从画布选择参考图' : '从画布选择参考图（Esc 取消）'}
                 aria-label="从画布选择参考图"
                 aria-pressed={canvasPickActive}
               >
@@ -944,14 +950,18 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               onClick={handleSend}
               disabled={isGenerating || (!prompt.trim() && !activeSkillId) || missingReference}
               className="h-7 px-2.5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-85 active:scale-95 flex items-center justify-center gap-1 transition shadow-xs disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title="立即生成方案 (Ctrl+Enter)"
+              title={isMobile ? '立即生成方案' : `立即生成方案 (${submitHint})`}
             >
               {isGenerating ? (
                 <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white dark:border-black/30 dark:border-t-black rounded-full animate-spin"></div>
               ) : (
                 <>
                   <ArrowUp className="w-3.5 h-3.5 stroke-[2.2]" />
-                  <span className="text-caption font-mono opacity-50 font-normal">{submitHint}</span>
+                  {isMobile ? (
+                    <span className="text-caption font-medium">生成</span>
+                  ) : (
+                    <span className="text-caption font-mono opacity-50 font-normal">{submitHint}</span>
+                  )}
                 </>
               )}
             </button>

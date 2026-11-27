@@ -36,6 +36,15 @@ export async function addImageFileToCanvas(canvasId: string, file: File, positio
         ? { removedImageIds: latest.removedImageIds.filter((id) => id !== image.id) }
         : {}),
     })
+    const view = useCanvasViewStore.getState()
+    if (view.viewport.k < 0.25 && view.size.width > 0 && view.size.height > 0) {
+      const k = 0.85
+      view.setViewport({
+        k,
+        x: view.size.width / 2 - (node.x + size.width / 2) * k,
+        y: Math.max(1, view.size.height - view.bottomInset) / 2 - (node.y + size.height / 2) * k,
+      })
+    }
     return image
   })
 }

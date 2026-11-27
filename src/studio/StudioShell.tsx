@@ -4,7 +4,7 @@ import { stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPen
 import { deleteTask, deleteTasks, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCanvasTasks } from '../hooks/useCanvasTasks'
 import { useViewportLayout } from '../hooks/useViewportLayout'
-import { isMobile, isTauri } from '../lib/platform'
+import { isMobile, isTauri, isTouchDevice } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
 import { addImageFileToCanvas } from '../lib/canvasImageInput'
@@ -822,9 +822,11 @@ export default function StudioShell() {
 
       <div className="relative flex-1 w-full flex overflow-hidden">
         {canvasPickMode && (
-          <div className="absolute left-1/2 top-2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-black/10 bg-white/95 px-3 py-1 text-caption text-slate-600 shadow-lg backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300">
-            <span>点选画布中的一张图片加入参考图 · Esc 取消</span>
-            <button onClick={() => setCanvasPickMode(false)} className="rounded-full bg-black/[0.06] px-2 py-0.5 dark:bg-white/[0.1]">取消</button>
+          <div className="absolute left-1/2 top-2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-2 rounded-full border border-black/10 bg-white/95 px-3 py-1.5 text-caption text-slate-600 shadow-lg backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300">
+            <span className="truncate">
+              {isTouchDevice ? '点选画布中的一张图片加入参考图' : '点选画布中的一张图片加入参考图 · Esc 取消'}
+            </span>
+            <button onClick={() => setCanvasPickMode(false)} className="shrink-0 rounded-full bg-black/[0.08] px-2.5 py-0.5 font-medium text-slate-700 dark:bg-white/[0.12] dark:text-slate-100">取消</button>
           </div>
         )}
         {maskDraft && (

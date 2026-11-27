@@ -37,6 +37,14 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Sync official skill-kit from upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
+          fi
+
       - name: Build macOS Universal App & DMG
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 

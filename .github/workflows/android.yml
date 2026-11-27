@@ -51,6 +51,14 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Sync official skill-kit from upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
+          fi
+
       - name: Initialize Tauri Android project
         run: |
           if [ ! -d "src-tauri/gen/android" ]; then

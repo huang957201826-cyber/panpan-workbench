@@ -809,17 +809,17 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
               )}
             </div>
 
-            <div className="h-14 px-5 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-end gap-2 shrink-0">
+            <div className="min-h-[64px] px-5 py-3 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-end gap-2.5 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsCreateModalOpen(false)}
-                className="h-8.5 px-4 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-slate-600 dark:text-slate-300 hover:bg-black/10 transition text-caption font-medium cursor-pointer"
+                className="flex-1 sm:flex-none min-w-[96px] h-10 px-5 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-slate-700 dark:text-slate-200 hover:bg-black/10 transition text-body font-medium cursor-pointer"
               >
                 取消
               </button>
               <button
                 type="submit"
-                className="h-8.5 px-4 rounded-full bg-black text-white dark:bg-white dark:text-black font-semibold text-caption hover:opacity-90 transition cursor-pointer"
+                className="flex-1 sm:flex-none min-w-[112px] h-10 px-5 rounded-full bg-black text-white dark:bg-white dark:text-black font-semibold text-body hover:opacity-90 transition cursor-pointer"
               >
                 保存技能
               </button>
