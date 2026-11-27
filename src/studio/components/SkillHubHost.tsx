@@ -90,9 +90,12 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   const [category, setCategory] = useState('all')
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem('panpan-skill-sidebar-collapsed') === '1'
+      const saved = localStorage.getItem('panpan-skill-sidebar-collapsed')
+      if (saved === '1') return true
+      if (saved === '0') return window.innerWidth < 680
+      return window.innerWidth < 1080
     } catch {
-      return false
+      return window.innerWidth < 1080
     }
   })
   const overrides = useCapabilitySkillStore((state) => state.builtinOverrides)
@@ -139,10 +142,30 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-[#f3f4f8] dark:bg-[#0c0e14]">
+    <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
+      <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
+        {['all', 'mine', ...CATEGORY_LABELS, 'favorites'].map((label) => {
+          const title = label === 'all' ? '全部' : label === 'mine' ? '我的' : label === 'favorites' ? '收藏' : label
+          const active = category === label
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setCategory(label)}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+                active
+                  ? 'bg-black text-white dark:bg-white dark:text-black'
+                  : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
+              }`}
+            >
+              {title}
+            </button>
+          )
+        })}
+      </div>
       <aside
         data-skill-rail
-        className={`${collapsed ? 'flex w-12 shrink-0 flex-col overflow-y-auto border-r border-black/[0.04] bg-[#fbfcfd] p-2 dark:border-white/[0.05] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
+        className={`hidden min-[680px]:flex ${collapsed ? 'w-12 shrink-0 flex-col overflow-y-auto border-r border-black/[0.04] bg-[#fbfcfd] p-2 dark:border-white/[0.05] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
       >
         <div className={`${SIDEBAR_HEADER_CLASS} ${collapsed ? 'items-center justify-center px-0' : ''}`}>
           {!collapsed && (

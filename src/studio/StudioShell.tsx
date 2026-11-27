@@ -931,7 +931,7 @@ export default function StudioShell() {
               </div>
             </header>
           )}
-          {sidebarCollapsed && !viewportLayout.isPhone && (
+          {sidebarCollapsed && !viewportLayout.isPhone && activeActivity === 'projects' && (
             <div className="absolute left-4 top-14 z-40">
               <button
                 type="button"

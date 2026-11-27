@@ -83,9 +83,12 @@ export function WorkflowHub() {
   const pendingValuesRef = useRef<Record<string, string | number | boolean>>({})
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(SIDEBAR_KEY) === '1'
+      const saved = localStorage.getItem(SIDEBAR_KEY)
+      if (saved === '1') return true
+      if (saved === '0') return window.innerWidth < 680
+      return window.innerWidth < 1080
     } catch {
-      return false
+      return window.innerWidth < 1080
     }
   })
 
@@ -239,10 +242,37 @@ export function WorkflowHub() {
   }
 
   return (
-    <div className="flex h-full w-full bg-[#f3f4f8] dark:bg-[#0c0e14]">
+    <div className="flex h-full w-full flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
+      <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`}
+          title={engine.probe?.ok ? '本地引擎运行中' : '本地引擎未运行'}
+        />
+        {FLOWS.map((flow) => (
+          <button
+            key={flow.key}
+            type="button"
+            onClick={() => setFlowKey(flow.key)}
+            className={`shrink-0 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+              flowKey === flow.key
+                ? 'bg-black text-white dark:bg-white dark:text-black'
+                : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
+            }`}
+          >
+            {flow.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="ml-auto shrink-0 rounded-full border border-black/10 px-2.5 py-1 text-caption text-slate-600 dark:border-white/15 dark:text-slate-300"
+        >
+          已保存
+        </button>
+      </div>
       <aside
         data-workflow-rail
-        className={`${collapsed ? 'flex h-full w-12 shrink-0 flex-col border-r border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
+        className={`hidden min-[680px]:flex ${collapsed ? 'h-full w-12 shrink-0 flex-col border-r border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
       >
         <div className={`${SIDEBAR_HEADER_CLASS} ${collapsed ? 'items-center justify-center px-2' : ''}`}>
           {!collapsed && (

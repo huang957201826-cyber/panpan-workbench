@@ -95,16 +95,16 @@ export function HomeHubView({
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
             <span>Panpan Studio · Image Engine</span>
           </div>
-          <h1 className="font-display bg-gradient-to-br from-slate-950 via-slate-800 to-slate-500 bg-clip-text text-[34px] font-black leading-[1.14] tracking-tight text-transparent drop-shadow-sm dark:from-white dark:via-slate-200 dark:to-slate-500 sm:text-[40px] md:text-[44px]">
+          <h1 className="font-display text-balance bg-gradient-to-br from-slate-950 via-slate-800 to-slate-500 bg-clip-text text-[26px] font-black leading-[1.18] tracking-tight text-transparent drop-shadow-sm dark:from-white dark:via-slate-200 dark:to-slate-500 sm:text-[34px] lg:text-[42px]">
             让每一个画面构想，在此精准呈现
           </h1>
-          <p className="max-w-md text-[13.5px] leading-relaxed tracking-wide text-slate-500/90 dark:text-slate-400/80 sm:text-[14px]">
+          <p className="max-w-md text-[13.5px] leading-relaxed tracking-wide text-slate-600 dark:text-slate-400 sm:text-[14px]">
             输入一段画面描述，秒级生成高保真图像
           </p>
         </div>
 
         <div
-          className={`flex w-full flex-col gap-4 rounded-[24px] border bg-white p-6 transition-all duration-200 dark:bg-[#141620] ${
+          className={`flex w-full flex-col gap-3 sm:gap-4 rounded-[24px] border bg-white p-4 sm:p-6 transition-all duration-200 dark:bg-[#141620] ${
             focused
               ? 'scale-[1.006] border-black/15 shadow-[0_20px_48px_rgba(15,23,42,0.13)] ring-2 ring-black/[0.03] dark:border-white/20 dark:ring-white/[0.04]'
               : 'border-black/[0.05] shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05),0_2px_6px_-1px_rgba(15,23,42,0.02)] dark:border-white/[0.06]'
@@ -149,8 +149,8 @@ export function HomeHubView({
             autoFocus
           />
 
-          <div className="flex items-center gap-2 border-t border-black/[0.04] pt-3 dark:border-white/[0.05]">
-            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex flex-col gap-2.5 border-t border-black/[0.04] pt-3 dark:border-white/[0.05] sm:flex-row sm:items-center sm:gap-2">
+            <div className="flex min-w-0 w-full items-center gap-2 overflow-x-auto no-scrollbar sm:flex-1">
               <div className="relative shrink-0">
                 <button
                   ref={modelRef}
@@ -316,6 +316,7 @@ export function HomeHubView({
               </div>
             </div>
 
+            <div className="flex shrink-0 items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => setShowSkillPicker(true)}
@@ -344,6 +345,7 @@ export function HomeHubView({
                 </>
               )}
             </button>
+            </div>
           </div>
         </div>
       </div>

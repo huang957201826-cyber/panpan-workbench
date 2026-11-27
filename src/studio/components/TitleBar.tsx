@@ -40,12 +40,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   if (isMobile) return null
   const useMacOverlay = isMacOS
   const renderWinControls = showWindowControls && !useMacOverlay
+  if (!renderWinControls && !useMacOverlay) return null
 
   return (
     <header
       onMouseDown={onTitleBarMouseDown}
       data-tauri-drag-region
-      className={`ui-scale-chrome relative z-40 flex w-full shrink-0 select-none items-center justify-between border-b border-black/[0.04] bg-white/70 px-3 text-slate-700 backdrop-blur-md transition-colors dark:border-white/[0.05] dark:bg-[#10121a]/70 dark:text-slate-300 ${
+      className={`ui-scale-chrome relative z-40 hidden min-[680px]:flex w-full shrink-0 select-none items-center justify-between border-b border-black/[0.04] bg-white/70 px-3 text-slate-700 backdrop-blur-md transition-colors dark:border-white/[0.05] dark:bg-[#10121a]/70 dark:text-slate-300 ${
         useMacOverlay ? 'h-[38px] pl-[76px]' : 'h-[36px]'
       }`}
     >
