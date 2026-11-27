@@ -13,10 +13,15 @@ mod secret;
 mod storage;
 mod update;
 
+#[cfg(desktop)]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
+#[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager};
+#[cfg(desktop)]
+use tauri::Emitter;
+use tauri::Manager;
 
+#[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
@@ -26,6 +31,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 }
 
 /// 关闭窗口：无条件先隐藏，再通知前端写盘；5 秒兜底再次隐藏，绝不退出
+#[cfg(desktop)]
 fn request_tray_hide(app: &tauri::AppHandle) {
     hide_main_window(app);
     let _ = app.emit("tray-hide-requested", ());
@@ -39,9 +45,12 @@ fn request_tray_hide(app: &tauri::AppHandle) {
 }
 
 fn hide_main_window(app: &tauri::AppHandle) {
+    #[cfg(desktop)]
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
+    #[cfg(mobile)]
+    let _ = app;
 }
 
 #[tauri::command]
@@ -50,21 +59,25 @@ fn hide_main_window_command(app: tauri::AppHandle) {
 }
 
 /// 关闭请求的唯一动作：隐藏。用于测试断言，避免关闭分支退化为退出
+#[cfg(any(desktop, test))]
 #[derive(Debug, PartialEq, Eq)]
 enum CloseAction {
     Hide,
 }
 
+#[cfg(any(desktop, test))]
 fn close_request_action() -> CloseAction {
     CloseAction::Hide
 }
 
 /// 只有托盘“退出”菜单会走退出；显示菜单不能用这个 ID
+#[cfg(any(desktop, test))]
 fn is_exit_menu_id(id: &str) -> bool {
     id == "quit"
 }
 
 /// 托盘退出：通知前端写盘，15 秒兜底后结束进程
+#[cfg(desktop)]
 fn request_tray_exit(app: &tauri::AppHandle) {
     let _ = app.emit("tray-exit-requested", ());
     let handle = app.clone();
@@ -90,42 +103,49 @@ pub fn run_mcp_stdio() -> std::process::ExitCode {
     mcp::run_stdio()
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 日志、存储和 WebView2 都使用数据目录，需最先确定；有待迁移的更改时在此完成迁移
     data_dir::prepare();
     // API 请求和更新插件的 reqwest 都不带加密实现，使用进程默认的 ring（更新插件检查时也会按需安装同一个）
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let app = tauri::Builder::default()
-        // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出。
-        // 开启 deep-link feature 后，第二个实例收到的 deep link 会先转交 deep-link 插件，由前端监听导入
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let Some(win) = app.get_webview_window("main") else {
-                return;
-            };
-            let _ = win.unminimize();
-            let _ = win.show();
-            let _ = win.set_focus();
-        }))
-        // 紧随 single-instance 注册：第二个实例在此之前已退出，不会与已有实例同时写日志文件
+    let builder = tauri::Builder::default();
+    // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出。
+    // 开启 deep-link feature 后，第二个实例收到的 deep link 会先转交 deep-link 插件，由前端监听导入
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        let Some(win) = app.get_webview_window("main") else {
+            return;
+        };
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }));
+    // 紧随 single-instance 注册：第二个实例在此之前已退出，不会与已有实例同时写日志文件
+    let builder = builder
         .plugin(diagnostics::plugin())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
-        // 边框由 tauri.conf.json 决定（不用系统边框，见 src/components/TitleBar.tsx），不跟随保存的旧值
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        .difference(tauri_plugin_window_state::StateFlags::POSITION)
-                        .difference(tauri_plugin_window_state::StateFlags::SIZE)
-                        .difference(tauri_plugin_window_state::StateFlags::DECORATIONS),
-                )
-                .build(),
-        )
+        .plugin(tauri_plugin_clipboard_manager::init());
+    // 边框由 tauri.conf.json 决定（不用系统边框，见 src/components/TitleBar.tsx），不跟随保存的旧值
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::all()
+                    .difference(tauri_plugin_window_state::StateFlags::POSITION)
+                    .difference(tauri_plugin_window_state::StateFlags::SIZE)
+                    .difference(tauri_plugin_window_state::StateFlags::DECORATIONS),
+            )
+            .build(),
+    );
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         // 插件的初始化脚本会替换 window.Notification，前端沿用 Web Notification 的调用即可发出系统通知
-        .plugin(tauri_plugin_notification::init())
-        // 只供 Rust 侧的更新命令使用，不向前端开放插件命令
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init());
+    // 只供 Rust 侧的更新命令使用，不向前端开放插件命令
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
         .invoke_handler(tauri::generate_handler![
             storage::commands::tasks_get_all,
             storage::commands::task_put,
@@ -208,16 +228,18 @@ pub fn run() {
             engine::comfy_engine_status,
             engine::comfy_engine_start,
             engine::comfy_engine_stop,
-        ])
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // 关闭窗口一律只隐藏；Alt+F4、任务运行中、前端写盘慢都不能退出进程
-                api.prevent_close();
-                match close_request_action() {
-                    CloseAction::Hide => request_tray_hide(window.app_handle()),
-                }
+        ]);
+    #[cfg(desktop)]
+    let builder = builder.on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // 关闭窗口一律只隐藏；Alt+F4、任务运行中、前端写盘慢都不能退出进程
+            api.prevent_close();
+            match close_request_action() {
+                CloseAction::Hide => request_tray_hide(window.app_handle()),
             }
-        })
+        }
+    });
+    let app = builder
         .manage(files::SaveDirs::default())
         .manage(files::Writes::default())
         .manage(files::MigrateSource::default())
@@ -235,38 +257,51 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            #[cfg(mobile)]
+            {
+                let mobile_dir = app
+                    .path()
+                    .app_local_data_dir()
+                    .or_else(|_| app.path().app_data_dir())
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/data/data/com.panpan.workbench/files"))
+                    .join("data");
+                data_dir::set_current(mobile_dir);
+            }
             data_dir::log_notice();
             // 托盘只保留“显示主窗口/退出”；关闭窗口不退出，托盘退出才真正结束进程
-            let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let tray_menu = MenuBuilder::new(app)
-                .items(&[&show_item, &quit_item])
-                .build()?;
-            let mut tray = TrayIconBuilder::with_id("main-tray")
-                .tooltip("盼盼工作台")
-                .menu(&tray_menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    if is_exit_menu_id(event.id.as_ref()) {
-                        request_tray_exit(app);
-                    } else {
-                        show_main_window(app);
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                });
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
+            #[cfg(desktop)]
+            {
+                let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
+                let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+                let tray_menu = MenuBuilder::new(app)
+                    .items(&[&show_item, &quit_item])
+                    .build()?;
+                let mut tray = TrayIconBuilder::with_id("main-tray")
+                    .tooltip("盼盼工作台")
+                    .menu(&tray_menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| {
+                        if is_exit_menu_id(event.id.as_ref()) {
+                            request_tray_exit(app);
+                        } else {
+                            show_main_window(app);
+                        }
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            show_main_window(tray.app_handle());
+                        }
+                    });
+                if let Some(icon) = app.default_window_icon() {
+                    tray = tray.icon(icon.clone());
+                }
+                tray.build(app)?;
             }
-            tray.build(app)?;
             // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
             // 注册会把 HKCU 下的协议改为指向当前开发版程序，覆盖安装版的注册；
             // 之后需重装正式版，或删除 HKCU\Software\Classes\gpt-image-playground，才能恢复
@@ -287,6 +322,7 @@ pub fn run() {
                 mcp::start_saved(app.handle().clone(), &mcp_state);
             }
             // WebView2 数据放在数据目录的 webview/ 下，随数据目录走；数据目录不可用时用默认位置，不影响窗口创建
+            #[cfg(desktop)]
             let webview_dir = state
                 .0
                 .as_ref()
@@ -322,35 +358,47 @@ pub fn run() {
             } else {
                 tauri::window::Color(249, 250, 251, 255)
             };
-            // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
-            // 默认大小为工作区约 80%，限制在 960×640 到 1440×920 之间；每次启动居中，不恢复越界位置。
-            let (default_width, default_height) = app
-                .primary_monitor()
-                .ok()
-                .flatten()
-                .map(|monitor| {
-                    let scale = monitor.scale_factor();
-                    let work_width = monitor.work_area().size.width as f64 / scale;
-                    let work_height = monitor.work_area().size.height as f64 / scale;
-                    (
-                        (work_width * 0.8).clamp(960.0, 1440.0).min(work_width),
-                        (work_height * 0.8).clamp(640.0, 920.0).min(work_height),
-                    )
-                })
-                .unwrap_or((1280.0, 820.0));
-            // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
-            let builder = tauri::WebviewWindowBuilder::from_config(
-                app.handle(),
-                &app.config().app.windows[0],
-            )?
-            .inner_size(default_width, default_height)
-            .center()
-            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-            .background_color(bg);
-            match webview_dir {
-                Some(dir) => builder.data_directory(dir).build()?,
-                None => builder.build()?,
-            };
+            #[cfg(desktop)]
+            {
+                // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
+                // 默认大小为工作区约 80%，限制在 960×640 到 1440×920 之间；每次启动居中，不恢复越界位置。
+                let (default_width, default_height) = app
+                    .primary_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|monitor| {
+                        let scale = monitor.scale_factor();
+                        let work_width = monitor.work_area().size.width as f64 / scale;
+                        let work_height = monitor.work_area().size.height as f64 / scale;
+                        (
+                            (work_width * 0.8).clamp(960.0, 1440.0).min(work_width),
+                            (work_height * 0.8).clamp(640.0, 920.0).min(work_height),
+                        )
+                    })
+                    .unwrap_or((1280.0, 820.0));
+                // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
+                let builder = tauri::WebviewWindowBuilder::from_config(
+                    app.handle(),
+                    &app.config().app.windows[0],
+                )?
+                .inner_size(default_width, default_height)
+                .center()
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                .background_color(bg);
+                match webview_dir {
+                    Some(dir) => builder.data_directory(dir).build()?,
+                    None => builder.build()?,
+                };
+            }
+            #[cfg(mobile)]
+            if app.get_webview_window("main").is_none() {
+                tauri::WebviewWindowBuilder::from_config(
+                    app.handle(),
+                    &app.config().app.windows[0],
+                )?
+                .background_color(bg)
+                .build()?;
+            }
             Ok(())
         })
         .build(tauri::generate_context!());

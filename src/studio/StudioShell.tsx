@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPending } from '../store'
 import { deleteTask, deleteTasks, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCanvasTasks } from '../hooks/useCanvasTasks'
-import { isTauri } from '../lib/platform'
+import { isMobile, isTauri } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
 import { addImageFileToCanvas } from '../lib/canvasImageInput'
@@ -320,7 +320,7 @@ export default function StudioShell() {
   }, [])
 
   useEffect(() => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     void getCurrentWindow().isMaximized().then(setIsMaximized).catch(() => {})
   }, [])
 
@@ -784,7 +784,7 @@ export default function StudioShell() {
         isSidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
         canManageProjects={true}
-        showWindowControls={isTauri}
+        showWindowControls={isTauri && !isMobile}
       />
 
       <div className="relative flex-1 w-full flex overflow-hidden">

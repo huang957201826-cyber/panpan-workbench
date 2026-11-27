@@ -3,8 +3,17 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 
 export const isTauri = detectTauri()
 
-/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版为 0 */
-export const TITLEBAR_HEIGHT = isTauri ? 32 : 0
+/** 是否运行在移动端（Android / iOS / iPadOS） */
+export const isMobile = typeof navigator !== 'undefined' && (
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+)
+
+/** 是否运行在桌面端但无原生保存文件对话框（macOS / Linux） */
+export const isNonWindowsDesktop = typeof navigator !== 'undefined' && !isMobile && !/Win/i.test(navigator.platform)
+
+/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版与移动端为 0 */
+export const TITLEBAR_HEIGHT = isTauri && !isMobile ? 32 : 0
 
 /** 提交快捷键提示：macOS 显示 ⌘↵，其余平台显示 Ctrl+↵；只用于展示，实际按键判定见各处 onKeyDown */
 export const submitShortcutHint = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵'

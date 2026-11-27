@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StateStorage } from 'zustand/middleware'
 import { call } from './dbTauri'
 import { decryptPersistedSettings, migratePersistedSettingsSecrets } from './secrets'
+import { isMobile } from './platform'
 import { showBrowserNotification } from './browserNotification'
 
 // 设置每次变化都会触发 persist 写入，合并到停顿后再写库
@@ -160,17 +161,19 @@ export async function installTauriStorageFlush() {
     if (document.visibilityState === 'hidden') void flushTauriStorage()
   })
   window.addEventListener('pagehide', () => void flushTauriStorage())
-  // 关闭窗口一律阻止销毁并隐藏到托盘；写完设置后主动隐藏，Rust 侧另有 5 秒兜底
-  await getCurrentWindow().onCloseRequested(async (event) => {
-    event.preventDefault()
-    invoke('close_ack').catch((err) => console.warn('关闭请求回执失败：', err))
-    await flushTauriStorageBeforeExit()
-    if (!localStorage.getItem('panpan-tray-hint-shown')) {
-      localStorage.setItem('panpan-tray-hint-shown', '1')
-      showBrowserNotification('盼盼工作台仍在运行', { body: '窗口已隐藏到系统托盘，可从托盘重新打开或退出。' })
-    }
-    invoke('hide_main_window_command').catch((err) => console.warn('隐藏窗口失败：', err))
-  })
+  if (!isMobile) {
+    // 关闭窗口一律阻止销毁并隐藏到托盘；写完设置后主动隐藏，Rust 侧另有 5 秒兜底
+    await getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault()
+      invoke('close_ack').catch((err) => console.warn('关闭请求回执失败：', err))
+      await flushTauriStorageBeforeExit()
+      if (!localStorage.getItem('panpan-tray-hint-shown')) {
+        localStorage.setItem('panpan-tray-hint-shown', '1')
+        showBrowserNotification('盼盼工作台仍在运行', { body: '窗口已隐藏到系统托盘，可从托盘重新打开或退出。' })
+      }
+      invoke('hide_main_window_command').catch((err) => console.warn('隐藏窗口失败：', err))
+    })
+  }
   // 托盘“退出”不经过窗口关闭，先写盘再让 Rust 结束进程
   await listen('tray-exit-requested', async () => {
     await flushTauriStorageBeforeExit()

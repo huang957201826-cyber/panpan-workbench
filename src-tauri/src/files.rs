@@ -14,6 +14,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tempfile::NamedTempFile;
 
+#[cfg(not(mobile))]
 use crate::data_dir;
 use crate::migrate::{self, MoveReport};
 use crate::storage::{self, Storage, StorageState};
@@ -239,11 +240,24 @@ fn persist_unique(mut tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<
 #[cfg(not(windows))]
 pub async fn save_file(
     _window: WebviewWindow,
-    _state: State<'_, StorageState>,
-    _writes: State<'_, Writes>,
-    _name: String,
+    state: State<'_, StorageState>,
+    writes: State<'_, Writes>,
+    name: String,
 ) -> Result<Option<u32>, String> {
-    Err("当前平台不支持系统保存对话框".to_string())
+    check_name(&name)?;
+    let storage = storage(&state)?;
+    let dir = tokio::task::block_in_place(|| {
+        let dir = download_dir(storage)?;
+        check_outside(&dir, Some(storage.root()))?;
+        ensure_writable(&dir).map_err(|err| format!("保存目录不可用（{}）：{err}", dir.display()))?;
+        Ok::<_, String>(dir)
+    })?;
+    tokio::task::block_in_place(|| {
+        writes
+            .begin(&dir, Target::Unique(dir.clone(), name.clone()))
+            .map_err(|err| format!("无法在 {} 中创建临时文件：{err}", dir.display()))
+    })
+    .map(Some)
 }
 
 #[cfg(windows)]
@@ -444,15 +458,23 @@ pub async fn save_dir_pick(
     state: State<'_, StorageState>,
     dirs: State<'_, SaveDirs>,
 ) -> Result<Option<SaveDir>, String> {
-    let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, None))
-        .await
-        .map_err(|err| format!("目录选择框异常结束：{err}"))??;
-    let Some(path) = picked else {
-        return Ok(None);
-    };
-    let data_dir = data_root(&state);
-    tokio::task::block_in_place(|| check_outside(&path, data_dir.as_deref()))?;
-    register_dir(&dirs, path).map(Some)
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        return download_dir_use(state, dirs).await.map(Some);
+    }
+    #[cfg(windows)]
+    {
+        let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, None))
+            .await
+            .map_err(|err| format!("目录选择框异常结束：{err}"))??;
+        let Some(path) = picked else {
+            return Ok(None);
+        };
+        let data_dir = data_root(&state);
+        tokio::task::block_in_place(|| check_outside(&path, data_dir.as_deref()))?;
+        register_dir(&dirs, path).map(Some)
+    }
 }
 
 /// 在 save_dir_pick 或 download_dir_use 登记的目录中开始一次分块写入，返回写入序号；
@@ -539,8 +561,29 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
     if let Some(dir) = saved {
         return Ok(PathBuf::from(dir));
     }
-    let base = data_dir::base_dir().map_err(|err| format!("无法定位安装目录：{err}"))?;
-    Ok(initial_download_dir(storage.root(), &base))
+    #[cfg(target_os = "android")]
+    {
+        let public_dl = PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench");
+        if ensure_writable(&public_dl).is_ok() {
+            return Ok(public_dl);
+        }
+        return Ok(storage.root().parent().unwrap_or_else(|| storage.root()).join("downloads"));
+    }
+    #[cfg(target_os = "ios")]
+    {
+        return Ok(storage.root().parent().unwrap_or_else(|| storage.root()).join("Documents").join("PanPanWorkbench"));
+    }
+    #[cfg(not(mobile))]
+    {
+        #[cfg(target_os = "macos")]
+        if !cfg!(debug_assertions) {
+            if let Some(home) = std::env::var_os("HOME") {
+                return Ok(PathBuf::from(home).join("Downloads").join("PanPanWorkbench"));
+            }
+        }
+        let base = data_dir::base_dir().map_err(|err| format!("无法定位安装目录：{err}"))?;
+        Ok(initial_download_dir(storage.root(), &base))
+    }
 }
 
 /// 不存在时创建，并实际创建临时文件探测权限，提前发现目录不可写或所在磁盘已移除
@@ -606,19 +649,21 @@ pub(crate) fn env_dirs() -> SystemDirs {
 pub(crate) fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
     let path = app.path();
     let mut dirs = env_dirs();
-    dirs.known = [
+    let mut known = vec![
         path.download_dir(),
         path.picture_dir(),
-        path.desktop_dir(),
         path.document_dir(),
         path.video_dir(),
         path.audio_dir(),
         path.public_dir(),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|dir| normalize(&dir))
-    .collect();
+    ];
+    #[cfg(not(mobile))]
+    known.push(path.desktop_dir());
+    dirs.known = known
+        .into_iter()
+        .flatten()
+        .map(|dir| normalize(&dir))
+        .collect();
     dirs.protected.extend(
         [path.home_dir(), path.data_dir(), path.local_data_dir()]
             .into_iter()

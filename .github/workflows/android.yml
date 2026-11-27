@@ -1,0 +1,100 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android NDK & Build-Tools
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
+          echo "NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain & Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Initialize Tauri Android project
+        run: |
+          if [ ! -d "src-tauri/gen/android" ]; then
+            npx tauri android init --ci
+          fi
+          # Copy custom launcher icons if present
+          if [ -d "src-tauri/icons/android" ]; then
+            cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/ || true
+          fi
+
+      - name: Build Android APK (aarch64)
+        run: npx tauri android build --apk --target aarch64
+
+      - name: Sign Android APK
+        run: |
+          mkdir -p dist-apk
+          RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          echo "Found APK: $RAW_APK"
+          keytool -genkeypair -v \
+            -keystore release.keystore \
+            -alias panpan \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass panpan123 \
+            -keypass panpan123 \
+            -dname "CN=PanPan Workbench, OU=AI, O=PanPan, L=Beijing, S=Beijing, C=CN"
+
+          BUILD_TOOLS_DIR="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$RAW_APK" dist-apk/aligned.apk
+          "$BUILD_TOOLS_DIR/apksigner" sign \
+            --ks release.keystore \
+            --ks-key-alias panpan \
+            --ks-pass pass:panpan123 \
+            --key-pass pass:panpan123 \
+            --out dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk \
+            dist-apk/aligned.apk
+          "$BUILD_TOOLS_DIR/apksigner" verify -v dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk
+          rm -f dist-apk/aligned.apk
+          ls -lh dist-apk/
+
+      - name: Upload Signed APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PanPan-Workbench-Android-APK
+          path: dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk
+          if-no-files-found: error

@@ -76,15 +76,37 @@ fn notice(
     })
 }
 
-/// 发布版为 exe 所在目录；debug 构建（含 tauri dev）为 src-tauri/
+/// 发布版为 exe 所在目录（macOS 为 ~/Library/Application Support/com.panpan.workbench）；debug 构建（含 tauri dev）为 src-tauri/
 pub fn base_dir() -> io::Result<PathBuf> {
-    if cfg!(debug_assertions) {
-        return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    #[cfg(mobile)]
+    {
+        return Ok(PathBuf::from("/data/data/com.panpan.workbench/files"));
     }
-    let exe = std::env::current_exe()?;
-    exe.parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| io::Error::other("无法确定程序所在目录"))
+    #[cfg(not(mobile))]
+    {
+        if cfg!(debug_assertions) {
+            return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(home) = std::env::var_os("HOME") {
+            let dir = PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("com.panpan.workbench");
+            let _ = fs::create_dir_all(&dir);
+            return Ok(dir);
+        }
+        let exe = std::env::current_exe()?;
+        exe.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| io::Error::other("无法确定程序所在目录"))
+    }
+}
+
+/// 移动端/Android 可在 Tauri setup 阶段从 AppHandle.path().app_local_data_dir() 注入真实沙盒目录
+pub fn set_current(dir: PathBuf) {
+    let _ = fs::create_dir_all(&dir);
+    let _ = CURRENT.set(dir);
 }
 
 fn default_dir(base: &Path) -> PathBuf {
@@ -1001,34 +1023,37 @@ fn startup(
 
 /// 启动时最先调用
 pub fn prepare() {
-    // 测试/自动化可用 PANPAN_DATA_DIR 指定独立数据目录，避免写入真实用户数据
-    if let Some(dir) = std::env::var_os("PANPAN_DATA_DIR") {
-        let path = PathBuf::from(dir);
-        if !path.as_os_str().is_empty() {
-            let _ = fs::create_dir_all(&path);
-            CUSTOM.store(true, Ordering::Relaxed);
-            let _ = CURRENT.set(path);
-            return;
+    #[cfg(not(mobile))]
+    {
+        // 测试/自动化可用 PANPAN_DATA_DIR 指定独立数据目录，避免写入真实用户数据
+        if let Some(dir) = std::env::var_os("PANPAN_DATA_DIR") {
+            let path = PathBuf::from(dir);
+            if !path.as_os_str().is_empty() {
+                let _ = fs::create_dir_all(&path);
+                CUSTOM.store(true, Ordering::Relaxed);
+                let _ = CURRENT.set(path);
+                return;
+            }
         }
+        let Ok(base) = base_dir() else {
+            return;
+        };
+        let default = default_dir(&base);
+        #[cfg(windows)]
+        let mut ask = |problem: &Problem| dialog::ask(problem, &default);
+        #[cfg(not(windows))]
+        let mut ask = |_: &Problem| Choice::Skip;
+        let (dir, notices) = startup(&base, &files::env_dirs(), &mut ask);
+        CUSTOM.store(
+            files::normalize(&dir) != files::normalize(&default),
+            Ordering::Relaxed,
+        );
+        let _ = CURRENT.set(dir);
+        for notice in &notices {
+            eprintln!("[data-dir] {} {}", notice.message, notice.details.join(" "));
+        }
+        *NOTICES.lock().unwrap_or_else(|err| err.into_inner()) = notices;
     }
-    let Ok(base) = base_dir() else {
-        return;
-    };
-    let default = default_dir(&base);
-    #[cfg(windows)]
-    let mut ask = |problem: &Problem| dialog::ask(problem, &default);
-    #[cfg(not(windows))]
-    let mut ask = |_: &Problem| Choice::Skip;
-    let (dir, notices) = startup(&base, &files::env_dirs(), &mut ask);
-    CUSTOM.store(
-        files::normalize(&dir) != files::normalize(&default),
-        Ordering::Relaxed,
-    );
-    let _ = CURRENT.set(dir);
-    for notice in &notices {
-        eprintln!("[data-dir] {} {}", notice.message, notice.details.join(" "));
-    }
-    *NOTICES.lock().unwrap_or_else(|err| err.into_inner()) = notices;
 }
 
 /// 启动后记入日志（prepare 时日志尚未初始化）
