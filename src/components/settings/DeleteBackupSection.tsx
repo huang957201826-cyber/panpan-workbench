@@ -4,7 +4,7 @@ import { formatBytes } from '../../lib/formatBytes'
 import { importData, useStore } from '../../store'
 
 /** 设置页：最近 5 份删除前快照，恢复复用现有 ZIP 导入。 */
-export default function DeleteBackupSection() {
+export default function DeleteBackupSection({ onRestored }: { onRestored?: () => void }) {
   const showToast = useStore((state) => state.showToast)
   const setConfirmDialog = useStore((state) => state.setConfirmDialog)
   const [files, setFiles] = useState<DeleteSnapshot[]>([])
@@ -35,6 +35,7 @@ export default function DeleteBackupSection() {
           if (imported) {
             showToast('删除快照已恢复', 'success')
             reload()
+            onRestored?.()
           }
           return true
         } catch (err) {

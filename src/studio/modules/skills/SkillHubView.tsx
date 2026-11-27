@@ -33,22 +33,26 @@ interface SkillHubViewProps {
 const CATEGORY_TITLES: Record<string, string> = {
   all: '全部技能',
   mine: '我的技能',
-  commercial: '商业空间',
-  lighting: '光影镜头',
-  materials: '材质质感',
-  styles: '艺术风格',
-  product: '工业硬件',
-  negative: '负向增强',
+  空间与场地: '空间与场地',
+  改造与材质: '改造与材质',
+  产品与电商: '产品与电商',
+  平面与传播: '平面与传播',
+  动态: '动态',
+  'UI 与网页': 'UI 与网页',
+  角色与配景: '角色与配景',
+  风格包: '风格包',
   favorites: '我的收藏',
 };
 
 const CREATE_CATEGORY_OPTIONS: { id: SkillItem['category']; label: string }[] = [
-  { id: 'commercial', label: '商业空间' },
-  { id: 'lighting', label: '光影镜头' },
-  { id: 'materials', label: '材质质感' },
-  { id: 'styles', label: '艺术风格' },
-  { id: 'product', label: '工业硬件' },
-  { id: 'negative', label: '负向增强' },
+  { id: '空间与场地', label: '空间与场地' },
+  { id: '改造与材质', label: '改造与材质' },
+  { id: '产品与电商', label: '产品与电商' },
+  { id: '平面与传播', label: '平面与传播' },
+  { id: '动态', label: '动态' },
+  { id: 'UI 与网页', label: 'UI 与网页' },
+  { id: '角色与配景', label: '角色与配景' },
+  { id: '风格包', label: '风格包' },
 ];
 
 function renderFormulaWithVariables(template: string) {
@@ -127,7 +131,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
   // Create Custom Skill Modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newCategory, setNewCategory] = useState<SkillItem['category']>('commercial');
+  const [newCategory, setNewCategory] = useState<SkillItem['category']>('空间与场地');
   const [newDesc, setNewDesc] = useState('');
   const [newPrompt, setNewPrompt] = useState('');
   const [newNegative, setNewNegative] = useState('');
@@ -142,10 +146,10 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
     setNewPrompt(initial?.promptTemplate ?? '');
     setNewNegative(initial?.negativePrompt ?? '');
     if (initial) {
-      const matched = CREATE_CATEGORY_OPTIONS.find((option) => option.label === initial.categoryLabel);
-      setNewCategory(matched?.id ?? 'commercial');
+      const matched = CREATE_CATEGORY_OPTIONS.find((option) => option.label === initial.categoryLabel || option.id === initial.category);
+      setNewCategory(matched?.id ?? '空间与场地');
     } else {
-      setNewCategory('commercial');
+      setNewCategory('空间与场地');
     }
     setIsCreateModalOpen(true);
   };
@@ -249,7 +253,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
       {/* =========================================================================
           MINIMAL TOP HEADER (Search + New Skill; No Category Bar, No Model Pills)
           ========================================================================= */}
-      <div className="px-6 pt-4 pb-3 shrink-0 flex flex-wrap items-center justify-between gap-3">
+      <div className="px-4 sm:px-6 pt-4 pb-3 shrink-0 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {isSidebarCollapsed && onToggleSidebar && (
             <button
@@ -264,7 +268,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
 
           <div className="flex items-baseline gap-2.5 min-w-0">
             <h1 className="text-title font-bold tracking-tight text-slate-900 dark:text-white truncate">
-              {CATEGORY_TITLES[activeCategory] || '全部技能'}
+              {CATEGORY_TITLES[activeCategory] || activeCategory || '全部技能'}
             </h1>
             <span className="text-caption font-mono text-slate-400 tabular-nums shrink-0">
               {filteredSkills.length} 条技能

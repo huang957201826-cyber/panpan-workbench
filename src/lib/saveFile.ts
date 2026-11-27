@@ -130,6 +130,11 @@ export function changeDefaultSaveDir() {
   return invoke<{ path: string, previous: PreviousSaveDir | null } | null>('download_dir_pick')
 }
 
+/** 仅客户端：按指定绝对路径更改默认保存地址（用于移动端或无原生目录选择框的平台），并复用原目录文件迁移统计 */
+export function setDefaultSaveDir(path: string) {
+  return invoke<{ path: string, previous: PreviousSaveDir | null }>('download_dir_set', { path })
+}
+
 /** 未能完整移动的条目：原位置的完整路径与原因 */
 export interface MoveIssue {
   path: string

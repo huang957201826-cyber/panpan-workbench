@@ -190,6 +190,7 @@ pub fn run() {
             files::save_abort,
             files::download_dir_get,
             files::download_dir_pick,
+            files::download_dir_set,
             files::download_dir_use,
             files::download_dir_open,
             files::download_dir_migrate,

@@ -34,12 +34,12 @@ import {
 } from 'lucide-react';
 import { AppLogo } from '../../components/AppLogo';
 import { invoke } from '@tauri-apps/api/core';
-import { isMobile, isTauri } from '../../../lib/platform';
+import { isAndroid, isIOS, isMobile, isNonWindowsDesktop, isTauri } from '../../../lib/platform';
 import { performUpdateCheck } from '../../../lib/updateService';
 import { testConnection } from '../../adapters/settings';
 import { clearData, exportData, importData, useStore } from '../../../store';
 import { trackDataTransfer } from '../../../lib/dataOperations';
-import { changeSaveDirWithMigration } from '../../../components/settings/saveDirMigration';
+import { changeSaveDirWithMigration, setSaveDirWithMigration } from '../../../components/settings/saveDirMigration';
 import { getDefaultSaveDir, openDefaultSaveDir } from '../../../lib/saveFile';
 import McpSettingsSection from '../../../components/settings/McpSettingsSection';
 import StorageInfoSection from '../../../components/settings/StorageInfoSection';
@@ -251,6 +251,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAdvancedApi, setShowAdvancedApi] = useState(false);
+  const [isSaveDirEditorOpen, setIsSaveDirEditorOpen] = useState(false);
+  const [saveDirInput, setSaveDirInput] = useState('');
+  const [saveDirSaving, setSaveDirSaving] = useState(false);
 
   // 默认折叠推荐中转站节点（克制不喧宾夺主）
   const [showRelaySection, setShowRelaySection] = useState(false);
@@ -392,36 +395,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleCheckUpdate = async () => {
+  const handleCheckUpdate = async (notifyToast = false) => {
     setUpdateCheckStatus('checking');
     setUpdateCheckMessage('');
     if (!isTauri) {
+      const msg = '当前环境不支持应用内更新';
       setUpdateCheckStatus('error');
-      setUpdateCheckMessage('当前环境不支持应用内更新');
+      setUpdateCheckMessage(msg);
+      if (notifyToast) useStore.getState().showToast(msg, 'info');
       return;
     }
     try {
       const result = await performUpdateCheck(invoke);
       if (result.phase === 'available' && result.info) {
+        const msg = `发现新版本 v${result.info.version}`;
         setUpdateCheckStatus('available');
-        setUpdateCheckMessage(`发现新版本 v${result.info.version}`);
+        setUpdateCheckMessage(msg);
+        if (notifyToast) useStore.getState().showToast(msg, 'success');
         return;
       }
+      const msg = `已是最新版本 v${__APP_VERSION__}`;
       setUpdateCheckStatus('latest');
-      setUpdateCheckMessage(`已是最新版本 v${__APP_VERSION__}`);
+      setUpdateCheckMessage(msg);
+      if (notifyToast) useStore.getState().showToast(msg, 'info');
     } catch (error) {
+      const msg = `检查失败：${error instanceof Error ? error.message : String(error)}`;
       setUpdateCheckStatus('error');
-      setUpdateCheckMessage(`检查失败：${error instanceof Error ? error.message : String(error)}`);
+      setUpdateCheckMessage(msg);
+      if (notifyToast) useStore.getState().showToast(msg, 'error');
     }
   };
 
   const handleChangeDownloadDir = async () => {
+    if (isMobile || isNonWindowsDesktop) {
+      setSaveDirInput(defaultDownloadPath);
+      setIsSaveDirEditorOpen(true);
+      return;
+    }
     try {
       const dir = await changeSaveDirWithMigration();
       if (dir) setDefaultDownloadPath(dir);
     } catch (err) {
       console.error('更改默认保存地址失败：', err);
       useStore.getState().showToast(typeof err === 'string' ? err : '更改默认保存地址失败', 'error');
+    }
+  };
+
+  const handleSubmitCustomDownloadDir = async () => {
+    const trimmed = saveDirInput.trim();
+    if (!trimmed) {
+      useStore.getState().showToast('请输入完整的保存目录路径', 'error');
+      return;
+    }
+    setSaveDirSaving(true);
+    try {
+      const dir = await setSaveDirWithMigration(trimmed);
+      if (dir) {
+        setDefaultDownloadPath(dir);
+        setIsSaveDirEditorOpen(false);
+        useStore.getState().showToast('默认保存目录已更新', 'success');
+      }
+    } catch (err) {
+      console.error('更改默认保存地址失败：', err);
+      useStore.getState().showToast(typeof err === 'string' ? err : '更改默认保存地址失败', 'error');
+    } finally {
+      setSaveDirSaving(false);
     }
   };
 
@@ -916,7 +954,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-caption font-mono text-slate-400 tabular-nums">v{__APP_VERSION__}</span>
+            <button
+              type="button"
+              onClick={() => void handleCheckUpdate(true)}
+              disabled={updateCheckStatus === 'checking'}
+              title="点击快速检查版本更新"
+              className="px-2 py-1 rounded-full text-caption font-mono text-slate-400 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-slate-700 dark:hover:text-slate-200 tabular-nums transition cursor-pointer disabled:opacity-60"
+            >
+              {updateCheckStatus === 'checking' ? '检查中…' : `v${__APP_VERSION__}`}
+            </button>
             <button
               onClick={handleRequestClose}
               className="w-9 h-9 md:w-8 md:h-8 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08] text-slate-400 hover:text-slate-700 dark:hover:text-white flex items-center justify-center transition cursor-pointer"
@@ -1767,21 +1813,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       下载与通知
                     </h4>
 
-                    <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
-                      <div className="min-w-0">
-                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                          默认下载保存目录
-                        </div>
-                        <div className="text-caption font-mono text-slate-400 truncate mt-0.5">
-                          {defaultDownloadPath}
-                        </div>
-                        {isMobile && (
-                          <div className="text-caption text-slate-400 mt-1">
-                            移动端默认保存至系统下载目录，无需手动更改
+                    <div className="space-y-3 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                            默认下载保存目录
                           </div>
-                        )}
-                      </div>
-                      {!isMobile && (
+                          <div className="text-caption font-mono text-slate-400 truncate mt-0.5">
+                            {defaultDownloadPath}
+                          </div>
+                          {isMobile && (
+                            <div className="text-caption text-slate-400 mt-1">
+                              {isAndroid
+                                ? '默认在系统相册创建 PanPanWorkbench 文件夹存放导出图片，可自定义目录并一键迁移已有图片'
+                                : '默认保存在应用文档目录，可自定义子目录并一键迁移已有文件'}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             type="button"
@@ -1790,13 +1838,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           >
                             更改
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleOpenDownloadDir()}
-                            className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
-                          >
-                            打开
-                          </button>
+                          {!isMobile && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDownloadDir()}
+                              className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
+                            >
+                              打开
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {isSaveDirEditorOpen && (
+                        <div className="rounded-xl bg-[#f3f4f8] dark:bg-white/[0.05] p-3 space-y-2.5">
+                          <div className="text-caption font-medium text-slate-700 dark:text-slate-200">
+                            修改保存目录（变更后若原目录有文件，将按官方规则询问是否迁移）
+                          </div>
+                          {isAndroid && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {[
+                                { label: '相册 / PanPanWorkbench', path: '/storage/emulated/0/Pictures/PanPanWorkbench' },
+                                { label: 'DCIM / PanPanWorkbench', path: '/storage/emulated/0/DCIM/PanPanWorkbench' },
+                                { label: '下载 / PanPanWorkbench', path: '/storage/emulated/0/Download/PanPanWorkbench' },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.path}
+                                  type="button"
+                                  onClick={() => setSaveDirInput(preset.path)}
+                                  className={`px-2.5 py-1 rounded-full text-micro font-medium transition cursor-pointer ${
+                                    saveDirInput.trim() === preset.path
+                                      ? 'bg-black text-white dark:bg-white dark:text-black'
+                                      : 'bg-white dark:bg-[#141620] text-slate-600 dark:text-slate-300 border border-black/[0.06] dark:border-white/[0.08]'
+                                  }`}
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <input
+                            type="text"
+                            value={saveDirInput}
+                            onChange={(e) => setSaveDirInput(e.target.value)}
+                            placeholder={isIOS ? '输入应用文档内的子目录完整路径' : '/storage/emulated/0/Pictures/PanPanWorkbench'}
+                            className="w-full h-9 px-3 rounded-lg bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.1] text-caption font-mono text-slate-800 dark:text-slate-100 outline-none focus:border-black dark:focus:border-white"
+                          />
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsSaveDirEditorOpen(false)}
+                              disabled={saveDirSaving}
+                              className="h-8 px-3 rounded-full bg-white dark:bg-white/[0.08] text-caption font-medium text-slate-600 dark:text-slate-300 cursor-pointer"
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleSubmitCustomDownloadDir()}
+                              disabled={saveDirSaving}
+                              className="h-8 px-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-semibold cursor-pointer disabled:opacity-60"
+                            >
+                              {saveDirSaving ? '保存中…' : '保存并检查迁移'}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2066,7 +2171,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <span>导出数据备份</span>
                         </div>
                         <p className="text-caption text-slate-400 leading-relaxed">
-                          备份将自动分卷保存，默认不含敏感 API Key。
+                          {isMobile
+                            ? '备份将自动分卷保存到默认下载目录，默认不含敏感 API Key。'
+                            : '备份将自动分卷保存，默认不含敏感 API Key。'}
                         </p>
                         <div className="flex flex-col gap-2 pt-1">
                           <MonoCheckbox
@@ -2122,7 +2229,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <input
                         ref={importInputRef}
                         type="file"
-                        accept=".zip"
+                        accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream"
                         multiple
                         className="hidden"
                         onChange={(e) => void handleImportData(e)}
@@ -2182,9 +2289,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <h4 className="text-title font-bold text-slate-900 dark:text-white">
                             盼盼工作台
                           </h4>
-                          <span className="text-caption font-mono text-slate-400 tabular-nums">
+                          <button
+                            type="button"
+                            onClick={() => void handleCheckUpdate(true)}
+                            disabled={updateCheckStatus === 'checking'}
+                            title="点击快速检查版本更新"
+                            className="px-2 py-0.5 rounded-full text-caption font-mono text-slate-400 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-slate-700 dark:hover:text-slate-200 tabular-nums transition cursor-pointer disabled:opacity-60"
+                          >
                             v{__APP_VERSION__}
-                          </span>
+                          </button>
                         </div>
                         <p className="text-caption text-slate-500 dark:text-slate-400">
                           开发者 盼盼盼2222 · 顺手的地方请留下，不顺手的地方欢迎随时反馈。

@@ -15,14 +15,16 @@ export default function StorageInfoSection() {
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  const loadInfo = () => {
     getStorageInfo()
       .then(setInfo)
       .catch((err) => {
         console.error('读取存储信息失败：', err)
         setError(err instanceof Error ? err.message : String(err))
       })
-  }, [])
+  }
+
+  useEffect(loadInfo, [])
 
   const handleOpen = async () => {
     try {
@@ -147,7 +149,7 @@ export default function StorageInfoSection() {
           更改数据目录
         </button>
       )}
-      <DeleteBackupSection />
+      <DeleteBackupSection onRestored={loadInfo} />
     </div>
   )
 }

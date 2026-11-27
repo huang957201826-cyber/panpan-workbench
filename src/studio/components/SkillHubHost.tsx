@@ -145,20 +145,29 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
       <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
         {['all', 'mine', ...CATEGORY_LABELS, 'favorites'].map((label) => {
-          const title = label === 'all' ? '全部' : label === 'mine' ? '我的' : label === 'favorites' ? '收藏' : label
+          const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
+          const count =
+            label === 'all'
+              ? items.length
+              : label === 'mine'
+              ? items.filter((item) => item.isCustom).length
+              : label === 'favorites'
+              ? items.filter((item) => item.isFavorite).length
+              : items.filter((item) => item.category === label).length
           const active = category === label
           return (
             <button
               key={label}
               type="button"
               onClick={() => setCategory(label)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition ${
                 active
                   ? 'bg-black text-white dark:bg-white dark:text-black'
                   : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
               }`}
             >
-              {title}
+              <span>{title}</span>
+              <span className={`text-micro tabular-nums ${active ? 'opacity-80' : 'text-slate-400'}`}>{count}</span>
             </button>
           )
         })}

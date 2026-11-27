@@ -563,6 +563,10 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
     }
     #[cfg(target_os = "android")]
     {
+        let public_pictures = PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench");
+        if ensure_writable(&public_pictures).is_ok() {
+            return Ok(public_pictures);
+        }
         let public_dl = PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench");
         if ensure_writable(&public_dl).is_ok() {
             return Ok(public_dl);
@@ -797,6 +801,50 @@ pub async fn download_dir_pick(
         path: path.display().to_string(),
         previous,
     }))
+}
+
+/// 按给定路径更改默认保存地址（用于移动端或无原生目录选择框的平台），
+/// 校验目录可写且不在应用数据目录内；原地址中有文件时返回其统计并记下待迁移源，复用官方迁移流程
+#[tauri::command]
+pub async fn download_dir_set(
+    app: AppHandle,
+    state: State<'_, StorageState>,
+    source: State<'_, MigrateSource>,
+    path: String,
+) -> Result<DirChange, String> {
+    source
+        .0
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .take();
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("保存目录不能为空".to_string());
+    }
+    let next_path = PathBuf::from(trimmed);
+    if !next_path.is_absolute() {
+        return Err("请输入完整的绝对目录路径".to_string());
+    }
+    let storage = storage(&state)?;
+    let dirs = system_dirs(&app);
+    let old = tokio::task::block_in_place(|| download_dir(storage))?;
+    let previous = tokio::task::block_in_place(|| {
+        check_outside(&next_path, Some(storage.root()))?;
+        ensure_writable(&next_path)
+            .map_err(|err| format!("无法写入该目录（{}）：{err}", next_path.display()))?;
+        storage
+            .meta_set(DOWNLOAD_DIR_KEY, &next_path.display().to_string())
+            .map_err(|err| format!("保存默认保存地址失败：{}", err.message))?;
+        Ok::<_, String>(previous_dir(&old, &next_path, storage.root(), &dirs))
+    })?;
+    *source.0.lock().unwrap_or_else(|err| err.into_inner()) = previous
+        .as_ref()
+        .filter(|p| p.blocked.is_none())
+        .map(|_| old);
+    Ok(DirChange {
+        path: next_path.display().to_string(),
+        previous,
+    })
 }
 
 /// 把上次更改前的原地址中的全部内容移动到当前默认保存地址，移空后删除原目录本身（系统已知文件夹除外）
