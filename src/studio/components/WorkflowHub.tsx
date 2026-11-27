@@ -78,6 +78,7 @@ export function WorkflowHub() {
   const [projects, setProjects] = useState<WorkflowProject[]>([DRAFT_PROJECT])
   const [activeProjectId, setActiveProjectId] = useState('draft')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [enginePanelOpen, setEnginePanelOpen] = useState(false)
   const [saveProjectOpen, setSaveProjectOpen] = useState(false)
   const [saveProjectName, setSaveProjectName] = useState('')
   const pendingValuesRef = useRef<Record<string, string | number | boolean>>({})
@@ -244,10 +245,15 @@ export function WorkflowHub() {
   return (
     <div className="flex h-full w-full flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
       <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`}
-          title={engine.probe?.ok ? '本地引擎运行中' : '本地引擎未运行'}
-        />
+        <button
+          type="button"
+          onClick={() => setEnginePanelOpen((open) => !open)}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-black/10 bg-white px-2.5 py-1 text-caption font-medium text-slate-700 dark:border-white/15 dark:bg-white/[0.06] dark:text-slate-200"
+          title={engine.probe?.ok ? '算力引擎已连接，点击配置地址' : '算力引擎未连接，点击配置地址'}
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+          {engine.probe?.ok ? '引擎在线' : '连接引擎'}
+        </button>
         {FLOWS.map((flow) => (
           <button
             key={flow.key}
@@ -290,10 +296,15 @@ export function WorkflowHub() {
 
         {collapsed ? (
           <div className="flex flex-col items-center gap-2 pt-1">
-            <span
-              className={`h-2 w-2 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`}
-              title={engine.probe?.ok ? '本地引擎运行中' : '本地引擎未运行'}
-            />
+            <button
+              type="button"
+              onClick={() => setEnginePanelOpen((open) => !open)}
+              title={engine.probe?.ok ? '本地引擎运行中（点击配置地址）' : '本地引擎未运行（点击配置地址）'}
+              aria-label="配置算力引擎"
+              className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
+            >
+              <span className={`h-2 w-2 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+            </button>
             {FLOWS.map((flow) => {
               const Icon = FLOW_ICONS[flow.key as keyof typeof FLOW_ICONS] ?? Maximize2
               return (
@@ -318,7 +329,7 @@ export function WorkflowHub() {
           <div className={`${SIDEBAR_BODY_CLASS} space-y-4`}>
             <section className="space-y-2">
               <div className="px-1 text-micro font-semibold tracking-wide text-slate-400">本地引擎</div>
-              <EngineRow engine={engine} />
+              <EngineRow engine={engine} onConfigure={() => setEnginePanelOpen((open) => !open)} />
             </section>
 
             <section className="space-y-1.5">
@@ -384,7 +395,11 @@ export function WorkflowHub() {
           onQueueComplete={(message) => showToast(message, 'info')}
         />
 
-        <LocalEngineCard engine={engine} />
+        <LocalEngineCard
+          engine={engine}
+          forceOpen={enginePanelOpen}
+          onClose={() => setEnginePanelOpen(false)}
+        />
 
         {/* 当前工作流 / 草稿状态（手机端底部栏已展示，隐藏顶部悬浮以免遮挡工具栏） */}
         <div className="hidden min-[680px]:block absolute top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none">

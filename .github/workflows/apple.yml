@@ -40,13 +40,33 @@ jobs:
       - name: Build macOS Universal App & DMG
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 
+      - name: Package & Name macOS Installers
+        id: pkg_macos
+        run: |
+          mkdir -p dist-macos
+          APP_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BASE_NAME="PanPan-Workbench-v${APP_VERSION}-macOS-Universal-${SHORT_SHA}"
+
+          DMG_SRC=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name "*.dmg" | head -n 1)
+          if [ -n "$DMG_SRC" ]; then
+            cp "$DMG_SRC" "dist-macos/${BASE_NAME}.dmg"
+          fi
+
+          APP_SRC=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -n "$APP_SRC" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$APP_SRC" "dist-macos/${BASE_NAME}.app.zip"
+          fi
+
+          echo "artifact_name=${BASE_NAME}" >> "$GITHUB_OUTPUT"
+          ls -lh dist-macos/
+
       - name: Upload macOS DMG & App Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PanPan-Workbench-macOS-Universal
-          path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          name: ${{ steps.pkg_macos.outputs.artifact_name }}
+          path: dist-macos/*
+          if-no-files-found: error
 
   build-ios:
     runs-on: macos-latest

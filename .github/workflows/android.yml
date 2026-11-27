@@ -65,8 +65,13 @@ jobs:
         run: npx tauri android build --apk --target aarch64
 
       - name: Sign Android APK
+        id: sign_apk
         run: |
           mkdir -p dist-apk
+          APP_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          APK_NAME="PanPan-Workbench-v${APP_VERSION}-Android-arm64-${SHORT_SHA}.apk"
+          ARTIFACT_NAME="PanPan-Workbench-v${APP_VERSION}-Android-arm64-${SHORT_SHA}"
           RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
           echo "Found APK: $RAW_APK"
           keytool -genkeypair -v \
@@ -86,15 +91,17 @@ jobs:
             --ks-key-alias panpan \
             --ks-pass pass:panpan123 \
             --key-pass pass:panpan123 \
-            --out dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk \
+            --out "dist-apk/${APK_NAME}" \
             dist-apk/aligned.apk
-          "$BUILD_TOOLS_DIR/apksigner" verify -v dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk
+          "$BUILD_TOOLS_DIR/apksigner" verify -v "dist-apk/${APK_NAME}"
           rm -f dist-apk/aligned.apk
+          echo "apk_path=dist-apk/${APK_NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
           ls -lh dist-apk/
 
       - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PanPan-Workbench-Android-APK
-          path: dist-apk/PanPan-Workbench-v1.8.0-android-arm64.apk
+          name: ${{ steps.sign_apk.outputs.artifact_name }}
+          path: ${{ steps.sign_apk.outputs.apk_path }}
           if-no-files-found: error
