@@ -7,7 +7,7 @@ import { useViewportLayout } from '../hooks/useViewportLayout'
 import { isMobile, isTauri, isTouchDevice } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
-import { addImageFileToCanvas } from '../lib/canvasImageInput'
+import { addImageFileToCanvas, ensureInputImageOnCanvas } from '../lib/canvasImageInput'
 import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { downloadTasksImages } from '../lib/taskExport'
 import { pickSaveDir, type SaveDir } from '../lib/saveFile'
@@ -215,7 +215,18 @@ export default function StudioShell() {
       document.documentElement.style.removeProperty('--input-bar-clearance')
       useCanvasViewStore.getState().setBottomInset(0)
     }
-  }, [workspace.inputDockPosition])
+  }, [workspace.inputDockPosition, activeActivity, activeCanvas?.id])
+
+  useEffect(() => {
+    if (!activeCanvas?.id || isFavoritesCanvas(activeCanvas.id) || inputImages.length === 0) return
+    const existingNodeImageIds = new Set((activeCanvas.imageNodes ?? []).map((node) => node.imageId))
+    const removedIds = new Set(activeCanvas.removedImageIds ?? [])
+    const taskOutputIds = new Set(tasks.flatMap((task) => task.outputImages ?? []))
+    for (const img of inputImages) {
+      if (!img.id || existingNodeImageIds.has(img.id) || removedIds.has(img.id) || taskOutputIds.has(img.id)) continue
+      void ensureInputImageOnCanvas(img, activeCanvas.id)
+    }
+  }, [activeCanvas?.id, activeCanvas?.imageNodes, activeCanvas?.removedImageIds, tasks, inputImages])
 
   useEffect(() => {
     if (!activeCanvas?.id) return
@@ -995,6 +1006,17 @@ export default function StudioShell() {
                 sizeOptions={sizeOptions}
                 countOptions={[1, 2, 4]}
                 onParamsChange={handleParamsChange}
+                onAddReferenceFile={async (file) => {
+                  try {
+                    const added = await addImageFileToCanvas(activeCanvas?.id ?? '', file)
+                    if (!added) {
+                      useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
+                  }
+                }}
                 onGenerate={(text, nextParams) => {
                   if (!activeCanvas) {
                     showToast('请先新建项目和画布', 'info')
@@ -1130,17 +1152,16 @@ export default function StudioShell() {
                 isGenerating={submitting || pendingInputs > 0}
                 referenceImages={toReferenceImages(inputImages, missingInputIds)}
                 onAddReferenceImage={(image) => addInputImage({ id: image.id, dataUrl: image.url })}
-                onAddReferenceFile={(file) => {
-                  void addImageFileToCanvas(activeCanvas?.id ?? '', file)
-                    .then((added) => {
-                      if (!added) {
-                        useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
-                      }
-                    })
-                    .catch((err) => {
-                      const msg = err instanceof Error ? err.message : String(err)
-                      useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
-                    })
+                onAddReferenceFile={async (file) => {
+                  try {
+                    const added = await addImageFileToCanvas(activeCanvas?.id ?? '', file)
+                    if (!added) {
+                      useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
+                  }
                 }}
                 onRemoveReferenceImage={(id) => {
                   const index = inputImages.findIndex((image) => image.id === id)

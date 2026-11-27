@@ -39,8 +39,25 @@ pub(crate) fn header<'a>(request: &'a Request<'_>, name: &str) -> &'a str {
 }
 
 fn body<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, String> {
+    use base64::Engine;
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(serde_json::Value::Object(map)) => {
+            if let Some(b64) = map.get("base64").and_then(|v| v.as_str()) {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|err| format!("base64 解码失败：{err}"))?;
+                Ok(Cow::Owned(decoded))
+            } else {
+                Err("请求体必须是二进制".into())
+            }
+        }
+        InvokeBody::Json(serde_json::Value::String(b64)) => {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|err| format!("base64 解码失败：{err}"))?;
+            Ok(Cow::Owned(decoded))
+        }
         InvokeBody::Json(serde_json::Value::Array(items)) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {

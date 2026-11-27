@@ -41,14 +41,33 @@ fn number_header(headers: &HeaderMap, name: &str) -> Option<i64> {
         .map(|n| n.round() as i64)
 }
 
-/// 原始请求体为文件内容（安卓 WebView IPC postMessage 下为 JSON 字节数组），元数据放在 x-* 请求头中
+/// 原始请求体为文件内容（桌面端为二进制 Raw，安卓 WebView 下支持 base64 JSON 对象或字节数组），元数据放在 x-* 请求头中
 async fn put_from_request(
     state: State<'_, StorageState>,
     request: Request<'_>,
     kind: Kind,
 ) -> Result<()> {
+    use base64::Engine;
     let bytes: Vec<u8> = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(serde_json::Value::Object(map)) => {
+            if let Some(b64) = map.get("base64").and_then(|v| v.as_str()) {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|err| {
+                        StorageError::new("invalid_argument", format!("base64 解码失败：{err}"))
+                    })?
+            } else {
+                return Err(StorageError::new("invalid_argument", "请求体必须是二进制"));
+            }
+        }
+        InvokeBody::Json(serde_json::Value::String(b64)) => {
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|err| {
+                    StorageError::new("invalid_argument", format!("base64 解码失败：{err}"))
+                })?
+        }
         InvokeBody::Json(serde_json::Value::Array(items)) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {

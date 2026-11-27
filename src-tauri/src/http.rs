@@ -227,6 +227,22 @@ pub async fn http_send(
     let mut cancel = subscribe(&state, &meta.id)?;
     let body = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(serde_json::Value::Object(map)) => {
+            use base64::Engine;
+            if let Some(b64) = map.get("base64").and_then(|v| v.as_str()) {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        }
+        InvokeBody::Json(serde_json::Value::String(b64)) => {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap_or_default()
+        }
         InvokeBody::Json(serde_json::Value::Array(items)) => items
             .iter()
             .filter_map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))

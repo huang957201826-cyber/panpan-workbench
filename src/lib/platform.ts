@@ -40,6 +40,34 @@ export const TITLEBAR_HEIGHT = isTauri && !isMobile ? (isMacOS ? 38 : 32) : 0
 /** 提交快捷键提示：macOS 显示 ⌘↵，其余平台显示 Ctrl+↵；只用于展示，实际按键判定见各处 onKeyDown */
 export const submitShortcutHint = isMacOS ? '⌘↵' : 'Ctrl+↵'
 
+/**
+ * 安卓 WebView 下 Tauri IPC 请求体走 postMessage JSON 序列化，直接传 Uint8Array 会被 Array.from 展开为数百万个 JSON 数字导致卡死或内存溢出。
+ * 转为 { base64 } 对象后体积缩小 4 倍且无需构造巨型 JS 数组；桌面端与测试环境保持传 Uint8Array。
+ */
+export function toIpcBinaryBody(bytes: Uint8Array): Uint8Array | { base64: string } {
+  if (!isAndroid) return bytes
+  const CHUNK = 0x8000
+  const parts: string[] = []
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)))
+  }
+  return { base64: btoa(parts.join('')) }
+}
+
+// 安卓 WebView 下 Tauri 返回大于 1KB 的二进制或大于 8KB 的 JSON 时会尝试 fetch('http://ipc.localhost/plugin%3A__TAURI_CHANNEL__%7Cfetch')，
+// 若系统开启了 VPN/代理或 WebView 拦截了 ipc.localhost，Rust 侧队列条目被消费后网络层报错会导致 invoke 永久挂起。
+// 在 JS 层立即拒绝 ipc.localhost 的 fetch，使 Tauri ipc-protocol.js 立即回退到可靠的 window.ipc.postMessage 通道且不丢失队列数据。
+if (isTauri && isAndroid && typeof window !== 'undefined' && typeof window.fetch === 'function') {
+  const nativeFetch = window.fetch.bind(window)
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url ?? ''
+    if (/^https?:\/\/ipc\.localhost\//i.test(url)) {
+      return Promise.reject(new TypeError('Android IPC channel fallback to postMessage'))
+    }
+    return nativeFetch(input, init)
+  }) as typeof window.fetch
+}
+
 interface HttpHead {
   status: number
   statusText: string
@@ -81,8 +109,8 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   signal?.addEventListener('abort', cancel, { once: true })
 
   const meta = { id, method: req.method, url: req.url, headers: [...req.headers] }
-  // 请求体以二进制传给 Rust，避免大图编辑请求经 JSON 数组放大数倍
-  const head = await invoke<HttpHead>('http_send', body, { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
+  // 请求体以二进制传给 Rust（安卓端转为 base64 对象），避免大图编辑请求经 JSON 数组放大数倍
+  const head = await invoke<HttpHead>('http_send', toIpcBinaryBody(body), { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
     settle()
     throw signal?.aborted ? abortReason(signal) : new FetchConnectError(String(err))
   })

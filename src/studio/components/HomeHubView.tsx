@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, ChevronDown, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import type { GenerationParams } from '../types'
 import type { Skill, SkillSlotValue } from '../../types'
 import { useStore } from '../../store'
@@ -9,6 +9,8 @@ import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry'
 import { ensureImageCached } from '../../lib/imageCache'
+import { addImageFileToCanvas } from '../../lib/canvasImageInput'
+import { useWorkspaceStore } from '../../lib/workspaceStore'
 import { STUDIO_FORMATS } from '../constants'
 import { SkillPickerModal } from './SkillPickerModal'
 
@@ -19,6 +21,7 @@ interface HomeHubViewProps {
   countOptions: number[]
   onParamsChange: (params: GenerationParams) => void
   onGenerate: (prompt: string, params: GenerationParams) => void
+  onAddReferenceFile?: (file: File) => Promise<void> | void
   isGenerating: boolean
 }
 
@@ -32,6 +35,7 @@ export function HomeHubView({
   countOptions,
   onParamsChange,
   onGenerate,
+  onAddReferenceFile,
   isGenerating,
 }: HomeHubViewProps) {
   const [prompt, setPrompt] = useState('')
@@ -44,6 +48,11 @@ export function HomeHubView({
   const countRef = useRef<HTMLButtonElement>(null)
   const formatRef = useRef<HTMLButtonElement>(null)
   const qualityRef = useRef<HTMLButtonElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputImages = useStore((s) => s.inputImages)
+  const removeInputImage = useStore((s) => s.removeInputImage)
+  const clearInputImages = useStore((s) => s.clearInputImages)
   const activeSkillId = useStore((s) => s.activeSkillId)
   const skillSlotValues = useStore((s) => s.skillSlotValues)
   const setActiveSkillId = useStore((s) => s.setActiveSkillId)
@@ -72,6 +81,45 @@ export function HomeHubView({
   const submit = (nextParams = params) => {
     if (!canGenerate) return
     onGenerate(prompt.trim(), nextParams)
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputEl = e.target
+    const files = inputEl.files ? Array.from(inputEl.files) : []
+    if (files.length === 0) {
+      inputEl.value = ''
+      return
+    }
+    try {
+      for (const file of files) {
+        if (onAddReferenceFile) {
+          await onAddReferenceFile(file)
+        } else {
+          await addImageFileToCanvas(useWorkspaceStore.getState().activeCanvasId, file)
+        }
+      }
+    } finally {
+      inputEl.value = ''
+    }
+  }
+
+  const insertImageTag = (tagNum: number) => {
+    const tag = `@图${tagNum} `
+    const el = textareaRef.current
+    if (!el) {
+      setPrompt((prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${tag}`)
+      return
+    }
+    const start = el.selectionStart ?? prompt.length
+    const end = el.selectionEnd ?? prompt.length
+    const next = prompt.slice(0, start) + tag + prompt.slice(end)
+    setPrompt(next)
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        textareaRef.current.setSelectionRange(start + tag.length, start + tag.length)
+      }
+    }, 10)
   }
 
   const applySkill = async (skill: Skill, values: Record<string, SkillSlotValue>) => {
@@ -103,6 +151,16 @@ export function HomeHubView({
           </p>
         </div>
 
+        <input
+          id="home-prompt-ref-upload"
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(e) => { void handleFileUpload(e) }}
+          className="sr-only"
+        />
+
         <div
           className={`flex w-full flex-col gap-3 sm:gap-4 rounded-[24px] border bg-white p-4 sm:p-6 transition-all duration-200 dark:bg-[#141620] ${
             focused
@@ -110,6 +168,68 @@ export function HomeHubView({
               : 'border-black/[0.05] shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05),0_2px_6px_-1px_rgba(15,23,42,0.02)] dark:border-white/[0.06]'
           }`}
         >
+          {inputImages.length > 0 && (
+            <div
+              data-home-reference-shelf
+              className="flex flex-col gap-1.5 rounded-xl border border-black/[0.05] bg-black/[0.02] px-3 py-2 dark:border-white/[0.07] dark:bg-white/[0.03]"
+            >
+              <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="truncate font-medium">
+                  已添加 {inputImages.length} 张参考图 · 将随提示词一起发送并同步至工作台画布（点击缩略图插入 @图N）
+                </span>
+                <button
+                  type="button"
+                  onClick={clearInputImages}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-black/[0.06] hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-200 transition cursor-pointer"
+                  title="清空全部参考图"
+                >
+                  <Trash2 className="w-3 h-3 stroke-[1.5]" />
+                  <span>清空</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5 pb-0.5">
+                {inputImages.map((img, idx) => (
+                  <div key={img.id} className="relative group shrink-0">
+                    <div
+                      onClick={() => insertImageTag(idx + 1)}
+                      className="w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/15 dark:border-white/20 bg-black/5 dark:bg-white/5 shadow-sm relative cursor-pointer hover:scale-105 transition-all duration-150"
+                      title={`点击在提示词插入 @图${idx + 1}`}
+                    >
+                      <img
+                        src={img.dataUrl}
+                        alt={`图${idx + 1}`}
+                        className="w-full h-full object-cover pointer-events-none"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute bottom-1 left-1 min-w-4 rounded-full bg-black/80 px-1 text-white flex items-center justify-center text-caption font-mono font-bold shadow-xs">
+                        图{idx + 1}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeInputImage(idx)
+                      }}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/85 text-white hover:bg-red-600 flex items-center justify-center opacity-85 group-hover:opacity-100 transition-opacity cursor-pointer shadow-xs text-caption"
+                      title="移除该参考图"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <label
+                  htmlFor="home-prompt-ref-upload"
+                  className="w-[52px] h-[52px] rounded-xl border border-dashed border-black/20 dark:border-white/20 hover:border-black/40 dark:hover:border-white/40 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.05] dark:hover:bg-white/[0.06] flex flex-col items-center justify-center gap-0.5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer shrink-0"
+                  title="继续添加参考图"
+                >
+                  <Plus className="w-3.5 h-3.5 stroke-[1.6]" />
+                  <span className="text-caption">添加</span>
+                </label>
+              </div>
+            </div>
+          )}
+
           {activeSkill && (
             <div className="flex px-1">
               <span className="inline-flex max-w-[280px] items-center gap-1 rounded-full bg-black/[0.06] py-0.5 pl-2 pr-1 text-caption text-slate-600 dark:bg-white/[0.09] dark:text-slate-300">
@@ -129,6 +249,7 @@ export function HomeHubView({
           )}
 
           <textarea
+            ref={textareaRef}
             value={prompt}
             onChange={(event) => {
               const next = event.target.value
@@ -317,6 +438,24 @@ export function HomeHubView({
             </div>
 
             <div className="flex shrink-0 items-center justify-end gap-2">
+            <label
+              htmlFor="home-prompt-ref-upload"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  fileInputRef.current?.click()
+                }
+              }}
+              className="flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-full bg-black/[0.04] px-3 text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12]"
+              title="添加本地参考图（同步加入画布并随提示词发送）"
+              aria-label="添加本地参考图"
+            >
+              <Plus className="h-3.5 w-3.5 stroke-[1.8]" />
+              <span>参考图{inputImages.length > 0 ? `(${inputImages.length})` : ''}</span>
+            </label>
+
             <button
               type="button"
               onClick={() => setShowSkillPicker(true)}

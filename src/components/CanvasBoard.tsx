@@ -20,7 +20,7 @@ import { useCanvasViewStore } from '../lib/canvasViewStore'
 import { autoLayoutCanvasNodes, getTaskNodeSize, nodeIdsInRect } from '../lib/canvasNodes'
 import { fitNodesViewport, nodeInView, screenToWorld, zoomAtPoint } from '../lib/canvasMath'
 import { isUiModalOpen } from '../lib/uiLayers'
-import { ensureImageCached } from '../lib/imageCache'
+import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { downloadImage } from '../lib/downloadImage'
 import { getDownloadErrorMessage } from '../lib/downloadImages'
 import { useWorkspaceStore } from '../lib/workspaceStore'
@@ -445,7 +445,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }, [setBottomInset])
 
   useEffect(() => {
-    if (didFitRef.current || userInteractedRef.current || size.width <= 0 || nodeRects.length === 0) return
+    if (didFitRef.current || userInteractedRef.current || size.width <= 0 || allRects.length === 0) return
     const fit = fitNodesViewport(allRects, { width: size.width, height: Math.max(1, size.height - bottomInset) })
     if (fit) {
       didFitRef.current = true
@@ -1058,9 +1058,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
         >
           {imageNodes.map((node) => {
             const view = imagePreview[node.id] ?? node
-            const url = imageUrls[node.imageId]
-            const selected = selectedImageIds.has(node.id)
             const refIndex = inputImages.findIndex((image) => image.id === node.imageId)
+            const url = imageUrls[node.imageId] || (refIndex >= 0 ? inputImages[refIndex]?.dataUrl : undefined) || getCachedImage(node.imageId)
+            const selected = selectedImageIds.has(node.id)
             const nodeLabel = refIndex >= 0 ? `图${refIndex + 1}` : '素材'
             return (
               <div

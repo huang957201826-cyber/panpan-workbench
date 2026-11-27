@@ -311,8 +311,10 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                             multiple
                             className="sr-only"
                             onChange={(event) => {
-                              void addReferenceFiles(selected, event.target.files)
-                              event.target.value = ''
+                              const inputEl = event.target
+                              void addReferenceFiles(selected, inputEl.files).finally(() => {
+                                inputEl.value = ''
+                              })
                             }}
                           />
                         </label>
@@ -358,7 +360,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                         value={values[slot.key]}
                         previews={previews}
                         onChange={(value) => setValue(slot.key, value)}
-                        onFiles={(files) => { void addImages(slot, files) }}
+                        onFiles={(files) => addImages(slot, files)}
                         onRemoveImage={(imageId) => { void removeImage(slot, imageId) }}
                       />
                     ))}
@@ -401,7 +403,7 @@ function SkillSlotField({ slot, value, previews, onChange, onFiles, onRemoveImag
   value: SkillSlotValue | undefined
   previews: Record<string, string>
   onChange: (value: SkillSlotValue) => void
-  onFiles: (files: FileList | null) => void
+  onFiles: (files: FileList | null) => Promise<void> | void
   onRemoveImage: (imageId: string) => void
 }) {
   const inputClass = 'h-8 w-full rounded-lg border border-black/10 bg-white px-2 text-body-sm outline-none focus:border-black/30 dark:border-white/15 dark:bg-black/20 dark:focus:border-white/30'
@@ -463,7 +465,18 @@ function SkillSlotField({ slot, value, previews, onChange, onFiles, onRemoveImag
           {(slot.type === 'multi-image' || selected.length === 0) && (
             <label className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-lg border border-dashed border-black/20 text-caption text-slate-400 hover:border-black/40 dark:border-white/20 dark:hover:border-white/40">
               +
-              <input type="file" accept="image/*" multiple={slot.type === 'multi-image'} className="sr-only" onChange={(event) => { onFiles(event.target.files); event.target.value = '' }} />
+              <input
+                type="file"
+                accept="image/*"
+                multiple={slot.type === 'multi-image'}
+                className="sr-only"
+                onChange={(event) => {
+                  const inputEl = event.target
+                  Promise.resolve(onFiles(inputEl.files)).finally(() => {
+                    inputEl.value = ''
+                  })
+                }}
+              />
             </label>
           )}
         </div>

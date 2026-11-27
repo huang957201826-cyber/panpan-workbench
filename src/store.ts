@@ -6790,6 +6790,9 @@ const IMAGE_FILE_EXT_MIME: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
+  jfif: 'image/jpeg',
+  pjpeg: 'image/jpeg',
+  pjp: 'image/jpeg',
   webp: 'image/webp',
   gif: 'image/gif',
   bmp: 'image/bmp',
@@ -6797,6 +6800,8 @@ const IMAGE_FILE_EXT_MIME: Record<string, string> = {
   heic: 'image/heic',
   heif: 'image/heif',
   svg: 'image/svg+xml',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
 }
 
 async function detectImageMime(file: File): Promise<string | null> {
@@ -6805,7 +6810,7 @@ async function detectImageMime(file: File): Promise<string | null> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
   if (ext && IMAGE_FILE_EXT_MIME[ext]) return IMAGE_FILE_EXT_MIME[ext]
   try {
-    const buf = await file.slice(0, 12).arrayBuffer()
+    const buf = await file.slice(0, 16).arrayBuffer()
     const b = new Uint8Array(buf)
     if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
     if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
@@ -6816,6 +6821,14 @@ async function detectImageMime(file: File): Promise<string | null> {
       b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
       b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
     ) return 'image/webp'
+    if (
+      b.length >= 12 &&
+      b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70
+    ) {
+      const brand = String.fromCharCode(b[8], b[9], b[10], b[11]).toLowerCase()
+      if (brand === 'avif' || brand === 'avis') return 'image/avif'
+      if (brand === 'heic' || brand === 'heix' || brand === 'hevc' || brand === 'hevx' || brand === 'mif1' || brand === 'msf1') return 'image/heic'
+    }
   } catch { /* ignore */ }
   return null
 }
@@ -6824,7 +6837,7 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
   const detectedMime = await detectImageMime(file)
   if (!detectedMime) return null
   let source: Blob = file.type === detectedMime ? file : new Blob([file], { type: detectedMime })
-  let needsCompress = file.size > MAX_INPUT_IMAGE_BYTES
+  let needsCompress = file.size > MAX_INPUT_IMAGE_BYTES || detectedMime === 'image/heic' || detectedMime === 'image/heif'
   let bitmap: ImageBitmap | null = null
   try {
     bitmap = await createImageBitmap(file)
@@ -6839,7 +6852,7 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
       const ctx = canvas.getContext('2d')
       if (ctx) {
         ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-        const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+        const type = detectedMime === 'image/png' ? 'image/png' : 'image/jpeg'
         const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.9))
         if (compressed) source = compressed
       }
@@ -6854,7 +6867,13 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
     return null
   }
   const dataUrl = await blobToDataUrl(source)
-  const id = await storeImage(dataUrl, 'upload')
+  let id: string
+  try {
+    id = await storeImage(dataUrl, 'upload')
+  } catch (err) {
+    console.warn('[panpan] storeImage failed, falling back to in-memory image id:', err)
+    id = `mem-upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  }
   cacheImage(id, dataUrl)
   // 本地添加的图片即使与链接添加的内容相同，也不再沿用当时的链接，以免提交已过期的链接
   forgetImageSourceUrl(id)

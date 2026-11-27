@@ -54,8 +54,8 @@ export function payloadToDataUrl(mime: string, bytes: Uint8Array): string {
 }
 
 /** 响应格式：4 字节小端 JSON 长度 + 元数据 JSON + 文件内容；空响应表示不存在 */
-function decodeFile(res: ArrayBuffer): { meta: FileMeta; bytes: Uint8Array } | undefined {
-  const buf = new Uint8Array(res)
+function decodeFile(res: ArrayBuffer | Uint8Array | number[]): { meta: FileMeta; bytes: Uint8Array } | undefined {
+  const buf = res instanceof Uint8Array ? res : new Uint8Array(res)
   if (!buf.length) return undefined
   const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(0, true)
   const meta = JSON.parse(new TextDecoder().decode(buf.subarray(4, 4 + len))) as FileMeta
@@ -70,7 +70,9 @@ function putFile(cmd: string, id: string, dataUrl: string, meta: Record<string, 
     if (Number.isFinite(value)) headers[`x-${key}`] = String(value)
   }
   if (meta.source === 'upload' || meta.source === 'generated' || meta.source === 'mask') headers['x-source'] = meta.source
-  return call<null>(cmd, payload.bytes, { headers })
+  const isAndroidRuntime = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+  const body = isAndroidRuntime ? { base64: bytesToBase64(payload.bytes) } : payload.bytes
+  return call<null>(cmd, body, { headers })
 }
 
 // ===== Tasks =====

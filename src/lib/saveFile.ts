@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ensureDiskSpace } from './diskSpace'
 import { ensureImageFileExtension, normalizeImageFileName } from './exportFileName'
-import { isTauri } from './platform'
+import { isAndroid, isTauri, toIpcBinaryBody } from './platform'
 import { throwIfAborted } from './serverSentEvents'
 
 /** 写入大文件时的取消信号与进度回调（已写入字节数、总字节数），仅客户端分块写入时生效 */
@@ -57,13 +57,14 @@ function normalizeImageSaveName(fileName: string, data: Blob | Uint8Array) {
 async function writeInChunks(id: number, data: Blob | Uint8Array, opts?: SaveOptions) {
   try {
     const size = data instanceof Blob ? data.size : data.byteLength
-    for (let offset = 0; offset < size; offset += CHUNK_SIZE) {
+    const chunkSize = isAndroid ? 1024 * 1024 : CHUNK_SIZE
+    for (let offset = 0; offset < size; offset += chunkSize) {
       throwIfAborted(opts?.signal)
       const chunk = data instanceof Blob
-        ? new Uint8Array(await data.slice(offset, offset + CHUNK_SIZE).arrayBuffer())
-        : data.subarray(offset, offset + CHUNK_SIZE)
-      await invoke('save_write', chunk, { headers: { 'x-id': String(id) } })
-      opts?.onProgress?.(Math.min(offset + CHUNK_SIZE, size), size)
+        ? new Uint8Array(await data.slice(offset, offset + chunkSize).arrayBuffer())
+        : data.subarray(offset, offset + chunkSize)
+      await invoke('save_write', toIpcBinaryBody(chunk), { headers: { 'x-id': String(id) } })
+      opts?.onProgress?.(Math.min(offset + chunkSize, size), size)
     }
     // 取消后不再提交，由下方丢弃临时文件
     throwIfAborted(opts?.signal)

@@ -158,7 +158,7 @@ export function assetNodesToArtboards(nodes: CanvasImageNode[], taskImageIds: Se
     .map((node, index) => ({
       id: `asset:${node.id}`,
       title: `素材 图${index + 1}`,
-      imageUrl: '',
+      imageUrl: getCachedImage(node.imageId) ?? '',
       imageId: node.imageId,
       aspectRatio: assetAspectRatio(node.w, node.h),
       resolution: `素材 图${index + 1}`,
