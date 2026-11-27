@@ -75,7 +75,7 @@ jobs:
             -output src-tauri/target/universal-apple-darwin/release/gpt-image-playground-cli
 
       - name: Build macOS Universal App & DMG
-        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Package & Name macOS Installers
         id: pkg_macos
@@ -154,8 +154,6 @@ jobs:
 
       - name: Initialize Tauri iOS project & verify iOS Rust compilation
         run: |
-          # Work around num_threads 0.1.7 + libc 0.2.190 mach_task_self compile issue on iOS targets
-          cargo update --manifest-path src-tauri/Cargo.toml -p libc --precise 0.2.169
           npx tauri ios init --ci
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios-sim

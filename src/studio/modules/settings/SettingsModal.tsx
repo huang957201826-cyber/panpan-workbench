@@ -2276,7 +2276,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="file"
                         accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream"
                         multiple
-                        className="hidden"
+                        className="sr-only"
                         onChange={(e) => void handleImportData(e)}
                       />
                     </section>

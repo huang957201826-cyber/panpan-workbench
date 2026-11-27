@@ -227,6 +227,10 @@ pub async fn http_send(
     let mut cancel = subscribe(&state, &meta.id)?;
     let body = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect(),
         _ => Vec::new(),
     };
     let (req, proxied) = match build(&meta, body, &proxy.route()) {

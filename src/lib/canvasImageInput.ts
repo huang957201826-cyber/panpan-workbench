@@ -23,7 +23,14 @@ export async function addImageFileToCanvas(canvasId: string, file: File, positio
     const canvas = ws.canvases.find((item) => item.id === targetCanvasId)
     if (!canvas) return image
     const existing = canvas.imageNodes?.find((node) => node.imageId === image.id)
-    if (existing) return image
+    if (existing) {
+      if (canvas.removedImageIds?.includes(image.id)) {
+        useWorkspaceStore.getState().updateCanvas(targetCanvasId, {
+          removedImageIds: canvas.removedImageIds.filter((id) => id !== image.id),
+        })
+      }
+      return image
+    }
     const size = await new Promise<{ width: number; height: number }>((resolve) => {
       const probe = new Image()
       probe.onload = () => resolve(fitCanvasImageNodeSize(probe.naturalWidth, probe.naturalHeight))

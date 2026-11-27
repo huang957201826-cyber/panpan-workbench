@@ -309,7 +309,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                             type="file"
                             accept="image/*"
                             multiple
-                            className="hidden"
+                            className="sr-only"
                             onChange={(event) => {
                               void addReferenceFiles(selected, event.target.files)
                               event.target.value = ''
@@ -463,7 +463,7 @@ function SkillSlotField({ slot, value, previews, onChange, onFiles, onRemoveImag
           {(slot.type === 'multi-image' || selected.length === 0) && (
             <label className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-lg border border-dashed border-black/20 text-caption text-slate-400 hover:border-black/40 dark:border-white/20 dark:hover:border-white/40">
               +
-              <input type="file" accept="image/*" multiple={slot.type === 'multi-image'} className="hidden" onChange={(event) => { onFiles(event.target.files); event.target.value = '' }} />
+              <input type="file" accept="image/*" multiple={slot.type === 'multi-image'} className="sr-only" onChange={(event) => { onFiles(event.target.files); event.target.value = '' }} />
             </label>
           )}
         </div>
