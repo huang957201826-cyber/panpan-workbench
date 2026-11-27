@@ -105,8 +105,8 @@ export function CanvasCapsuleBar({
   }
 
   return (
-    <div className="pointer-events-none absolute left-0 right-0 top-3 z-20 flex justify-center">
-      <div data-canvas-capsule className="pointer-events-auto relative flex h-9 max-w-[64%] items-center rounded-full border border-black/[0.04] bg-white/90 text-[11.5px] shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-[#141620]/90">
+    <div className="pointer-events-none absolute left-0 right-0 top-3 z-20 flex justify-center px-3">
+      <div data-canvas-capsule className="pointer-events-auto relative flex h-9 max-w-full md:max-w-[64%] items-center rounded-full border border-black/[0.04] bg-white/90 text-[11.5px] shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-[#141620]/90">
         {overflow.left && (
           <>
             <div className="pointer-events-none absolute inset-y-0 left-0 w-8 rounded-l-full bg-gradient-to-r from-white/95 via-white/70 to-transparent dark:from-[#141620]/95 dark:via-[#141620]/70" />

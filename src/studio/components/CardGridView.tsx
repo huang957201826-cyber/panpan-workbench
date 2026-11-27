@@ -218,12 +218,12 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                   </div>
                 )}
 
-                {/* Hover Action Overlay: Pure Monochrome buttons */}
+                {/* Hover Action Overlay: Pure Monochrome buttons (always visible on coarse touch devices) */}
                 <div
                   onClick={(e) => e.stopPropagation()}
                   className={`absolute top-2 right-2 flex items-center gap-1 transition-opacity z-10 ${selectionMode
                     ? (artboard.taskId && selectedTaskIds?.has(artboard.taskId) ? 'opacity-100' : 'hidden')
-                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}
+                    : 'opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}
                 >
                   {/* Pin as Reference Image to Bottom Bar! */}
                   {onSetAsReference && artboard.imageId && (

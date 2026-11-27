@@ -55,6 +55,8 @@ interface BottomPromptBarProps {
   onManageModels?: () => void;
   viewMode?: 'canvas' | 'grid';
   onViewModeChange?: (mode: 'canvas' | 'grid') => void;
+  /** 手机窄屏模式：折叠参数胶囊为摘要条，点击展开完整参数 */
+  compactMobile?: boolean;
 }
 
 export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
@@ -79,6 +81,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   onManageModels,
   viewMode = 'canvas',
   onViewModeChange,
+  compactMobile = false,
   modelOptions = [{ id: 'gpt-image-2.5', label: 'gpt-image-2.5' }],
   aspectRatios = [
     { label: '1:1', res: '1024x1024' },
@@ -116,6 +119,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   const startPromptHeightRef = useRef(64);
 
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [mobileParamsExpanded, setMobileParamsExpanded] = useState(false);
   const [showSizePicker, setShowSizePicker] = useState(false);
   const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [builtinSkills, setBuiltinSkills] = useState<Skill[]>([]);
@@ -333,7 +337,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
   // 输入台宽度随窗口自适应，大屏封顶保证行长可读；缩放控件在输入台下方的右侧角落
   return (
-    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 z-30 shrink-0 pointer-events-none">
+    <div className={`w-full max-w-[1320px] mx-auto ${compactMobile ? 'px-1' : 'px-4 lg:px-6'} z-30 shrink-0 pointer-events-none`}>
       {/* =========================================================================
           1. FLOATING REFERENCE IMAGE SHELF (Exact replica of user reference image)
           ========================================================================= */}
@@ -552,8 +556,22 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
         {/* Single-line Pill Options Row (Strictly matching user screenshot) */}
         <div data-params-row className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-black/[0.04] dark:border-white/[0.05] relative text-caption select-none">
+          {compactMobile && (
+            <button
+              type="button"
+              onClick={() => setMobileParamsExpanded((v) => !v)}
+              aria-expanded={mobileParamsExpanded}
+              className="flex items-center gap-1.5 px-2.5 py-1 min-h-[32px] max-w-[65%] rounded-full bg-black/[0.04] dark:bg-white/[0.07] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+              title="展开或收起生成参数"
+            >
+              <span className="truncate font-mono">
+                {params.model} · {aspectRatios.find((item) => item.res === params.dimension)?.label ?? params.dimension} · {params.count}张
+              </span>
+              <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform ${mobileParamsExpanded ? 'rotate-180' : ''}`} />
+            </button>
+          )}
           {/* Left: Scrollable single row of pills (no wrap, strictly 1 line) */}
-          <div className="contents">
+          <div className={compactMobile && !mobileParamsExpanded ? 'hidden' : 'contents'}>
             {/* 1. Model Capsule: gpt-image-2.5 ⌵ */}
             <div className="relative shrink-0">
               <button

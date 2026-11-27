@@ -898,12 +898,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div
         ref={modalRef}
         onClick={(e) => e.stopPropagation()}
-        className="w-[820px] max-w-[96vw] h-[660px] max-h-[90vh] rounded-3xl flex flex-col border border-black/[0.08] dark:border-white/[0.08] shadow-2xl overflow-hidden text-slate-800 dark:text-slate-100 bg-[#fbfcfd] dark:bg-[#141620]"
+        className="w-full h-full max-w-full max-h-full rounded-none md:w-[820px] md:max-w-[96vw] md:h-[660px] md:max-h-[90vh] md:rounded-3xl flex flex-col border-0 md:border border-black/[0.08] dark:border-white/[0.08] shadow-2xl overflow-hidden text-slate-800 dark:text-slate-100 bg-[#fbfcfd] dark:bg-[#141620]"
       >
         {/* =========================================================================
             MODAL HEADER
             ========================================================================= */}
-        <div className="h-[54px] px-6 flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.07] bg-white dark:bg-[#161822] shrink-0">
+        <div className="studio-safe-top min-h-[54px] px-4 md:px-6 flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.07] bg-white dark:bg-[#161822] shrink-0">
           <div className="flex items-center gap-2.5">
             <h3 className="text-title font-bold text-slate-900 dark:text-white tracking-tight">
               设置
@@ -919,7 +919,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span className="text-caption font-mono text-slate-400 tabular-nums">v{__APP_VERSION__}</span>
             <button
               onClick={handleRequestClose}
-              className="w-8 h-8 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08] text-slate-400 hover:text-slate-700 dark:hover:text-white flex items-center justify-center transition cursor-pointer"
+              className="w-9 h-9 md:w-8 md:h-8 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08] text-slate-400 hover:text-slate-700 dark:hover:text-white flex items-center justify-center transition cursor-pointer"
               title="关闭设置"
             >
               <X className="w-4 h-4 stroke-[1.8]" />
@@ -930,10 +930,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* =========================================================================
             MODAL BODY: LEFT 5-TAB NAVIGATION + RIGHT CONTENT
             ========================================================================= */}
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Left Vertical Sub-Tabs (5 clean categories, AI工具集成 removed) */}
-          <aside className="w-[180px] shrink-0 p-3 border-r border-black/[0.05] dark:border-white/[0.06] bg-white/75 dark:bg-[#11131b] flex flex-col justify-between">
-            <div className="space-y-1 text-caption">
+        <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+          {/* Left Vertical Sub-Tabs on Desktop/Tablet, Horizontal Segmented Tabs on Phone */}
+          <aside className="w-full md:w-[180px] shrink-0 px-3 py-2 md:p-3 border-b md:border-b-0 md:border-r border-black/[0.05] dark:border-white/[0.06] bg-white/75 dark:bg-[#11131b] flex flex-row md:flex-col justify-between">
+            <div className="flex md:block items-center gap-1 md:gap-0 md:space-y-1 overflow-x-auto no-scrollbar text-caption w-full">
               {[
                 { id: 'api', label: 'API 配置', icon: Key },
                 { id: 'general', label: '通用', icon: Sliders },
@@ -950,7 +950,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       setConfirmCloseUnsaved(false);
                       setActiveTab(item.id as SettingsTab);
                     }}
-                    className={`w-full h-10 px-3.5 rounded-full flex items-center gap-2.5 transition-all cursor-pointer text-left font-medium whitespace-nowrap ${
+                    className={`shrink-0 md:w-full h-9 md:h-10 px-3 md:px-3.5 rounded-full flex items-center gap-2 md:gap-2.5 transition-all cursor-pointer text-left font-medium whitespace-nowrap ${
                       isActive
                         ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
@@ -963,14 +963,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               })}
             </div>
 
-            <div className="px-2 pt-3 border-t border-black/[0.04] dark:border-white/[0.05] text-caption text-slate-400 leading-relaxed">
+            <div className="hidden md:block px-2 pt-3 border-t border-black/[0.04] dark:border-white/[0.05] text-caption text-slate-400 leading-relaxed">
               所有密钥与偏好仅保存在本地设备。
             </div>
           </aside>
 
           {/* Right Content Stage */}
           <div className="flex-1 flex flex-col min-w-0 bg-[#f3f4f8] dark:bg-[#0c0e14]">
-            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 studio-safe-bottom">
               {/* =====================================================================
                   TAB 1: API CONFIGURATION
                   ===================================================================== */}

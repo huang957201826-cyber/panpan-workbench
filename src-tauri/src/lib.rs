@@ -351,7 +351,12 @@ pub fn run() {
                 .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
                 .and_then(|key| key.get_u32("AppsUseLightTheme"))
                 .is_ok_and(|light| light == 0);
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            let dark = std::process::Command::new("defaults")
+                .args(["read", "-g", "AppleInterfaceStyle"])
+                .output()
+                .is_ok_and(|out| out.status.success());
+            #[cfg(not(any(windows, target_os = "macos")))]
             let dark = false;
             let bg = if dark {
                 tauri::window::Color(3, 7, 18, 255)
@@ -377,7 +382,7 @@ pub fn run() {
                     })
                     .unwrap_or((1280.0, 820.0));
                 // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
-                let builder = tauri::WebviewWindowBuilder::from_config(
+                let mut builder = tauri::WebviewWindowBuilder::from_config(
                     app.handle(),
                     &app.config().app.windows[0],
                 )?
@@ -385,6 +390,14 @@ pub fn run() {
                 .center()
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .background_color(bg);
+                #[cfg(target_os = "macos")]
+                {
+                    // macOS 使用系统原生透明标题栏叠加，保留左上角原生红黄绿灯
+                    builder = builder
+                        .decorations(true)
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
                 match webview_dir {
                     Some(dir) => builder.data_directory(dir).build()?,
                     None => builder.build()?,

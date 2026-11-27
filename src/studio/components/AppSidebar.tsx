@@ -50,6 +50,10 @@ interface AppSidebarProps {
   enabledActivities?: ActiveActivity[];
   /** 项目新建/重命名/删除入口 */
   canManageProjects?: boolean;
+  /** 手机窄屏时隐藏左侧 68px 导航轨（改由底部 Tab Bar 承接） */
+  hideRail?: boolean;
+  /** 平板/手机下项目抽屉以覆盖式 Slide-over 浮层展开，避免挤压画布 */
+  overlayDrawer?: boolean;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -66,6 +70,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   isCollapsed,
   enabledActivities = ['home', 'projects', 'workflow', 'skills'],
   canManageProjects = true,
+  hideRail = false,
+  overlayDrawer = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -97,8 +103,13 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     setEditingProjectId(null);
   };
 
+  const showProjectDrawer = !isCollapsed && activeActivity === 'projects';
+
+  if (hideRail && !showProjectDrawer) return null;
+
   return (
     <div className="ui-scale-chrome relative z-30 flex h-full shrink-0 select-none text-slate-800 dark:text-slate-200">
+      {!hideRail && (
       <aside data-app-rail className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center border-r border-black/[0.05] bg-white py-6 dark:border-white/[0.06] dark:bg-[#10121a]">
         <div className="flex h-9 w-9 items-center justify-center text-slate-900 dark:text-white" title="盼盼工作台 · STUDIO">
           <AppLogo size={24} className="h-6 w-6" />
@@ -192,9 +203,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           </button>
         </div>
       </aside>
+      )}
 
-      {!isCollapsed && activeActivity === 'projects' && (
-        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} z-10 transition-all duration-150`}>
+      {showProjectDrawer && (
+        <div
+          className={
+            overlayDrawer
+              ? `fixed inset-0 z-40 flex ${hideRail ? '' : 'pl-[68px]'}`
+              : 'contents'
+          }
+        >
+        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} ${overlayDrawer ? 'z-50 shadow-2xl' : 'z-10'} transition-all duration-150`}>
           <div className={SIDEBAR_HEADER_CLASS}>
             <div>
               <h2 className={SIDEBAR_TITLE_CLASS}>项目</h2>
@@ -252,7 +271,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               return (
                 <div
                   key={project.id}
-                  onClick={() => onSelectProject(project.id)}
+                  onClick={() => {
+                    onSelectProject(project.id);
+                    if (overlayDrawer) onCollapse();
+                  }}
                   onContextMenu={(event) => {
                     if (!canManageProjects || project.isFavorites) return;
                     event.preventDefault();
@@ -310,7 +332,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                           event.stopPropagation();
                           setRowMenu({ x: event.clientX, y: event.clientY, projectId: project.id, name: project.name });
                         }}
-                        className={`rounded p-0.5 opacity-0 transition group-hover:opacity-100 ${isActive ? 'text-white/70 hover:bg-white/15' : 'text-slate-500 hover:bg-black/10 dark:hover:bg-white/15'}`}
+                        className={`rounded p-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100 ${isActive ? 'text-white/70 hover:bg-white/15' : 'text-slate-500 hover:bg-black/10 dark:hover:bg-white/15'}`}
                         title="更多项目操作"
                         aria-label="更多项目操作"
                       >
@@ -337,6 +359,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               <span>新建项目</span>
             </button>
           </div>
+        </div>
+        {overlayDrawer && (
+          <button
+            type="button"
+            aria-label="关闭项目抽屉"
+            onClick={onCollapse}
+            className="flex-1 bg-black/25 backdrop-blur-[1px] dark:bg-black/45"
+          />
+        )}
         </div>
       )}
 

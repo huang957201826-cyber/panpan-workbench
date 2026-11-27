@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPending } from '../store'
 import { deleteTask, deleteTasks, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCanvasTasks } from '../hooks/useCanvasTasks'
+import { useViewportLayout } from '../hooks/useViewportLayout'
 import { isMobile, isTauri } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
@@ -76,7 +77,34 @@ export default function StudioShell() {
   const [activeActivity, setActiveActivity] = useState<ActiveActivity>(() =>
     localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
   )
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
+  const viewportLayout = useViewportLayout()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 1080)
+  const [mobileCanvasSheetOpen, setMobileCanvasSheetOpen] = useState(false)
+  const prevTierRef = useRef(viewportLayout.tier)
+  useEffect(() => {
+    if (prevTierRef.current !== viewportLayout.tier) {
+      prevTierRef.current = viewportLayout.tier
+      if (viewportLayout.tier !== 'desktop') {
+        setSidebarCollapsed(true)
+      }
+      if (viewportLayout.tier !== 'phone') {
+        setMobileCanvasSheetOpen(false)
+      }
+    }
+  }, [viewportLayout.tier])
+  useEffect(() => {
+    if (!mobileCanvasSheetOpen && (sidebarCollapsed || viewportLayout.isDesktop)) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (mobileCanvasSheetOpen) {
+        setMobileCanvasSheetOpen(false)
+      } else if (!sidebarCollapsed && !viewportLayout.isDesktop) {
+        setSidebarCollapsed(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mobileCanvasSheetOpen, sidebarCollapsed, viewportLayout.isDesktop])
   const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -747,8 +775,13 @@ export default function StudioShell() {
     })
   }
 
+  const activeProjectCanvases = useMemo(
+    () => workspace.canvases.filter((canvas) => canvas.projectId === activeProject?.id && !isFavoritesCanvas(canvas.id)),
+    [workspace.canvases, activeProject?.id],
+  )
+
   return (
-    <div className="studio-root">
+    <div className={`studio-root ${isMobile ? 'studio-safe-top' : ''}`}>
       <TitleBar
         currentProjectTitle={activeProject?.name ?? '盼盼工作台'}
         folders={folders}
@@ -823,11 +856,82 @@ export default function StudioShell() {
           isCollapsed={sidebarCollapsed || activeActivity === 'home' || activeActivity === 'skills' || activeActivity === 'workflow'}
           enabledActivities={['home', 'projects', 'workflow', 'skills']}
           canManageProjects={true}
+          hideRail={viewportLayout.isPhone}
+          overlayDrawer={!viewportLayout.isDesktop}
         />
 
         <div className="relative flex flex-1 overflow-hidden">
           <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {sidebarCollapsed && (
+          {viewportLayout.isPhone && (
+            <header
+              data-mobile-topbar
+              className="z-30 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] bg-white/95 px-2.5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeActivity !== 'projects') setActiveActivity('projects')
+                  setSidebarCollapsed((value) => !value)
+                }}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-700 hover:bg-black/[0.05] dark:text-slate-200 dark:hover:bg-white/[0.08]"
+                title="打开项目抽屉"
+                aria-label="打开项目抽屉"
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                  <path d="M2.5 5h13M2.5 9h13M2.5 13h9" />
+                </svg>
+              </button>
+
+              {activeActivity === 'projects' && activeCanvas && !isFavoritesCanvas(activeCanvas.id) ? (
+                <button
+                  type="button"
+                  onClick={() => setMobileCanvasSheetOpen(true)}
+                  className="flex min-w-0 max-w-[60%] items-center gap-1.5 rounded-full border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium text-slate-800 dark:border-white/[0.1] dark:bg-white/[0.06] dark:text-slate-100"
+                  aria-label="切换画布"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-900 dark:bg-white" />
+                  <span className="truncate">{activeCanvas.name}</span>
+                  <span className="text-[11px] text-slate-400">▾</span>
+                </button>
+              ) : (
+                <span className="truncate text-[14px] font-semibold text-slate-800 dark:text-slate-100">
+                  {activeActivity === 'home'
+                    ? '盼盼工作台'
+                    : activeActivity === 'workflow'
+                      ? '工作流'
+                      : activeActivity === 'skills'
+                        ? '技能库'
+                        : activeProject?.name ?? '盼盼工作台'}
+                </span>
+              )}
+
+              <div className="flex shrink-0 items-center gap-1">
+                {activeActivity === 'projects' && activeCanvas && (
+                  <button
+                    type="button"
+                    onClick={() => useWorkspaceStore.getState().setViewMode(workspace.viewMode === 'canvas' ? 'grid' : 'canvas')}
+                    className="flex h-10 items-center justify-center rounded-xl px-2.5 text-[12px] font-medium text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+                    title={workspace.viewMode === 'canvas' ? '切换到卡片网格' : '切换到无限画布'}
+                  >
+                    {workspace.viewMode === 'canvas' ? '网格' : '画布'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+                  title="设置"
+                  aria-label="设置"
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+              </div>
+            </header>
+          )}
+          {sidebarCollapsed && !viewportLayout.isPhone && (
             <div className="absolute left-4 top-14 z-40">
               <button
                 type="button"
@@ -918,9 +1022,9 @@ export default function StudioShell() {
                 </div>
               ) : (
                 <>
-                  {!isFavoritesCanvas(activeCanvas?.id) && (
+                  {!isFavoritesCanvas(activeCanvas?.id) && !viewportLayout.isPhone && (
                     <CanvasCapsuleBar
-                      canvases={workspace.canvases.filter((canvas) => canvas.projectId === activeProject?.id && !isFavoritesCanvas(canvas.id))}
+                      canvases={activeProjectCanvases}
                       activeCanvasId={activeCanvas?.id ?? ''}
                       editingCanvasId={editingCanvasId}
                       onEditingChange={setEditingCanvasId}
@@ -1000,7 +1104,18 @@ export default function StudioShell() {
             <div
               ref={bottomBarRef}
               data-input-bar
-              className="ui-scale-chrome absolute bottom-4 left-0 right-0 z-30 pointer-events-none flex justify-center"
+              className={`ui-scale-chrome absolute left-0 right-0 z-30 pointer-events-none flex justify-center ${
+                viewportLayout.isPhone ? 'px-2' : 'bottom-4 studio-safe-bottom'
+              }`}
+              style={
+                viewportLayout.isPhone
+                  ? {
+                      bottom: viewportLayout.keyboardOpen
+                        ? `${Math.max(8, viewportLayout.keyboardInset + 8)}px`
+                        : 'calc(64px + env(safe-area-inset-bottom, 0px))',
+                    }
+                  : undefined
+              }
             >
               <BottomPromptBar
                 prompt={prompt}
@@ -1032,7 +1147,92 @@ export default function StudioShell() {
                 onManageModels={() => setShowSettings(true, 'api')}
                 viewMode={workspace.viewMode}
                 onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
+                compactMobile={viewportLayout.isPhone}
               />
+            </div>
+          )}
+
+          {viewportLayout.isPhone && !viewportLayout.keyboardOpen && (
+            <nav
+              data-mobile-tabbar
+              aria-label="主导航"
+              className="studio-safe-bottom z-30 flex shrink-0 items-center justify-around border-t border-black/[0.06] bg-white/95 px-2 pt-1.5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
+            >
+              {(
+                [
+                  { id: 'home', label: '首页' },
+                  { id: 'projects', label: '工作区' },
+                  { id: 'workflow', label: '工作流' },
+                  { id: 'skills', label: '技能库' },
+                ] as const
+              ).map((tab) => {
+                const active = activeActivity === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveActivity(tab.id)}
+                    className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-medium transition ${
+                      active
+                        ? 'text-slate-900 dark:text-white'
+                        : 'text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200'
+                    }`}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-slate-900 dark:bg-white' : 'bg-transparent'}`} />
+                    <span>{tab.label}</span>
+                  </button>
+                )
+              })}
+            </nav>
+          )}
+
+          {viewportLayout.isPhone && mobileCanvasSheetOpen && activeProject && (
+            <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/35 backdrop-blur-[1px]" onClick={() => setMobileCanvasSheetOpen(false)}>
+              <div
+                className="studio-safe-bottom-padded max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-black/10 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-[#141720]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-black/15 dark:bg-white/20" />
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-[14px] font-semibold text-slate-900 dark:text-white">
+                    {activeProject.name} · 画布 ({activeProjectCanvases.length})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      createStudioCanvas(activeProject.id)
+                      setMobileCanvasSheetOpen(false)
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white dark:bg-white dark:text-slate-900"
+                  >
+                    + 新建画布
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {activeProjectCanvases.map((canvas) => {
+                    const isCurrent = canvas.id === activeCanvas?.id
+                    return (
+                      <button
+                        key={canvas.id}
+                        type="button"
+                        onClick={() => {
+                          void switchCanvas(canvas.id)
+                          setMobileCanvasSheetOpen(false)
+                        }}
+                        className={`flex min-h-[44px] w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-[13px] transition ${
+                          isCurrent
+                            ? 'bg-slate-900 font-medium text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-black/[0.03] text-slate-700 hover:bg-black/[0.06] dark:bg-white/[0.05] dark:text-slate-200'
+                        }`}
+                      >
+                        <span className="truncate">{canvas.name}</span>
+                        {isCurrent && <span className="text-[11px] opacity-75">当前</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 

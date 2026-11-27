@@ -3,20 +3,42 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 
 export const isTauri = detectTauri()
 
-/** 是否运行在移动端（Android / iOS / iPadOS） */
-export const isMobile = typeof navigator !== 'undefined' && (
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+/** 是否运行在 iPadOS */
+export const isIPadOS = typeof navigator !== 'undefined' && (
+  /iPad/i.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+)
+
+/** 是否运行在 iPhone / iPod */
+export const isIOSPhone = typeof navigator !== 'undefined' && /iPhone|iPod/i.test(navigator.userAgent)
+
+/** 是否运行在 Apple 移动端（iOS / iPadOS） */
+export const isIOS = isIOSPhone || isIPadOS
+
+/** 是否运行在 Android（手机 / 平板 / 折叠屏） */
+export const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
+/** 是否运行在移动端（Android / iOS / iPadOS） */
+export const isMobile = isIOS || isAndroid
+
+/** 是否运行在 macOS 桌面端 */
+export const isMacOS = typeof navigator !== 'undefined' && !isMobile && /Mac/i.test(navigator.platform)
+
+/** 是否支持粗指针/触控交互 */
+export const isTouchDevice = typeof window !== 'undefined' && (
+  isMobile
+  || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
+  || (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches)
 )
 
 /** 是否运行在桌面端但无原生保存文件对话框（macOS / Linux） */
 export const isNonWindowsDesktop = typeof navigator !== 'undefined' && !isMobile && !/Win/i.test(navigator.platform)
 
-/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版与移动端为 0 */
-export const TITLEBAR_HEIGHT = isTauri && !isMobile ? 32 : 0
+/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版与移动端为 0，macOS 原生透明叠层为 38 */
+export const TITLEBAR_HEIGHT = isTauri && !isMobile ? (isMacOS ? 38 : 32) : 0
 
 /** 提交快捷键提示：macOS 显示 ⌘↵，其余平台显示 Ctrl+↵；只用于展示，实际按键判定见各处 onKeyDown */
-export const submitShortcutHint = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵'
+export const submitShortcutHint = isMacOS ? '⌘↵' : 'Ctrl+↵'
 
 interface HttpHead {
   status: number

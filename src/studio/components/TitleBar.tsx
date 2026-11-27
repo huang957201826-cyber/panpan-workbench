@@ -1,4 +1,5 @@
 import React from 'react'
+import { isMacOS, isMobile } from '../../lib/platform'
 import type { ProjectFolder, ProjectScheme } from '../types.ts'
 
 interface TitleBarProps {
@@ -27,7 +28,7 @@ interface TitleBarProps {
   showWindowControls?: boolean
 }
 
-/** 36px 沉浸式顶栏：无品牌文字、无菜单，只保留拖拽区与系统窗口三键 */
+/** 沉浸式顶栏：移动端不渲染释放空间；macOS 使用 38px 透明叠层并给左上角原生红黄绿灯留白；Windows 保留自绘三键 */
 export const TitleBar: React.FC<TitleBarProps> = ({
   isMaximized,
   onToggleMaximize,
@@ -36,15 +37,21 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onTitleBarMouseDown,
   showWindowControls = true,
 }) => {
+  if (isMobile) return null
+  const useMacOverlay = isMacOS
+  const renderWinControls = showWindowControls && !useMacOverlay
+
   return (
     <header
       onMouseDown={onTitleBarMouseDown}
       data-tauri-drag-region
-      className="ui-scale-chrome relative z-40 flex h-[36px] w-full shrink-0 select-none items-center justify-between border-b border-black/[0.04] bg-white/70 px-3 text-slate-700 backdrop-blur-md transition-colors dark:border-white/[0.05] dark:bg-[#10121a]/70 dark:text-slate-300"
+      className={`ui-scale-chrome relative z-40 flex w-full shrink-0 select-none items-center justify-between border-b border-black/[0.04] bg-white/70 px-3 text-slate-700 backdrop-blur-md transition-colors dark:border-white/[0.05] dark:bg-[#10121a]/70 dark:text-slate-300 ${
+        useMacOverlay ? 'h-[38px] pl-[76px]' : 'h-[36px]'
+      }`}
     >
       <div className="h-full w-12" data-tauri-drag-region />
       <div className="pointer-events-none mx-4 h-full flex-1 cursor-default" data-tauri-drag-region />
-      {showWindowControls && (
+      {renderWinControls && (
         <div className="z-10 flex h-full items-center">
           <div className="-mr-2 flex h-full items-center border-l border-black/[0.06] dark:border-white/[0.08]">
             <button

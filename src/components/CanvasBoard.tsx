@@ -115,6 +115,8 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   const placeholderCanvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef(viewport)
   const panRef = useRef<{ startX: number; startY: number; base: typeof viewport } | null>(null)
+  const touchPointsRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null)
   const userInteractedRef = useRef(false)
   const didFitRef = useRef(false)
   viewportRef.current = viewport
@@ -583,6 +585,25 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }, [showPerf])
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointsRef.current.size === 2) {
+        const [a, b] = Array.from(touchPointsRef.current.values())
+        pinchRef.current = {
+          dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+          midX: (a.x + b.x) / 2,
+          midY: (a.y + b.y) / 2,
+        }
+        panRef.current = null
+        setBox(null)
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
+      }
+      if ((event.target as HTMLElement).closest('[data-canvas-node],[data-canvas-image-node]')) return
+      panRef.current = { startX: event.clientX, startY: event.clientY, base: viewport }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
     if (event.button !== 0 && event.button !== 1) return
     const panWithPointer = event.button === 1 || spaceDown
     if (!panWithPointer && (event.target as HTMLElement).closest('[data-canvas-node],[data-canvas-image-node]')) return
@@ -599,6 +620,29 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' && touchPointsRef.current.has(event.pointerId)) {
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointsRef.current.size === 2 && pinchRef.current) {
+        const [a, b] = Array.from(touchPointsRef.current.values())
+        const nextDist = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const nextMidX = (a.x + b.x) / 2
+        const nextMidY = (a.y + b.y) / 2
+        const rect = event.currentTarget.getBoundingClientRect()
+        const factor = nextDist / Math.max(1, pinchRef.current.dist)
+        const dx = nextMidX - pinchRef.current.midX
+        const dy = nextMidY - pinchRef.current.midY
+        userInteractedRef.current = true
+        const zoomed = zoomAtPoint(
+          viewportRef.current,
+          nextMidX - rect.left,
+          nextMidY - rect.top,
+          factor,
+        )
+        setViewport({ ...zoomed, x: zoomed.x + dx, y: zoomed.y + dy })
+        pinchRef.current = { dist: nextDist, midX: nextMidX, midY: nextMidY }
+        return
+      }
+    }
     if (box) {
       event.stopPropagation()
       const rect = event.currentTarget.getBoundingClientRect()
@@ -772,6 +816,16 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      touchPointsRef.current.delete(event.pointerId)
+      if (touchPointsRef.current.size < 2) {
+        pinchRef.current = null
+      }
+      if (touchPointsRef.current.size === 1) {
+        const [remaining] = Array.from(touchPointsRef.current.values())
+        panRef.current = { startX: remaining.x, startY: remaining.y, base: viewportRef.current }
+      }
+    }
     if (box) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       const rect = event.currentTarget.getBoundingClientRect()

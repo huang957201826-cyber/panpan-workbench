@@ -140,9 +140,40 @@ html.dark .studio-root ::-webkit-scrollbar-thumb {
 .studio-root button.h-\[26px\] { min-height: var(--tap-sm); }
 .studio-root button.h-\[28px\] { min-height: var(--tap-md); }
 
-/* 触屏/窄窗下限 */
+/* 触屏/窄窗下限：移动端与触控平板禁用 zoom 防止坐标系偏移，提升触控热区并防止 iOS 聚焦放大 */
 @media (max-width: 960px) {
   .studio-root .ui-scale-chrome { max-width: 100%; }
+}
+
+@media (max-width: 679px), (pointer: coarse) {
+  .studio-root .ui-scale-chrome {
+    zoom: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .studio-root {
+    --tap-sm: 40px;
+    --tap-md: 44px;
+  }
+  .studio-root textarea,
+  .studio-root input[type='text'],
+  .studio-root input[type='search'],
+  .studio-root input[type='url'],
+  .studio-root input[type='password'] {
+    font-size: 16px;
+  }
+}
+
+/* 安全区辅助类：用于移动端状态栏、灵动岛、Home Indicator 与 Android 导航栏/任务栏避让 */
+.studio-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.studio-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.studio-safe-bottom-padded {
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
 }
 
 
