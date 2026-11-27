@@ -867,20 +867,21 @@ export default function StudioShell() {
               data-mobile-topbar
               className="z-30 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] bg-white/95 px-2.5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  if (activeActivity !== 'projects') setActiveActivity('projects')
-                  setSidebarCollapsed((value) => !value)
-                }}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-700 hover:bg-black/[0.05] dark:text-slate-200 dark:hover:bg-white/[0.08]"
-                title="打开项目抽屉"
-                aria-label="打开项目抽屉"
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                  <path d="M2.5 5h13M2.5 9h13M2.5 13h9" />
-                </svg>
-              </button>
+              {activeActivity === 'projects' ? (
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed((value) => !value)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-700 hover:bg-black/[0.05] dark:text-slate-200 dark:hover:bg-white/[0.08]"
+                  title="打开项目抽屉"
+                  aria-label="打开项目抽屉"
+                >
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                    <path d="M2.5 5h13M2.5 9h13M2.5 13h9" />
+                  </svg>
+                </button>
+              ) : (
+                <div className="h-10 w-10 shrink-0" aria-hidden="true" />
+              )}
 
               {activeActivity === 'projects' && activeCanvas && !isFavoritesCanvas(activeCanvas.id) ? (
                 <button
@@ -1156,31 +1157,87 @@ export default function StudioShell() {
             <nav
               data-mobile-tabbar
               aria-label="主导航"
-              className="studio-safe-bottom z-30 flex shrink-0 items-center justify-around border-t border-black/[0.06] bg-white/95 px-2 pt-1.5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
+              className="studio-safe-bottom z-30 flex shrink-0 items-center justify-around border-t border-black/[0.06] bg-white/95 px-2 pt-1.5 pb-1 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
             >
               {(
                 [
-                  { id: 'home', label: '首页' },
-                  { id: 'projects', label: '工作区' },
-                  { id: 'workflow', label: '工作流' },
-                  { id: 'skills', label: '技能库' },
+                  {
+                    id: 'home',
+                    label: '首页',
+                    title: '首页灵感中心',
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M3 9.5L10 3L17 9.5V17C17 17.5523 16.5523 18 16 18H4C3.44772 18 3 17.5523 3 17V9.5Z" />
+                        <path d="M9 18V12H11V18" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'projects',
+                    label: '工作区',
+                    title: '工作区与设计方案',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                        <line x1="2" y1="6.5" x2="14" y2="6.5" />
+                        <line x1="6.5" y1="3" x2="6.5" y2="6.5" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'workflow',
+                    label: '工作流',
+                    title: '工作流',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="2" y="2.5" width="4.5" height="4.5" rx="1" />
+                        <rect x="9.5" y="9" width="4.5" height="4.5" rx="1" />
+                        <path d="M6.5 4.8h2a2 2 0 0 1 2 2v2.2" />
+                        <circle cx="6.5" cy="4.8" r="0.8" fill="currentColor" />
+                        <circle cx="9.5" cy="11.2" r="0.8" fill="currentColor" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'skills',
+                    label: '技能库',
+                    title: '技能库',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M8 1.5l1.5 4.5 4.5 1.5-4.5 1.5L8 13.5 6.5 9 2 7.5l4.5-1.5L8 1.5z" />
+                        <circle cx="13" cy="3" r="1" fill="currentColor" />
+                      </svg>
+                    ),
+                  },
                 ] as const
               ).map((tab) => {
-                const active = activeActivity === tab.id
+                const active = activeActivity === tab.id || (tab.id === 'skills' && activeActivity === 'models')
                 return (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveActivity(tab.id)}
-                    className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-medium transition ${
-                      active
-                        ? 'text-slate-900 dark:text-white'
-                        : 'text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200'
-                    }`}
+                    title={tab.title}
+                    aria-label={tab.label}
+                    className="flex flex-1 flex-col items-center justify-center gap-0.5 py-0.5 transition-all"
                     aria-current={active ? 'page' : undefined}
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-slate-900 dark:bg-white' : 'bg-transparent'}`} />
-                    <span>{tab.label}</span>
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-full transition-all ${
+                        active
+                          ? 'bg-black text-white shadow-md dark:bg-white dark:text-black'
+                          : 'text-slate-400 hover:bg-black/[0.04] hover:text-slate-800 dark:hover:bg-white/[0.06] dark:hover:text-slate-200'
+                      }`}
+                    >
+                      {tab.icon}
+                    </span>
+                    <span
+                      className={`text-[10px] leading-tight transition-colors ${
+                        active ? 'font-semibold text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      {tab.label}
+                    </span>
                   </button>
                 )
               })}

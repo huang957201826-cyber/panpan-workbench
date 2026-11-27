@@ -969,8 +969,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </aside>
 
           {/* Right Content Stage */}
-          <div className="flex-1 flex flex-col min-w-0 bg-[#f3f4f8] dark:bg-[#0c0e14]">
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 studio-safe-bottom">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-[#f3f4f8] dark:bg-[#0c0e14]">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-5 studio-safe-bottom">
               {/* =====================================================================
                   TAB 1: API CONFIGURATION
                   ===================================================================== */}

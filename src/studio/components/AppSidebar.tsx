@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   Folder,
@@ -205,11 +206,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       </aside>
       )}
 
-      {showProjectDrawer && (
+      {showProjectDrawer && (() => {
+        const drawerNode = (
         <div
           className={
             overlayDrawer
-              ? `fixed inset-0 z-[60] flex ${hideRail ? '' : 'pl-[68px]'}`
+              ? `ui-scale-chrome fixed inset-0 z-[70] flex select-none text-slate-800 dark:text-slate-200 ${hideRail ? '' : 'pl-[68px]'}`
               : 'contents'
           }
         >
@@ -365,11 +367,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             type="button"
             aria-label="关闭项目抽屉"
             onClick={onCollapse}
-            className="flex-1 bg-black/25 backdrop-blur-[1px] dark:bg-black/45"
+            className="flex-1 bg-black/45 backdrop-blur-[2px] dark:bg-black/60"
           />
         )}
         </div>
-      )}
+        );
+        return overlayDrawer && typeof document !== 'undefined'
+          ? createPortal(drawerNode, document.body)
+          : drawerNode;
+      })()}
 
       {rowMenu && (
         <div
