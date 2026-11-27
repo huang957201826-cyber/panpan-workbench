@@ -193,6 +193,8 @@ export interface AppSettings {
   agentImageProfileId?: string | null
   /** 是否启用 Studio 壳子；关闭时回退旧布局 */
   studioShellEnabled?: boolean
+  /** 自定义软件显示名称（默认“盼盼工作台”，支持安卓/平板/iPhone/iPad/桌面端） */
+  customAppName?: string
   /** 界面缩放百分比：只缩放 UI 外壳，画布世界坐标不变 */
   uiScale?: UiScale
   profiles: ApiProfile[]

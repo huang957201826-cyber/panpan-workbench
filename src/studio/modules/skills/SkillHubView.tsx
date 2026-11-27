@@ -132,24 +132,53 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState<SkillItem['category']>('空间与场地');
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [customCategoryDraft, setCustomCategoryDraft] = useState('');
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [newDesc, setNewDesc] = useState('');
   const [newPrompt, setNewPrompt] = useState('');
   const [newNegative, setNewNegative] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
 
+  const categoryOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    CREATE_CATEGORY_OPTIONS.forEach((opt) => map.set(opt.id, opt.label));
+    skills.forEach((s) => {
+      const label = (s.categoryLabel || s.category || '').trim();
+      if (label && !map.has(label)) map.set(label, label);
+    });
+    customCategories.forEach((cat) => {
+      const trimmed = cat.trim();
+      if (trimmed && !map.has(trimmed)) map.set(trimmed, trimmed);
+    });
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [skills, customCategories]);
+
+  const handleConfirmCustomCategory = () => {
+    const trimmed = customCategoryDraft.trim();
+    if (!trimmed) return;
+    setCustomCategories((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setNewCategory(trimmed);
+    setCustomCategoryDraft('');
+    setIsCreatingCategory(false);
+  };
+
   const openCreateModal = (initial?: SkillItem) => {
     setEditingId(initial && initial.isCustom ? initial.id : null);
     setFormError('');
+    setIsCreatingCategory(false);
+    setCustomCategoryDraft('');
     setNewTitle(initial?.title ?? '');
     setNewDesc(initial?.description ?? '');
     setNewPrompt(initial?.promptTemplate ?? '');
     setNewNegative(initial?.negativePrompt ?? '');
     if (initial) {
-      const matched = CREATE_CATEGORY_OPTIONS.find((option) => option.label === initial.categoryLabel || option.id === initial.category);
-      setNewCategory(matched?.id ?? '空间与场地');
+      const initialCat = (initial.categoryLabel || initial.category || '').trim();
+      setNewCategory(initialCat || '空间与场地');
     } else {
-      setNewCategory('空间与场地');
+      const activeKnown = activeCategory && !['all', 'mine', 'favorites'].includes(activeCategory) ? activeCategory : '';
+      setNewCategory(activeKnown || '空间与场地');
     }
     setIsCreateModalOpen(true);
   };
@@ -183,14 +212,15 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
       return;
     }
     setFormError('');
+    const resolvedCategory = (isCreatingCategory && customCategoryDraft.trim() ? customCategoryDraft.trim() : newCategory.trim()) || '空间与场地';
     const catOption =
-      CREATE_CATEGORY_OPTIONS.find((c) => c.id === newCategory) || CREATE_CATEGORY_OPTIONS[0];
+      categoryOptions.find((c) => c.id === resolvedCategory) || { id: resolvedCategory, label: resolvedCategory };
     const extractedVars = extractVariablesFromTemplate(newPrompt);
 
     const created: SkillItem = {
       id: editingId ?? `skill-custom-${Date.now()}`,
       title: newTitle.trim(),
-      category: newCategory,
+      category: catOption.id,
       categoryLabel: catOption.label,
       description: newDesc.trim() || '自定义纯文字提示词技能模板',
       recommendedModel: '通用',
@@ -206,12 +236,14 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
     if (editingId) onUpdateSkill?.(editingId, created);
     else onCreateSkill(created);
     setEditingId(null);
+    setIsCreatingCategory(false);
+    setCustomCategoryDraft('');
     setNewTitle('');
     setNewDesc('');
     setNewPrompt('');
     setNewNegative('');
     setIsCreateModalOpen(false);
-    setActiveCategory('all');
+    setActiveCategory(catOption.id);
   };
 
   const assembledPrompt = useMemo(() => {
@@ -696,7 +728,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
           ========================================================================= */}
       {isCreateModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/55 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/55 backdrop-blur-xs"
           onClick={() => {
             // 已经填了内容时点遮罩不关闭，避免内容丢失且看起来像“静默失败”
             if (newTitle.trim() || newPrompt.trim() || newDesc.trim()) return;
@@ -706,25 +738,26 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
           <form
             onSubmit={handleCreateSubmit}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl rounded-3xl bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 shadow-2xl flex flex-col overflow-hidden text-xs"
+            className="w-full max-w-xl max-h-[90vh] rounded-3xl bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 shadow-2xl flex flex-col overflow-hidden"
           >
             <div className="h-14 px-5 border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between shrink-0">
               <h2 className="font-bold text-body text-slate-900 dark:text-white">
-                新建纯文提示词技能
+                {editingId ? '编辑纯文提示词技能' : '新建纯文提示词技能'}
               </h2>
               <button
                 type="button"
                 onClick={() => setIsCreateModalOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-slate-800 dark:hover:text-white transition cursor-pointer"
+                className="w-9 h-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-slate-800 dark:hover:text-white transition cursor-pointer"
+                aria-label="关闭"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-5 space-y-3.5 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-caption font-semibold text-slate-600 dark:text-slate-300">
+            <div className="p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="space-y-1.5">
+                  <label className="block text-caption font-semibold text-slate-700 dark:text-slate-200">
                     技能名称 *
                   </label>
                   <input
@@ -733,30 +766,75 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
                     placeholder="例如：商业中庭黄昏泛光"
-                    className="w-full h-9 px-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] outline-none text-caption"
+                    className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-caption font-semibold text-slate-600 dark:text-slate-300">
-                    所属分类
-                  </label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as SkillItem['category'])}
-                    className="w-full h-9 px-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] outline-none text-caption"
-                  >
-                    {CREATE_CATEGORY_OPTIONS.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-caption font-semibold text-slate-700 dark:text-slate-200">
+                      所属分类
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingCategory((v) => !v);
+                        setCustomCategoryDraft('');
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption font-medium text-slate-600 dark:text-slate-300 bg-black/[0.05] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
+                    >
+                      {isCreatingCategory ? (
+                        <span>选择已有</span>
+                      ) : (
+                        <>
+                          <Plus className="w-3 h-3" />
+                          <span>新建分类</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  {isCreatingCategory ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={customCategoryDraft}
+                        onChange={(e) => setCustomCategoryDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleConfirmCustomCategory();
+                          }
+                        }}
+                        placeholder="输入新分类名称…"
+                        className="flex-1 min-w-0 h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmCustomCategory}
+                        disabled={!customCategoryDraft.trim()}
+                        className="h-10 px-3.5 shrink-0 rounded-xl bg-black text-white dark:bg-white dark:text-black text-caption font-semibold disabled:opacity-35 transition cursor-pointer"
+                      >
+                        添加
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value as SkillItem['category'])}
+                      className="w-full h-10 px-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
+                    >
+                      {categoryOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-caption font-semibold text-slate-600 dark:text-slate-300">
+              <div className="space-y-1.5">
+                <label className="block text-caption font-semibold text-slate-700 dark:text-slate-200">
                   一句话说明（可选）
                 </label>
                 <input
@@ -764,17 +842,17 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   placeholder="说明该条提示词的适用场景"
-                  className="w-full h-9 px-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] outline-none text-caption"
+                  className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-caption font-semibold text-slate-600 dark:text-slate-300">
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <label className="text-caption font-semibold text-slate-700 dark:text-slate-200">
                     提示词公式模板 *
                   </label>
                   <span className="text-micro text-slate-400">
-                    用 <code className="font-mono px-1 py-0.2 rounded bg-black/5 dark:bg-white/10">{'{变量名}'}</code> 自动生成可调参数槽
+                    用 <code className="font-mono px-1 py-0.5 rounded bg-black/5 dark:bg-white/10">{'{变量名}'}</code> 自动生成可调参数槽
                   </span>
                 </div>
                 <textarea
@@ -783,12 +861,12 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                   value={newPrompt}
                   onChange={(e) => setNewPrompt(e.target.value)}
                   placeholder="例如：现代商业空间{主体}，采用{主材质}与3000K暖光洗墙灯，两点透视建筑摄影，8k高细节。"
-                  className="w-full p-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] outline-none text-caption leading-relaxed resize-none"
+                  className="w-full p-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white leading-relaxed resize-none"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-caption font-semibold text-slate-600 dark:text-slate-300">
+              <div className="space-y-1.5">
+                <label className="block text-caption font-semibold text-slate-700 dark:text-slate-200">
                   配套负向过滤词（可选）
                 </label>
                 <input
@@ -796,7 +874,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                   value={newNegative}
                   onChange={(e) => setNewNegative(e.target.value)}
                   placeholder="模糊, 变形, 低分辨率, 塑料质感, 水印"
-                  className="w-full h-9 px-3 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] outline-none text-caption"
+                  className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
                 />
               </div>
             </div>

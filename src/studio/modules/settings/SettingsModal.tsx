@@ -1806,6 +1806,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     </div>
 
+                    <div className="pt-3.5 border-t border-black/[0.05] dark:border-white/[0.06] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                            自定义软件名称
+                          </div>
+                          <div className="text-caption text-slate-400 mt-0.5">
+                            在安卓手机、平板、iPhone、iPad 与桌面端顶栏显示自定义名称（留空则显示“盼盼工作台”）
+                          </div>
+                        </div>
+                        {settings.customAppName?.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setSettings({ customAppName: '' })}
+                            className="shrink-0 h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
+                          >
+                            恢复默认
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        maxLength={32}
+                        value={settings.customAppName ?? ''}
+                        onChange={(e) => setSettings({ customAppName: e.target.value })}
+                        placeholder="盼盼工作台"
+                        className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
+                      />
+                    </div>
+
                   </section>
 
                   {/* Card 2: 下载与通知 */}
@@ -2302,7 +2332,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
                           <h4 className="text-title font-bold text-slate-900 dark:text-white">
-                            盼盼工作台
+                            {settings.customAppName?.trim() || '盼盼工作台'}
                           </h4>
                           <button
                             type="button"

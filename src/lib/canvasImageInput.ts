@@ -17,8 +17,10 @@ export async function addImageFileToCanvas(canvasId: string, file: File, positio
     const image = await createInputImageFromFile(file)
     if (!image) return null
     useStore.getState().addInputImage(image)
-    if (!canvasId) return image
-    const canvas = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId)
+    const ws = useWorkspaceStore.getState()
+    const targetCanvasId = canvasId || ws.activeCanvasId || ws.canvases[0]?.id || ''
+    if (!targetCanvasId) return image
+    const canvas = ws.canvases.find((item) => item.id === targetCanvasId)
     if (!canvas) return image
     const existing = canvas.imageNodes?.find((node) => node.imageId === image.id)
     if (existing) return image
@@ -29,8 +31,8 @@ export async function addImageFileToCanvas(canvasId: string, file: File, positio
       probe.src = image.dataUrl
     })
     const node = createCanvasImageNode(image.id, position.x, position.y, size.width, size.height)
-    const latest = useWorkspaceStore.getState().canvases.find((item) => item.id === canvasId) ?? canvas
-    useWorkspaceStore.getState().updateCanvas(canvasId, {
+    const latest = useWorkspaceStore.getState().canvases.find((item) => item.id === targetCanvasId) ?? canvas
+    useWorkspaceStore.getState().updateCanvas(targetCanvasId, {
       imageNodes: addCanvasImageNode(latest.imageNodes ?? [], node),
       ...(latest.removedImageIds?.includes(image.id)
         ? { removedImageIds: latest.removedImageIds.filter((id) => id !== image.id) }

@@ -438,14 +438,15 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
         </div>
       )}
 
-      {/* Hidden file input for uploading references */}
+      {/* Visually hidden file input for uploading references (avoid display:none for Android WebView compatibility) */}
       <input
+        id="bottom-prompt-ref-upload"
         ref={fileInputRef}
         type="file"
         accept="image/*"
         multiple
         onChange={handleFileUpload}
-        className="hidden"
+        className="sr-only"
       />
 
       {/* Upward Drag Gripper Bar (Minimalist Monochrome) */}
@@ -854,14 +855,23 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
           {/* Right Action Buttons: [+] Upload Reference, [◨] Canvas Pick, [✦] Skill, [↑] Generate */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
-            {/* [+] Button: Trigger reference image upload */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
+            {/* [+] Button: Trigger reference image upload via native label association for reliable mobile WebView activation */}
+            <label
+              htmlFor="bottom-prompt-ref-upload"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
               className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
               title="添加本地参考图"
+              aria-label="添加本地参考图"
             >
               <Plus className="w-3.5 h-3.5 stroke-[1.8]" />
-            </button>
+            </label>
 
             {onStartCanvasPick && (
               <button

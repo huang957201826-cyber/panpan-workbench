@@ -34,7 +34,7 @@
         "style-src-attr": "'unsafe-inline'",
         "img-src": "'self' data: blob: http: https:",
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://tauri.localhost https://tauri.localhost data: blob:",
         "worker-src": "'self' blob:",
         "frame-src": "'self'",
         "object-src": "'none'",

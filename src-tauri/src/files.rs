@@ -559,7 +559,17 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
         .meta_get(DOWNLOAD_DIR_KEY)
         .map_err(|err| err.message)?;
     if let Some(dir) = saved {
-        return Ok(PathBuf::from(dir));
+        let path = PathBuf::from(dir);
+        #[cfg(target_os = "android")]
+        {
+            if !in_data_dir(&path, storage.root()) && ensure_writable(&path).is_ok() {
+                return Ok(path);
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            return Ok(path);
+        }
     }
     #[cfg(target_os = "android")]
     {

@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      app_name:
+        description: "可选：自定义安卓安装包名称（默认 PanPan Workbench）"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -58,6 +63,20 @@ jobs:
           if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
             python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
           fi
+
+      - name: Apply custom app name (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_name != '' }}
+        env:
+          CUSTOM_APP_NAME: ${{ inputs.app_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            cfg.productName = process.env.CUSTOM_APP_NAME;
+            if (cfg.app?.windows?.[0]) cfg.app.windows[0].title = process.env.CUSTOM_APP_NAME;
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+          "
 
       - name: Initialize Tauri Android project
         run: |

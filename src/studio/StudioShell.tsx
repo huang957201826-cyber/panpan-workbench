@@ -780,10 +780,16 @@ export default function StudioShell() {
     [workspace.canvases, activeProject?.id],
   )
 
+  const appDisplayName = settings.customAppName?.trim() || '盼盼工作台'
+
+  useEffect(() => {
+    document.title = appDisplayName
+  }, [appDisplayName])
+
   return (
     <div className={`studio-root ${isMobile ? 'studio-safe-top' : ''}`}>
       <TitleBar
-        currentProjectTitle={activeProject?.name ?? '盼盼工作台'}
+        currentProjectTitle={activeProject?.name ?? appDisplayName}
         folders={folders}
         activeFolderId={activeProject?.id ?? ''}
         activeSchemeId={activeCanvas?.id ?? ''}
@@ -899,12 +905,12 @@ export default function StudioShell() {
               ) : (
                 <span className="truncate text-[14px] font-semibold text-slate-800 dark:text-slate-100">
                   {activeActivity === 'home'
-                    ? '盼盼工作台'
+                    ? appDisplayName
                     : activeActivity === 'workflow'
                       ? '工作流'
                       : activeActivity === 'skills'
                         ? '技能库'
-                        : activeProject?.name ?? '盼盼工作台'}
+                        : activeProject?.name ?? appDisplayName}
                 </span>
               )}
 
@@ -1124,7 +1130,18 @@ export default function StudioShell() {
                 isGenerating={submitting || pendingInputs > 0}
                 referenceImages={toReferenceImages(inputImages, missingInputIds)}
                 onAddReferenceImage={(image) => addInputImage({ id: image.id, dataUrl: image.url })}
-                onAddReferenceFile={(file) => void addImageFileToCanvas(activeCanvas?.id ?? '', file)}
+                onAddReferenceFile={(file) => {
+                  void addImageFileToCanvas(activeCanvas?.id ?? '', file)
+                    .then((added) => {
+                      if (!added) {
+                        useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
+                      }
+                    })
+                    .catch((err) => {
+                      const msg = err instanceof Error ? err.message : String(err)
+                      useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
+                    })
+                }}
                 onRemoveReferenceImage={(id) => {
                   const index = inputImages.findIndex((image) => image.id === id)
                   if (index >= 0) useStore.getState().removeInputImage(index)

@@ -134,6 +134,15 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     [skills, overrides, customSkills, mineCapabilitySkills],
   )
   const items = useMemo(() => registrySkills.map(toItem), [registrySkills])
+  const allCategoryLabels = useMemo(() => {
+    const extras: string[] = []
+    items.forEach((item) => {
+      if (item.category && !CATEGORY_LABELS.includes(item.category) && !extras.includes(item.category)) {
+        extras.push(item.category)
+      }
+    })
+    return [...CATEGORY_LABELS, ...extras]
+  }, [items])
 
   const handleApplySkill = (item: SkillItem, text: string, mode: 'replace' | 'append' = 'replace') => {
     const current = useStore.getState().prompt.trim()
@@ -144,7 +153,7 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
       <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
-        {['all', 'mine', ...CATEGORY_LABELS, 'favorites'].map((label) => {
+        {['all', 'mine', ...allCategoryLabels, 'favorites'].map((label) => {
           const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
           const count =
             label === 'all'
@@ -196,7 +205,7 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
         </div>
         {!collapsed &&
           <div className={`${SIDEBAR_BODY_CLASS} space-y-1`}>
-          {['all', 'mine', ...CATEGORY_LABELS, 'favorites'].map((label) => {
+          {['all', 'mine', ...allCategoryLabels, 'favorites'].map((label) => {
             const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
             const count =
               label === 'all'
