@@ -563,13 +563,15 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
     }
     #[cfg(target_os = "android")]
     {
-        let public_pictures = PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench");
-        if ensure_writable(&public_pictures).is_ok() {
-            return Ok(public_pictures);
-        }
-        let public_dl = PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench");
-        if ensure_writable(&public_dl).is_ok() {
-            return Ok(public_dl);
+        for candidate in [
+            PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Android/data/com.panpan.workbench/files/Pictures/PanPanWorkbench"),
+        ] {
+            if ensure_writable(&candidate).is_ok() {
+                return Ok(candidate);
+            }
         }
         return Ok(storage.root().parent().unwrap_or_else(|| storage.root()).join("downloads"));
     }
@@ -830,8 +832,16 @@ pub async fn download_dir_set(
     let old = tokio::task::block_in_place(|| download_dir(storage))?;
     let previous = tokio::task::block_in_place(|| {
         check_outside(&next_path, Some(storage.root()))?;
-        ensure_writable(&next_path)
-            .map_err(|err| format!("无法写入该目录（{}）：{err}", next_path.display()))?;
+        ensure_writable(&next_path).map_err(|err| {
+            if err.kind() == ErrorKind::PermissionDenied {
+                format!(
+                    "系统存储权限限制，无法直接写入 {}；请改选「相册媒体目录」或「下载」下的子文件夹",
+                    next_path.display()
+                )
+            } else {
+                format!("无法写入该目录（{}）：{err}", next_path.display())
+            }
+        })?;
         storage
             .meta_set(DOWNLOAD_DIR_KEY, &next_path.display().to_string())
             .map_err(|err| format!("保存默认保存地址失败：{}", err.message))?;

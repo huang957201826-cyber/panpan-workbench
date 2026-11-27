@@ -457,7 +457,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     } catch (err) {
       console.error('更改默认保存地址失败：', err);
-      useStore.getState().showToast(typeof err === 'string' ? err : '更改默认保存地址失败', 'error');
+      const msg = typeof err === 'string' ? err : err instanceof Error ? err.message : '更改默认保存地址失败';
+      useStore.getState().showToast(msg, 'error');
     } finally {
       setSaveDirSaving(false);
     }
@@ -1858,9 +1859,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           {isAndroid && (
                             <div className="flex flex-wrap gap-1.5">
                               {[
-                                { label: '相册 / PanPanWorkbench', path: '/storage/emulated/0/Pictures/PanPanWorkbench' },
-                                { label: 'DCIM / PanPanWorkbench', path: '/storage/emulated/0/DCIM/PanPanWorkbench' },
-                                { label: '下载 / PanPanWorkbench', path: '/storage/emulated/0/Download/PanPanWorkbench' },
+                                {
+                                  label: '相册媒体目录（推荐）',
+                                  path: '/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench',
+                                },
+                                {
+                                  label: '下载 / PanPanWorkbench',
+                                  path: '/storage/emulated/0/Download/PanPanWorkbench',
+                                },
+                                {
+                                  label: '应用图库目录',
+                                  path: '/storage/emulated/0/Android/data/com.panpan.workbench/files/Pictures/PanPanWorkbench',
+                                },
                               ].map((preset) => (
                                 <button
                                   key={preset.path}
@@ -1881,9 +1891,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             type="text"
                             value={saveDirInput}
                             onChange={(e) => setSaveDirInput(e.target.value)}
-                            placeholder={isIOS ? '输入应用文档内的子目录完整路径' : '/storage/emulated/0/Pictures/PanPanWorkbench'}
+                            placeholder={isIOS ? '输入应用文档内的子目录完整路径' : '/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench'}
                             className="w-full h-9 px-3 rounded-lg bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.1] text-caption font-mono text-slate-800 dark:text-slate-100 outline-none focus:border-black dark:focus:border-white"
                           />
+                          {isAndroid && (
+                            <div className="text-micro text-slate-400">
+                              提示：可在上述目录后自定义任意子文件夹名（例如把 PanPanWorkbench 改为自定义名称）；Android 11+ 系统限制直接写入 /Pictures 根目录。
+                            </div>
+                          )}
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"

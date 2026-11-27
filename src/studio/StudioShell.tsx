@@ -932,14 +932,11 @@ export default function StudioShell() {
               </div>
             </header>
           )}
-          {sidebarCollapsed && !viewportLayout.isPhone && (
+          {sidebarCollapsed && !viewportLayout.isPhone && activeActivity === 'projects' && (
             <div className="absolute left-4 top-14 z-40">
               <button
                 type="button"
-                onClick={() => {
-                  setSidebarCollapsed(false)
-                  if (activeActivity !== 'projects') setActiveActivity('projects')
-                }}
+                onClick={() => setSidebarCollapsed(false)}
                 className="flex h-[34px] items-center gap-1.5 rounded-full border border-black/[0.04] bg-white/90 px-3 text-[11.5px] font-medium text-slate-700 shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl transition hover:text-black dark:border-white/[0.06] dark:bg-[#141620]/90 dark:text-slate-200 dark:hover:text-white"
                 title="展开方案抽屉"
               >
