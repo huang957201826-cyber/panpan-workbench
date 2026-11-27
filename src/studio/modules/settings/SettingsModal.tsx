@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { AppLogo } from '../../components/AppLogo';
 import { invoke } from '@tauri-apps/api/core';
-import { isTauri } from '../../../lib/platform';
+import { isMobile, isTauri } from '../../../lib/platform';
 import { performUpdateCheck } from '../../../lib/updateService';
 import { testConnection } from '../../adapters/settings';
 import { clearData, exportData, importData, useStore } from '../../../store';
@@ -1775,23 +1775,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <div className="text-caption font-mono text-slate-400 truncate mt-0.5">
                           {defaultDownloadPath}
                         </div>
+                        {isMobile && (
+                          <div className="text-caption text-slate-400 mt-1">
+                            移动端默认保存至系统下载目录，无需手动更改
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => void handleChangeDownloadDir()}
-                          className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
-                        >
-                          更改
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleOpenDownloadDir()}
-                          className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
-                        >
-                          打开
-                        </button>
-                      </div>
+                      {!isMobile && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => void handleChangeDownloadDir()}
+                            className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
+                          >
+                            更改
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenDownloadDir()}
+                            className="h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
+                          >
+                            打开
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between gap-4">
