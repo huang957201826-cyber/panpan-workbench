@@ -22,7 +22,7 @@ import { useStore } from '../../store';
 import { Menu as PopMenu } from '../../ui';
 import { PromptMentionOverlay } from './PromptMentionOverlay';
 import SizePickerModal from '../../components/SizePickerModal';
-import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills';
+import { loadBuiltinSkills, resolveSkillParamPatch, skillSlotImageIds } from '../../lib/capabilitySkills';
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore';
 import { useSkillStore } from '../../lib/skillStore';
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry';
@@ -153,14 +153,24 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
       const dataUrl = await ensureImageCached(imageId);
       if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl });
     }
+    const patch = resolveSkillParamPatch(skill, values);
+    const nextParams = {
+      ...params,
+      ...(patch.size ? { dimension: patch.size } : {}),
+      ...(patch.count ? { count: patch.count } : {}),
+    };
+    if (patch.size || patch.count) {
+      onParamsChange?.(nextParams);
+    }
     setActiveSkillId(skill.registryId ?? skill.id);
     setSkillSlotValues(values);
     setShowSkillPicker(false);
+    return nextParams;
   };
 
   const applySkillAndGenerate = async (skill: Skill, values: Record<string, SkillSlotValue>) => {
-    await applySkill(skill, values);
-    onGenerate(prompt, params);
+    const nextParams = await applySkill(skill, values);
+    onGenerate(prompt, nextParams);
   };
 
   const atMenuRef = useRef<HTMLDivElement>(null);

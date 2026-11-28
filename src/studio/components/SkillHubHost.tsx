@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen, RotateCcw, Settings } from 'lucide-react'
-import { useStore } from '../../store'
+import { PanelLeftClose, PanelLeftOpen, RotateCcw, Settings, Upload } from 'lucide-react'
+import { importData, useStore } from '../../store'
 import { loadBuiltinSkills } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { useWorkspaceStore } from '../../lib/workspaceStore'
 import {
   buildRegisteredSkillCatalog,
+  getRegisteredSkillSnapshot,
   removeRegisteredSkill,
+  replaceRegisteredSkillBackup,
   savePromptSkill,
   toggleRegisteredSkillFavorite,
   updateRegisteredSkill,
@@ -155,8 +157,49 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   }
 
   const scrollBodyRef = useRef<HTMLDivElement>(null)
+  const skillPackInputRef = useRef<HTMLInputElement>(null)
   const [canScrollUp, setCanScrollUp] = useState(false)
   const [canScrollDown, setCanScrollDown] = useState(false)
+  const hasPromptOverrides = useMemo(
+    () => Object.values(overrides).some((item) => Boolean(item?.basePrompt)),
+    [overrides],
+  )
+
+  const handleImportSkillPack = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      if (file.name.toLowerCase().endsWith('.json')) {
+        const parsed = JSON.parse(await file.text()) as {
+          capabilityOverrides?: Record<string, { basePrompt?: string; description?: string; name?: string }>
+        }
+        if (parsed?.capabilityOverrides && typeof parsed.capabilityOverrides === 'object') {
+          const snapshot = getRegisteredSkillSnapshot()
+          replaceRegisteredSkillBackup({
+            overrides: { ...snapshot.overrides, ...parsed.capabilityOverrides },
+          })
+          useStore.getState().showToast('已导入技能精调包', 'success')
+          return
+        }
+      }
+      await importData(file, { importConfig: true, importTasks: false })
+    } catch (err) {
+      useStore.getState().showToast(err instanceof Error ? err.message : '导入技能包失败', 'error')
+    }
+  }
+
+  const handleResetBuiltinPromptOverrides = () => {
+    const nextOverrides = Object.fromEntries(
+      Object.entries(overrides).flatMap(([id, item]) => {
+        if (!item) return []
+        const { basePrompt: _b, description: _d, name: _n, slots: _s, ...rest } = item
+        return Object.keys(rest).length ? [[id, rest]] : []
+      }),
+    )
+    useCapabilitySkillStore.getState().replaceOverrides(nextOverrides)
+    useStore.getState().showToast('已恢复官方默认内置技能提示词', 'info')
+  }
 
   useEffect(() => {
     const el = scrollBodyRef.current
@@ -297,6 +340,13 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
             </div>
 
             <div className={`${SIDEBAR_FOOTER_CLASS} space-y-1.5`}>
+              <input
+                ref={skillPackInputRef}
+                type="file"
+                accept=".zip,.json"
+                className="hidden"
+                onChange={(e) => { void handleImportSkillPack(e) }}
+              />
               {category !== 'all' && (
                 <button
                   type="button"
@@ -307,6 +357,28 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
                   <span>重置分类筛选</span>
                 </button>
               )}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => skillPackInputRef.current?.click()}
+                  className={`${SIDEBAR_FOOTER_BUTTON_CLASS} flex-1`}
+                  title="导入技能包（支持 panpan-pro-skills.zip）"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>导入技能包</span>
+                </button>
+                {hasPromptOverrides && (
+                  <button
+                    type="button"
+                    onClick={handleResetBuiltinPromptOverrides}
+                    className="flex h-8 shrink-0 items-center justify-center gap-1 rounded-xl bg-black/[0.04] px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.06] dark:text-slate-300 dark:hover:bg-white/[0.1]"
+                    title="还原为官方默认内置技能提示词"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>恢复默认</span>
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => useStore.getState().setShowSettings(true, 'about')}

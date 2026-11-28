@@ -119,20 +119,59 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     }
   }, [detailOnly, sceneCategories.length, skills.length])
 
+  const buildInitialStateForSkill = (
+    skill: Skill,
+    seed?: Record<string, SkillSlotValue>,
+  ): { nextValues: Record<string, SkillSlotValue>; nextPreviews: Record<string, string> } => {
+    const nextValues: Record<string, SkillSlotValue> = {
+      ...defaultSkillValues(skill),
+      ...(seed ?? {}),
+    }
+    const nextPreviews: Record<string, string> = {}
+    const existingImages = useStore.getState().inputImages
+    for (const img of existingImages) {
+      nextPreviews[img.id] = img.dataUrl
+    }
+
+    const imageSlots = skill.slots.filter((slot) => slot.type === 'image' || slot.type === 'multi-image')
+    const hasAnySlotImage = imageSlots.some((slot) => {
+      const current = nextValues[slot.key]
+      return Array.isArray(current) ? current.length > 0 : Boolean(current)
+    })
+    if (!hasAnySlotImage && existingImages.length > 0 && imageSlots.length > 0) {
+      let cursor = 0
+      for (const slot of imageSlots) {
+        if (cursor >= existingImages.length) break
+        if (slot.type === 'multi-image') {
+          const slice = existingImages.slice(cursor, cursor + 6).map((img) => img.id)
+          nextValues[slot.key] = slice
+          cursor += slice.length
+        } else {
+          nextValues[slot.key] = [existingImages[cursor].id]
+          cursor += 1
+        }
+      }
+    }
+    return { nextValues, nextPreviews }
+  }
+
   useEffect(() => {
     if (!activeSkillId) return
     const skill = resolveRegisteredSkill(skills, activeSkillId)
     if (!skill) return
+    const { nextValues, nextPreviews } = buildInitialStateForSkill(skill, initialValues)
     setSelected(skill)
-    setValues(initialValues ?? defaultSkillValues(skill))
+    setValues(nextValues)
+    setPreviews((prev) => ({ ...prev, ...nextPreviews }))
     setBasePrompt(skill.basePrompt)
   }, [activeSkillId, initialValues, skills])
 
   const choose = (skill: Skill) => {
+    const { nextValues, nextPreviews } = buildInitialStateForSkill(skill)
     setSelected(skill)
-    setValues(defaultSkillValues(skill))
+    setValues(nextValues)
     setBasePrompt(skill.basePrompt)
-    setPreviews({})
+    setPreviews(nextPreviews)
     setError('')
   }
 

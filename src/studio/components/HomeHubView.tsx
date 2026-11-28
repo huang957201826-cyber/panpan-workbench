@@ -4,7 +4,7 @@ import type { GenerationParams } from '../types'
 import type { Skill, SkillSlotValue } from '../../types'
 import { useStore } from '../../store'
 import { Menu as PopMenu } from '../../ui'
-import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills'
+import { loadBuiltinSkills, resolveSkillParamPatch, skillSlotImageIds } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry'
@@ -129,9 +129,19 @@ export function HomeHubView({
       const dataUrl = await ensureImageCached(imageId)
       if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl })
     }
+    const patch = resolveSkillParamPatch(skill, values)
+    const nextParams = {
+      ...params,
+      ...(patch.size ? { dimension: patch.size } : {}),
+      ...(patch.count ? { count: patch.count } : {}),
+    }
+    if (patch.size || patch.count) {
+      onParamsChange(nextParams)
+    }
     setActiveSkillId(skill.registryId ?? skill.id)
     setSkillSlotValues(values)
     setShowSkillPicker(false)
+    return nextParams
   }
 
   return (
@@ -495,7 +505,7 @@ export function HomeHubView({
           onClose={() => setShowSkillPicker(false)}
           onApply={(skill, values) => { void applySkill(skill, values) }}
           onApplyAndGenerate={(skill, values) => {
-            void applySkill(skill, values).then(() => onGenerate(prompt.trim(), params))
+            void applySkill(skill, values).then((nextParams) => onGenerate(prompt.trim(), nextParams))
           }}
           activeSkillId={activeSkillId}
           initialValues={skillSlotValues}

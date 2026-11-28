@@ -6543,11 +6543,19 @@ export async function importData(input: File | File[], options: ImportOptions = 
     }
 
     const settingsManifests = selected.filter((part) => part.manifest.settings)
+    const hasSkillPayload = selected.some(
+      (part) =>
+        Array.isArray(part.manifest.skills) ||
+        Array.isArray(part.manifest.capabilitySkills) ||
+        Boolean(part.manifest.capabilityOverrides && Object.keys(part.manifest.capabilityOverrides).length),
+    )
     const futureVersion = selected.find((part) => typeof part.manifest.version === 'number' && part.manifest.version > 5)
     if (futureVersion) {
       throw new Error(`备份版本 ${futureVersion.manifest.version} 高于当前支持的版本 5，请升级盼盼工作台后再导入。`)
     }
-    if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('这份备份里没有配置。')
+    if (options.importConfig && !options.importTasks && !settingsManifests.length && !hasSkillPayload) {
+      throw new Error('这份备份里没有配置。')
+    }
     if (selected.some((part) => part.manifest.version >= 5)) {
       return await restoreV5Data(selected, options, signal)
     }
@@ -6733,7 +6741,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
         capabilitySkills: mergeImportedCapabilitySkills(snapshot.capabilitySkills, importedCapabilitySkills),
       })
     }
-    const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+    const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as NonNullable<ExportData['capabilityOverrides']>
     if (Object.keys(importedOverrides).length) {
       replaceRegisteredSkillBackup({
         overrides: {

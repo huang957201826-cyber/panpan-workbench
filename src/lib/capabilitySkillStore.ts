@@ -106,7 +106,7 @@ function normalizeOverrides(value: unknown): Record<string, SkillOverride> {
 
 /** 内置技能只存覆盖层，不复制进 mine */
 export function applySkillOverride(skill: Skill, overrides: Record<string, SkillOverride>): Skill {
-  const override = overrides[skill.id]
+  const override = overrides[skill.id] ?? overrides[skill.id.replace(/^builtin:/, '')]
   if (!override) return skill
   return {
     ...skill,

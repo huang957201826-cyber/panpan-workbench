@@ -781,8 +781,17 @@ export interface ExportData {
   skills?: PromptSkill[]
   /** 能力技能（B04B）；保持 version 4，旧版忽略此字段 */
   capabilitySkills?: Skill[]
-  /** 内置技能的收藏/封面/模型覆盖层；与 capabilitySkills 分开 */
-  capabilityOverrides?: Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+  /** 内置技能的收藏/封面/模型/指令覆盖层；与 capabilitySkills 分开 */
+  capabilityOverrides?: Record<string, {
+    favorite?: boolean
+    coverImageId?: string
+    model?: string
+    basePrompt?: string
+    slots?: SkillSlot[]
+    name?: string
+    description?: string
+    referenceImageIds?: string[]
+  }>
   savedWorkflows?: SavedWorkflowBackup[]
   workflowImageFiles?: Record<string, {
     path: string

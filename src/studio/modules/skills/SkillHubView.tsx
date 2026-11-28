@@ -72,14 +72,28 @@ function renderFormulaWithVariables(template: string) {
   });
 }
 
-function resolvePromptWithDefaults(skill: SkillItem): string {
+function resolvePromptWithValues(skill: SkillItem, values?: Record<string, string>): string {
   let result = skill.promptTemplate;
+  const extraLines: string[] = [];
   if (skill.variables) {
     skill.variables.forEach((v) => {
-      result = result.replace(new RegExp(`\\{${v.key}\\}`, 'g'), v.defaultValue);
+      const val = (values ? values[v.key] : undefined) ?? v.defaultValue ?? '';
+      const tokenPattern = new RegExp(`\\{\\{?${v.key}\\}?\\}`, 'g');
+      if (tokenPattern.test(result)) {
+        result = result.replace(tokenPattern, val);
+      } else if (val.trim()) {
+        extraLines.push(`- ${v.label}（${v.key}）：${val.trim()}`);
+      }
     });
   }
+  if (extraLines.length > 0) {
+    result = `${result.trim()}\n\n【本次输入】\n${extraLines.join('\n')}`;
+  }
   return result;
+}
+
+function resolvePromptWithDefaults(skill: SkillItem): string {
+  return resolvePromptWithValues(skill);
 }
 
 function extractVariablesFromTemplate(template: string): SkillVariable[] {
@@ -248,14 +262,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
 
   const assembledPrompt = useMemo(() => {
     if (!inspectingSkill) return '';
-    let result = inspectingSkill.promptTemplate;
-    if (inspectingSkill.variables) {
-      inspectingSkill.variables.forEach((v) => {
-        const val = variableValues[v.key] || v.defaultValue;
-        result = result.replace(new RegExp(`\\{${v.key}\\}`, 'g'), val);
-      });
-    }
-    return result;
+    return resolvePromptWithValues(inspectingSkill, variableValues);
   }, [inspectingSkill, variableValues]);
 
   const filteredSkills = useMemo(() => {
