@@ -1,5 +1,6 @@
 import { zipSync } from 'fflate'
 import type { TaskRecord } from '../types'
+import { notifyDownloadCompletion } from './browserNotification'
 import { trackDataTransfer } from './dataOperations'
 import { buildImageFileName, getNumberedFileNameBase, getImageExtensionFromMime, sanitizeFileNamePart } from './exportFileName'
 import { ensureImageCached } from './imageCache'
@@ -32,9 +33,11 @@ type TaskOutputZipTask = Pick<TaskRecord, 'id' | 'createdAt' | 'outputImages'>
 
 export { formatExportFileTime } from './exportFileName'
 
-/** 客户端的下载成功提示附上保存位置，便于找到文件 */
+/** 客户端的下载成功提示附上保存位置，便于找到文件；若开启了系统通知则同步发送下载完成通知 */
 export function withSaveLocation(msg: string, location?: string) {
-  return location ? `${msg}，已保存到 ${location}` : msg
+  const text = location ? `${msg}，已保存到 ${location}` : msg
+  notifyDownloadCompletion(msg, location)
+  return text
 }
 
 /** Rust 命令的错误是字符串（例如默认保存地址不可用），附上原因；其他错误只提示下载失败 */

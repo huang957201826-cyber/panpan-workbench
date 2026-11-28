@@ -160,7 +160,10 @@
     <div class="prompt-box" id="prompt-box">正在读取提示词参数…</div>
     <div class="meta" id="meta-row"></div>
     <a id="open-btn" class="btn btn-primary" href="javascript:void(0)">
-      立即打开盼盼工作台生图
+      打开盼盼工作台（仅填入提示词）
+    </a>
+    <a id="open-auto-btn" class="btn btn-secondary" style="margin-bottom: 10px;" href="javascript:void(0)">
+      打开工作台并立即自动生图
     </a>
     <button id="copy-btn" type="button" class="btn btn-secondary">
       复制生图指令（切回工作台自动填入）
@@ -177,27 +180,32 @@
       var prompt = (params.get('prompt') || '').trim();
       var size = (params.get('size') || params.get('ratio') || '1024x1024').trim();
       var model = (params.get('model') || '').trim();
-      var auto = (params.get('auto') || params.get('submit') || '1').trim();
+      var rawAuto = (params.get('auto') || params.get('submit') || '0').trim().toLowerCase();
+      var isDefaultAuto = rawAuto === '1' || rawAuto === 'true' || rawAuto === 'yes';
 
-      var query = new URLSearchParams();
-      if (prompt) query.set('prompt', prompt);
-      if (size) query.set('size', size);
-      if (model) query.set('model', model);
-      if (auto) query.set('auto', auto);
+      var buildUrls = function (forceAuto) {
+        var query = new URLSearchParams();
+        if (prompt) query.set('prompt', prompt);
+        if (size) query.set('size', size);
+        if (model) query.set('model', model);
+        query.set('auto', forceAuto ? '1' : '0');
+        var qs = query.toString();
+        var deepLink = 'panpan://generate' + (qs ? '?' + qs : '');
+        var fallbackUrl = window.location.href;
+        var androidIntentUrl =
+          'intent://generate' + (qs ? '?' + qs : '') +
+          '#Intent;scheme=panpan;package=com.panpan.workbench;S.browser_fallback_url=' +
+          encodeURIComponent(fallbackUrl) + ';end';
+        return { deepLink: deepLink, androidIntentUrl: androidIntentUrl };
+      };
 
-      var qs = query.toString();
-      var deepLink = 'panpan://generate' + (qs ? '?' + qs : '');
       var ua = navigator.userAgent || '';
       var isAndroid = /Android/i.test(ua);
-      var fallbackUrl = window.location.href;
-      var androidIntentUrl =
-        'intent://generate' + (qs ? '?' + qs : '') +
-        '#Intent;scheme=panpan;package=com.panpan.workbench;S.browser_fallback_url=' +
-        encodeURIComponent(fallbackUrl) + ';end';
 
       var promptBox = document.getElementById('prompt-box');
       var metaRow = document.getElementById('meta-row');
       var openBtn = document.getElementById('open-btn');
+      var openAutoBtn = document.getElementById('open-auto-btn');
       var copyBtn = document.getElementById('copy-btn');
       var statusText = document.getElementById('status-text');
       var subtitle = document.getElementById('subtitle');
@@ -212,10 +220,10 @@
       };
       if (size) addBadge('尺寸 ' + size);
       if (model) addBadge('模型 ' + model);
-      addBadge(auto === '1' || auto === 'true' ? '自动开始生图' : '填入输入框');
+      addBadge(isDefaultAuto ? '自动开始生图' : '默认仅填入输入框');
 
-      var copyDeepLink = function (silent) {
-        var textToCopy = deepLink;
+      var copyDeepLink = function (silent, forceAuto) {
+        var textToCopy = buildUrls(Boolean(forceAuto)).deepLink;
         var done = function () {
           if (!silent) {
             statusText.className = 'status ok';
@@ -246,33 +254,40 @@
         } catch (e) {}
       };
 
-      var launchApp = function () {
-        copyDeepLink(true);
+      var launchApp = function (forceAuto) {
+        var urls = buildUrls(forceAuto);
+        copyDeepLink(true, forceAuto);
         subtitle.textContent = '已同步指令，正在唤起盼盼工作台…';
         statusText.className = 'status ok';
         statusText.textContent = '已同时复制生图指令，若未自动跳转，直接打开盼盼工作台即可自动填入';
         if (isAndroid) {
-          window.location.href = androidIntentUrl;
+          window.location.href = urls.androidIntentUrl;
         } else {
-          window.location.href = deepLink;
+          window.location.href = urls.deepLink;
         }
       };
 
       openBtn.addEventListener('click', function (e) {
         e.preventDefault();
-        launchApp();
+        launchApp(false);
+      });
+
+      openAutoBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        launchApp(true);
       });
 
       copyBtn.addEventListener('click', function () {
-        copyDeepLink(false);
+        copyDeepLink(false, isDefaultAuto);
       });
 
       if (prompt) {
         setTimeout(function () {
+          var urls = buildUrls(isDefaultAuto);
           if (isAndroid) {
-            window.location.href = androidIntentUrl;
+            window.location.href = urls.androidIntentUrl;
           } else {
-            window.location.href = deepLink;
+            window.location.href = urls.deepLink;
           }
         }, 180);
       }

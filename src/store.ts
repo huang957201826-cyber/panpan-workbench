@@ -56,7 +56,7 @@ import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
-import { showBrowserNotification } from './lib/browserNotification'
+import { registerDownloadNotificationHandler, showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT, isHttpUrl } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { CustomPollDeadlineError, getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
@@ -399,6 +399,10 @@ function showTaskCompletionNotification(title: string, body: string, tag = 'task
   if (!settings.taskCompletionNotification) return
   showBrowserNotification(title, { body, tag })
 }
+
+registerDownloadNotificationHandler((title, body, tag) => {
+  showTaskCompletionNotification(title, body, tag)
+})
 
 // 隐私模式中丢弃进入前已开始的任务和对话的提示与通知，退出后也不补发
 function isTaskHiddenByPrivacyMode(task: TaskRecord) {

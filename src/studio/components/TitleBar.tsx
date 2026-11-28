@@ -30,6 +30,7 @@ interface TitleBarProps {
 
 /** 沉浸式顶栏：移动端不渲染释放空间；macOS 使用 38px 透明叠层并给左上角原生红黄绿灯留白；Windows 保留自绘三键 */
 export const TitleBar: React.FC<TitleBarProps> = ({
+  currentProjectTitle,
   isMaximized,
   onToggleMaximize,
   onMinimize,
@@ -50,7 +51,11 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         useMacOverlay ? 'h-[38px] pl-[76px]' : 'h-[36px]'
       }`}
     >
-      <div className="h-full w-12" data-tauri-drag-region />
+      <div className="flex items-center gap-2 min-w-0" data-tauri-drag-region>
+        <span className="truncate text-caption font-semibold text-slate-600 dark:text-slate-300" data-tauri-drag-region>
+          {currentProjectTitle}
+        </span>
+      </div>
       <div className="pointer-events-none mx-4 h-full flex-1 cursor-default" data-tauri-drag-region />
       {renderWinControls && (
         <div className="z-10 flex h-full items-center">

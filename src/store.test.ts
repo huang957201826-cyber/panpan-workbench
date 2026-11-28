@@ -178,6 +178,8 @@ vi.mock('./lib/browserNotification', async (importOriginal) => ({
   showBrowserNotification: vi.fn(() => true),
 }))
 import { showBrowserNotification } from './lib/browserNotification'
+import { withSaveLocation } from './lib/downloadImages'
+import { buildAiLinkPrompt } from './components/settings/McpSettingsSection'
 import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, deleteImage as deleteDbImage, deleteTask as deleteDbTask, getAllAgentConversations, getAllImageIds, getAllTasks, getImage, getStoredImageThumbnail, putAgentConversation, putImage, putImageThumbnail, putTask as putDbTask, replaceAgentConversations, storeImageWithSize } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
@@ -205,6 +207,31 @@ describe('error toast messages', () => {
 
   it('uses a generic message for long raw errors without a title', () => {
     expect(getErrorToastMessage(`invalid request ${'x'.repeat(90)}`)).toBe('操作失败，请查看详情')
+  })
+
+  it('triggers system notification on download completion when taskCompletionNotification is enabled', () => {
+    vi.mocked(showBrowserNotification).mockClear()
+    useStore.getState().setSettings({ taskCompletionNotification: true })
+    const msg = withSaveLocation('已下载', '系统相册（Pictures/PanPanWorkbench）')
+    expect(msg).toBe('已下载，已保存到 系统相册（Pictures/PanPanWorkbench）')
+    expect(showBrowserNotification).toHaveBeenCalledWith(
+      '图片下载完成',
+      expect.objectContaining({
+        body: '已下载，已保存到 系统相册（Pictures/PanPanWorkbench）',
+      }),
+    )
+  })
+
+  it('builds AI wakeup prompt with fill-only default, optional auto-submit, and non-URL reference image reminder', () => {
+    const fillOnly = buildAiLinkPrompt(false)
+    expect(fillOnly).not.toContain('&auto=1')
+    expect(fillOnly).toContain('点击仅填入输入框')
+    expect(fillOnly).toContain('💡 建议参考图')
+
+    const autoSend = buildAiLinkPrompt(true)
+    expect(autoSend).toContain('&auto=1')
+    expect(autoSend).toContain('点击后自动填入并立即发起生图')
+    expect(autoSend).toContain('💡 建议参考图')
   })
 })
 

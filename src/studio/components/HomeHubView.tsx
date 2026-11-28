@@ -67,6 +67,7 @@ export function HomeHubView({
     builtinSkills,
     overrides: skillOverrides,
   }), activeSkillId)
+  const customAppName = useStore((s) => s.settings.customAppName?.trim())
   const canGenerate = Boolean(prompt.trim() || activeSkillId) && !isGenerating
   const sizeLabel = sizeOptions.find((item) => item.res === params.dimension)?.label ?? params.dimension
 
@@ -141,7 +142,7 @@ export function HomeHubView({
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.03] px-3 py-0.5 text-[10.5px] font-mono uppercase tracking-widest text-slate-500 dark:border-white/[0.06] dark:bg-white/[0.05] dark:text-slate-400">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-            <span>Panpan Studio · Image Engine</span>
+            <span>{customAppName || 'Panpan Studio · Image Engine'}</span>
           </div>
           <h1 className="font-display text-balance bg-gradient-to-br from-slate-950 via-slate-800 to-slate-500 bg-clip-text text-[26px] font-black leading-[1.18] tracking-tight text-transparent drop-shadow-sm dark:from-white dark:via-slate-200 dark:to-slate-500 sm:text-[34px] lg:text-[42px]">
             让每一个画面构想，在此精准呈现

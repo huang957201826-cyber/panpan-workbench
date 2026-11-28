@@ -195,6 +195,8 @@ export interface AppSettings {
   studioShellEnabled?: boolean
   /** 自定义软件显示名称（默认“盼盼工作台”，支持安卓/平板/iPhone/iPad/桌面端） */
   customAppName?: string
+  /** 外部 AI 唤醒链接打开后是否默认自动提交生图（默认 false：仅填入输入框） */
+  aiLinkAutoSubmit?: boolean
   /** 界面缩放百分比：只缩放 UI 外壳，画布世界坐标不变 */
   uiScale?: UiScale
   profiles: ApiProfile[]

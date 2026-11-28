@@ -1798,7 +1798,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       操作与输入习惯
                     </h4>
 
-                    <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
+                    <div className="flex items-center justify-between gap-4">
                       <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
                         任务提交快捷键
                       </div>
@@ -1822,54 +1822,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         ))}
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
-                      <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                        界面缩放比例
-                      </div>
-                      <div className="flex items-center gap-1 p-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.06] shrink-0">
-                        {(['100%', '110%', '125%', '150%'] as const).map((s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            onClick={() => setUiScale(s)}
-                            className={`h-7 px-2.5 rounded-full text-caption font-mono font-medium transition cursor-pointer ${
-                              uiScale === s
-                                ? 'bg-black text-white dark:bg-white dark:text-black shadow-2xs'
-                                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                            }`}
-                          >
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="pt-3.5 border-t border-black/[0.05] dark:border-white/[0.06] space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                          自定义软件名称
-                        </div>
-                        {settings.customAppName?.trim() && (
-                          <button
-                            type="button"
-                            onClick={() => setSettings({ customAppName: '' })}
-                            className="shrink-0 h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
-                          >
-                            恢复默认
-                          </button>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        maxLength={32}
-                        value={settings.customAppName ?? ''}
-                        onChange={(e) => setSettings({ customAppName: e.target.value })}
-                        placeholder="盼盼工作台"
-                        className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white"
-                      />
-                    </div>
-
                   </section>
 
                   {/* Card 2: 下载与通知 */}
@@ -1980,7 +1932,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     <div className="flex items-center justify-between gap-4">
                       <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                        任务完成或失败时发送系统通知
+                        任务完成、失败或下载完成时发送系统通知
                       </div>
                       <MonoSwitch
                         checked={Boolean(settings.taskCompletionNotification)}
@@ -2131,8 +2083,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </section>
 
-                  <section className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow p-5 space-y-3">
-                    <div className="flex items-center justify-between gap-4">
+                  <section className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow p-5 space-y-4">
+                    <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
                       <h4 className="text-body font-bold text-slate-900 dark:text-white">
                         界面字体
                       </h4>
@@ -2156,6 +2108,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
+                      <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                        界面缩放比例
+                      </div>
+                      <div className="flex items-center gap-1 p-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.06] shrink-0">
+                        {(['100%', '110%', '125%', '150%'] as const).map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setUiScale(s)}
+                            className={`h-7 px-2.5 rounded-full text-caption font-mono font-medium transition cursor-pointer ${
+                              uiScale === s
+                                ? 'bg-black text-white dark:bg-white dark:text-black shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                          自定义软件名称
+                        </div>
+                        {settings.customAppName?.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setSettings({ customAppName: '' })}
+                            className="shrink-0 h-8 px-3 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-caption font-medium transition cursor-pointer"
+                          >
+                            恢复默认
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        maxLength={32}
+                        value={settings.customAppName ?? ''}
+                        onChange={(e) => setSettings({ customAppName: e.target.value })}
+                        placeholder="盼盼工作台"
+                        className="w-full h-10 px-3.5 rounded-xl bg-[#f3f4f8] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-black/30 dark:focus:border-white/30 outline-none text-body-sm text-slate-900 dark:text-white select-text"
+                      />
                     </div>
                   </section>
                 </div>

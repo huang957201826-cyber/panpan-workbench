@@ -55,6 +55,8 @@ interface AppSidebarProps {
   hideRail?: boolean;
   /** 平板/手机下项目抽屉以覆盖式 Slide-over 浮层展开，避免挤压画布 */
   overlayDrawer?: boolean;
+  /** 自定义软件显示名称 */
+  appName?: string;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -73,6 +75,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   canManageProjects = true,
   hideRail = false,
   overlayDrawer = false,
+  appName = '盼盼工作台',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -122,9 +125,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   return (
     <div className="ui-scale-chrome relative z-30 flex h-full shrink-0 select-none text-slate-800 dark:text-slate-200">
       {!hideRail && (
-      <aside data-app-rail className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center border-r border-black/[0.05] bg-white py-6 dark:border-white/[0.06] dark:bg-[#10121a]">
-        <div className="flex h-9 w-9 items-center justify-center text-slate-900 dark:text-white" title="盼盼工作台 · STUDIO">
-          <AppLogo size={24} className="h-6 w-6" />
+      <aside data-app-rail className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center border-r border-black/[0.05] bg-white py-5 dark:border-white/[0.06] dark:bg-[#10121a]">
+        <div className="flex flex-col items-center gap-1 px-1 max-w-full" title={`${appName} · STUDIO`}>
+          <div className="flex h-9 w-9 items-center justify-center text-slate-900 dark:text-white">
+            <AppLogo size={24} className="h-6 w-6" />
+          </div>
+          <span
+            data-app-rail-title
+            className="max-w-[60px] truncate text-center text-micro font-semibold text-slate-600 dark:text-slate-300"
+          >
+            {appName}
+          </span>
         </div>
 
         <div className="flex flex-1 flex-col items-center justify-center gap-[18px]">
@@ -228,9 +239,9 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         >
         <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} ${overlayDrawer ? 'z-50 shadow-2xl studio-safe-top studio-safe-bottom' : 'z-10'} transition-all duration-150`}>
           <div className={SIDEBAR_HEADER_CLASS}>
-            <div>
+            <div className="min-w-0">
               <h2 className={SIDEBAR_TITLE_CLASS}>项目</h2>
-              <p className={SIDEBAR_SUBTITLE_CLASS}>共 {projects.length} 个项目</p>
+              <p className={`${SIDEBAR_SUBTITLE_CLASS} truncate`}>{appName} · 共 {projects.length} 个项目</p>
             </div>
             <div className="flex items-center gap-1">
               <button

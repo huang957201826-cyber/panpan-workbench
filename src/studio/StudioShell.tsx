@@ -607,7 +607,8 @@ export default function StudioShell() {
       handleParamsChange(nextParams)
       const currentSettings = useStore.getState().settings
       const profile = getActiveApiProfile(currentSettings)
-      if (payload.auto && Boolean(profile.apiKey?.trim())) {
+      const shouldAutoSubmit = Boolean(payload.auto || currentSettings.aiLinkAutoSubmit)
+      if (shouldAutoSubmit && Boolean(profile.apiKey?.trim())) {
         showToast('已从外部 AI 联动发起生图', 'success')
         void handleGenerateRef.current(payload.prompt, nextParams)
       } else {
@@ -680,7 +681,7 @@ export default function StudioShell() {
       setBatchDownloadProgress(null)
     }
     if (failed) showToast(`有 ${failed} 张图片下载失败${error ? `：${error}` : ''}`, 'error')
-    else if (location) showToast(withSaveLocation('下载完成', location), 'success')
+    else showToast(withSaveLocation('下载完成', location), 'success')
   }
 
   const batchDelete = () => {
@@ -858,12 +859,21 @@ export default function StudioShell() {
 
   useEffect(() => {
     document.title = appDisplayName
+    if (isTauri && !isMobile) {
+      void getCurrentWindow().setTitle(appDisplayName).catch(() => {})
+    }
+    const androidBridge = (window as unknown as { __PANPAN_ANDROID__?: { setAppTitle?: (t: string) => void } }).__PANPAN_ANDROID__
+    try {
+      androidBridge?.setAppTitle?.(appDisplayName)
+    } catch {
+      // ignore
+    }
   }, [appDisplayName])
 
   return (
     <div className={`studio-root ${isMobile ? 'studio-safe-top' : ''}`}>
       <TitleBar
-        currentProjectTitle={activeProject?.name ?? appDisplayName}
+        currentProjectTitle={settings.customAppName?.trim() ? `${appDisplayName} · ${activeProject?.name ?? ''}`.replace(/ · $/, '') : (activeProject?.name ?? appDisplayName)}
         folders={folders}
         activeFolderId={activeProject?.id ?? ''}
         activeSchemeId={activeCanvas?.id ?? ''}
@@ -940,6 +950,7 @@ export default function StudioShell() {
           canManageProjects={true}
           hideRail={viewportLayout.isPhone}
           overlayDrawer={isOverlaySidebar}
+          appName={appDisplayName}
         />
 
         <div className="relative flex flex-1 overflow-hidden">
@@ -969,11 +980,13 @@ export default function StudioShell() {
                 <button
                   type="button"
                   onClick={() => setMobileCanvasSheetOpen(true)}
-                  className="flex min-w-0 max-w-[60%] items-center gap-1.5 rounded-full border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium text-slate-800 dark:border-white/[0.1] dark:bg-white/[0.06] dark:text-slate-100"
+                  className="flex min-w-0 max-w-[64%] items-center gap-1.5 rounded-full border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium text-slate-800 dark:border-white/[0.1] dark:bg-white/[0.06] dark:text-slate-100"
                   aria-label="切换画布"
                 >
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-900 dark:bg-white" />
-                  <span className="truncate">{activeCanvas.name}</span>
+                  <span className="truncate">
+                    {settings.customAppName?.trim() ? `${appDisplayName} · ${activeCanvas.name}` : activeCanvas.name}
+                  </span>
                   <span className="text-[11px] text-slate-400">▾</span>
                 </button>
               ) : (
