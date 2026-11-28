@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Search, Sparkles, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { RotateCcw, Search, Settings, Sparkles, X } from 'lucide-react'
 import type { Skill, SkillSlot, SkillSlotValue } from '../../types'
 import { createInputImageFromFile, useStore } from '../../store'
 import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, validateSkillValues } from '../../lib/capabilitySkills'
@@ -64,15 +64,60 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     for (const skill of skills) counts.set(skill.category, (counts.get(skill.category) ?? 0) + 1)
     return counts
   }, [skills])
-  const categories = useMemo(() => ['全部', ...categoryCounts.keys()], [categoryCounts])
+  const mineCount = useMemo(() => skills.filter((skill) => skill.source !== 'builtin').length, [skills])
+  const favoriteCount = useMemo(() => skills.filter((skill) => skill.favorite === true).length, [skills])
+  const quickCategories = useMemo(
+    () => [
+      { key: '全部', count: skills.length },
+      { key: '我的技能', count: mineCount },
+      { key: '我的收藏', count: favoriteCount },
+    ],
+    [skills.length, mineCount, favoriteCount],
+  )
+  const sceneCategories = useMemo(() => [...categoryCounts.keys()], [categoryCounts])
+  const categories = useMemo(
+    () => ['全部', '我的技能', '我的收藏', ...sceneCategories],
+    [sceneCategories],
+  )
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return skills.filter((skill) => {
-      if (category !== '全部' && skill.category !== category) return false
+      if (category === '我的技能') {
+        if (skill.source === 'builtin') return false
+      } else if (category === '我的收藏') {
+        if (skill.favorite !== true) return false
+      } else if (category !== '全部' && skill.category !== category) {
+        return false
+      }
       if (!keyword) return true
       return `${skill.name} ${skill.description} ${skill.category}`.toLowerCase().includes(keyword)
     })
   }, [skills, category, query])
+
+  const catScrollRef = useRef<HTMLDivElement>(null)
+  const [catScrollUp, setCatScrollUp] = useState(false)
+  const [catScrollDown, setCatScrollDown] = useState(false)
+
+  useEffect(() => {
+    const el = catScrollRef.current
+    if (!el || detailOnly) {
+      setCatScrollUp(false)
+      setCatScrollDown(false)
+      return
+    }
+    const updateScroll = () => {
+      setCatScrollUp(el.scrollTop > 4)
+      setCatScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+    }
+    updateScroll()
+    el.addEventListener('scroll', updateScroll, { passive: true })
+    const ro = new ResizeObserver(updateScroll)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScroll)
+      ro.disconnect()
+    }
+  }, [detailOnly, sceneCategories.length, skills.length])
 
   useEffect(() => {
     if (!activeSkillId) return
@@ -159,52 +204,155 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           {!detailOnly && (
-            <div className="flex sm:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.06] px-3 py-2 dark:border-white/[0.08]">
-              {categories.map((item) => {
-                const count = item === '全部' ? skills.length : categoryCounts.get(item) ?? 0
-                const active = category === item
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => { setCategory(item); setSelected(null) }}
-                    className={`shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1 text-caption font-medium transition-colors ${
-                      active
-                        ? 'bg-black text-white dark:bg-white dark:text-black'
-                        : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.08] dark:text-slate-300'
-                    }`}
-                  >
-                    <span>{item}</span>
-                    <span className={`font-mono text-micro ${active ? 'opacity-70' : 'text-slate-400'}`}>{count}</span>
-                  </button>
-                )
-              })}
+            <div className="relative flex sm:hidden shrink-0 items-center border-b border-black/[0.06] dark:border-white/[0.08]">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-3 py-2 pr-8">
+                {categories.map((item, idx) => {
+                  const count =
+                    item === '全部'
+                      ? skills.length
+                      : item === '我的技能'
+                      ? mineCount
+                      : item === '我的收藏'
+                      ? favoriteCount
+                      : categoryCounts.get(item) ?? 0
+                  const active = category === item
+                  return (
+                    <div key={item} className="contents">
+                      {idx === 3 && <span className="mx-1 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />}
+                      <button
+                        type="button"
+                        onClick={() => { setCategory(item); setSelected(null) }}
+                        className={`shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1 text-caption font-medium transition-colors ${
+                          active
+                            ? 'bg-black text-white shadow-sm dark:bg-white dark:text-black'
+                            : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.08] dark:text-slate-300'
+                        }`}
+                      >
+                        <span>{item}</span>
+                        <span className={`font-mono text-micro ${active ? 'opacity-80' : 'text-slate-500 dark:text-slate-400'}`}>{count}</span>
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-white to-transparent dark:from-[#161822]" aria-hidden="true" />
             </div>
           )}
 
           {!detailOnly && (
-            <aside className="hidden sm:flex w-[148px] md:w-[170px] shrink-0 flex-col border-r border-black/[0.06] dark:border-white/[0.08]">
-              <div className="px-3 pb-1 pt-3 text-caption font-medium text-slate-400">分类</div>
-              <div data-skill-categories className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-                {categories.map((item) => {
-                  const count = item === '全部' ? skills.length : categoryCounts.get(item) ?? 0
-                  const active = category === item
-                  return (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setCategory(item)}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-body-sm transition-colors ${
-                        active
-                          ? 'bg-black text-white dark:bg-white dark:text-black'
-                          : 'text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]'
-                      }`}
-                    >
-                      <span className="truncate">{item}</span>
-                      <span className={`shrink-0 font-mono text-caption ${active ? 'text-white/60 dark:text-black/60' : 'text-slate-400'}`}>{count}</span>
-                    </button>
-                  )
-                })}
+            <aside className="hidden sm:flex w-[156px] md:w-[178px] shrink-0 flex-col border-r border-black/[0.06] bg-[#fbfcfd] dark:border-white/[0.08] dark:bg-[#13151e]">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                {catScrollUp && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 z-10 h-5 bg-gradient-to-b from-[#fbfcfd] to-transparent dark:from-[#13151e]"
+                    aria-hidden="true"
+                  />
+                )}
+                <div
+                  ref={catScrollRef}
+                  data-skill-categories
+                  className="sidebar-scroll-hint min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2"
+                >
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                      常用视图
+                    </div>
+                    {quickCategories.map(({ key: item, count }) => {
+                      const active = category === item
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setCategory(item)}
+                          className={`flex h-8 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-caption transition-colors ${
+                            active
+                              ? 'bg-black font-semibold text-white shadow-sm dark:bg-white dark:text-black'
+                              : 'font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate">{item}</span>
+                          <span
+                            className={`shrink-0 font-mono text-micro tabular-nums ${
+                              active ? 'rounded bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="my-2.5 border-t border-black/[0.05] dark:border-white/[0.06]" />
+
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                      场景分类
+                    </div>
+                    {sceneCategories.map((item) => {
+                      const count = categoryCounts.get(item) ?? 0
+                      const active = category === item
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setCategory(item)}
+                          className={`flex h-8 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-caption transition-colors ${
+                            active
+                              ? 'bg-black font-semibold text-white shadow-sm dark:bg-white dark:text-black'
+                              : 'font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate">{item}</span>
+                          <span
+                            className={`shrink-0 font-mono text-micro tabular-nums ${
+                              active ? 'rounded bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                {catScrollDown && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-7 items-end justify-center bg-gradient-to-t from-[#fbfcfd] via-[#fbfcfd]/90 to-transparent pb-1 dark:from-[#13151e] dark:via-[#13151e]/90"
+                    aria-hidden="true"
+                  >
+                    <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-micro font-medium text-slate-500 dark:bg-white/[0.08] dark:text-slate-400">
+                      ↓ 更多分类
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 space-y-1 border-t border-black/[0.05] p-2 dark:border-white/[0.06]">
+                {(category !== '全部' || query.trim() !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setCategory('全部'); setQuery('') }}
+                    className="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl bg-black/[0.04] text-caption font-medium text-slate-700 transition hover:bg-black/[0.08] dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/[0.1]"
+                  >
+                    <RotateCcw size={12} />
+                    <span>重置筛选</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose()
+                    useStore.getState().setShowSettings(true, 'about')
+                  }}
+                  className="flex h-8 w-full items-center justify-between rounded-xl px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.04] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Settings size={13} className="text-slate-400" />
+                    <span>设置与帮助</span>
+                  </span>
+                  <span className="font-mono text-micro text-slate-400">v{__APP_VERSION__}</span>
+                </button>
               </div>
             </aside>
           )}
@@ -222,7 +370,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                   />
                 </div>
               </div>
-              <div data-skill-list className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+              <div data-skill-list className="sidebar-scroll-hint min-h-0 flex-1 overflow-y-auto px-3 pb-3">
                 {loading ? (
                   <p className="px-2 py-8 text-center text-body-sm text-slate-400">正在加载技能…</p>
                 ) : loadError ? (

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { PanelLeftClose, PanelLeftOpen, RotateCcw, Settings } from 'lucide-react'
 import { useStore } from '../../store'
 import { loadBuiltinSkills } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
@@ -17,6 +17,10 @@ import { SkillHubView } from '../modules/skills/SkillHubView'
 import type { SkillItem } from '../modules/skills/types'
 import {
   SIDEBAR_BODY_CLASS,
+  SIDEBAR_FOOTER_BUTTON_CLASS,
+  SIDEBAR_FOOTER_CLASS,
+  SIDEBAR_GROUP_DIVIDER_CLASS,
+  SIDEBAR_GROUP_TITLE_CLASS,
   SIDEBAR_HEADER_CLASS,
   SIDEBAR_ICON_BUTTON_CLASS,
   SIDEBAR_ITEM_ACTIVE_CLASS,
@@ -150,36 +154,91 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     onApplied()
   }
 
+  const scrollBodyRef = useRef<HTMLDivElement>(null)
+  const [canScrollUp, setCanScrollUp] = useState(false)
+  const [canScrollDown, setCanScrollDown] = useState(false)
+
+  useEffect(() => {
+    const el = scrollBodyRef.current
+    if (!el || collapsed) {
+      setCanScrollUp(false)
+      setCanScrollDown(false)
+      return
+    }
+    const updateScrollState = () => {
+      setCanScrollUp(el.scrollTop > 4)
+      setCanScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+    }
+    updateScrollState()
+    el.addEventListener('scroll', updateScrollState, { passive: true })
+    const ro = new ResizeObserver(updateScrollState)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScrollState)
+      ro.disconnect()
+    }
+  }, [collapsed, allCategoryLabels.length, items.length])
+
+  const getCategoryCount = (label: string) =>
+    label === 'all'
+      ? items.length
+      : label === 'mine'
+      ? items.filter((item) => item.isCustom).length
+      : label === 'favorites'
+      ? items.filter((item) => item.isFavorite).length
+      : items.filter((item) => item.category === label).length
+
+  const renderSidebarItem = (label: string) => {
+    const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
+    const count = getCategoryCount(label)
+    const active = category === label
+    return (
+      <button
+        key={label}
+        type="button"
+        onClick={() => setCategory(label)}
+        className={`${SIDEBAR_ITEM_CLASS} justify-between text-left ${active ? SIDEBAR_ITEM_ACTIVE_CLASS : SIDEBAR_ITEM_IDLE_CLASS}`}
+      >
+        <span className="truncate">{title}</span>
+        <span
+          className={`text-micro tabular-nums ${
+            active ? 'rounded-md bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          {count}
+        </span>
+      </button>
+    )
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
-      <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
-        {['all', 'mine', ...allCategoryLabels, 'favorites'].map((label) => {
-          const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
-          const count =
-            label === 'all'
-              ? items.length
-              : label === 'mine'
-              ? items.filter((item) => item.isCustom).length
-              : label === 'favorites'
-              ? items.filter((item) => item.isFavorite).length
-              : items.filter((item) => item.category === label).length
-          const active = category === label
-          return (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setCategory(label)}
-              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition ${
-                active
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
-              }`}
-            >
-              <span>{title}</span>
-              <span className={`text-micro tabular-nums ${active ? 'opacity-80' : 'text-slate-400'}`}>{count}</span>
-            </button>
-          )
-        })}
+      <div className="relative flex min-[680px]:hidden shrink-0 items-center border-b border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-3 py-2 pr-8">
+          {['all', 'mine', 'favorites', ...allCategoryLabels].map((label, idx) => {
+            const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
+            const count = getCategoryCount(label)
+            const active = category === label
+            return (
+              <div key={label} className="contents">
+                {idx === 3 && <span className="mx-1 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />}
+                <button
+                  type="button"
+                  onClick={() => setCategory(label)}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+                    active
+                      ? 'bg-black text-white shadow-sm dark:bg-white dark:text-black'
+                      : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
+                  }`}
+                >
+                  <span>{title}</span>
+                  <span className={`text-micro tabular-nums ${active ? 'opacity-85' : 'text-slate-500 dark:text-slate-400'}`}>{count}</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-[#fbfcfd] to-transparent dark:from-[#12141c]" aria-hidden="true" />
       </div>
       <aside
         data-skill-rail
@@ -203,32 +262,65 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
             {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
         </div>
-        {!collapsed &&
-          <div className={`${SIDEBAR_BODY_CLASS} space-y-1`}>
-          {['all', 'mine', ...allCategoryLabels, 'favorites'].map((label) => {
-            const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
-            const count =
-              label === 'all'
-                ? items.length
-                : label === 'mine'
-                ? items.filter((item) => item.isCustom).length
-                : label === 'favorites'
-                ? items.filter((item) => item.isFavorite).length
-                : items.filter((item) => item.category === label).length
-            const active = category === label
-            return (
+        {!collapsed && (
+          <>
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+              {canScrollUp && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 top-0 z-10 h-5 bg-gradient-to-b from-[#fbfcfd] to-transparent dark:from-[#12141c]"
+                  aria-hidden="true"
+                />
+              )}
+              <div ref={scrollBodyRef} className={SIDEBAR_BODY_CLASS}>
+                <div className="space-y-1">
+                  <div className={SIDEBAR_GROUP_TITLE_CLASS}>常用视图</div>
+                  {['all', 'mine', 'favorites'].map(renderSidebarItem)}
+                </div>
+
+                <div className={SIDEBAR_GROUP_DIVIDER_CLASS} />
+
+                <div className="space-y-1 pb-2">
+                  <div className={SIDEBAR_GROUP_TITLE_CLASS}>场景分类</div>
+                  {allCategoryLabels.map(renderSidebarItem)}
+                </div>
+              </div>
+              {canScrollDown && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-7 items-end justify-center bg-gradient-to-t from-[#fbfcfd] via-[#fbfcfd]/90 to-transparent pb-1 dark:from-[#12141c] dark:via-[#12141c]/90"
+                  aria-hidden="true"
+                >
+                  <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-micro font-medium text-slate-500 dark:bg-white/[0.08] dark:text-slate-400">
+                    ↓ 更多分类
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className={`${SIDEBAR_FOOTER_CLASS} space-y-1.5`}>
+              {category !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setCategory('all')}
+                  className={SIDEBAR_FOOTER_BUTTON_CLASS}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>重置分类筛选</span>
+                </button>
+              )}
               <button
-                key={label}
                 type="button"
-                onClick={() => setCategory(label)}
-                className={`${SIDEBAR_ITEM_CLASS} justify-between text-left ${active ? `${SIDEBAR_ITEM_ACTIVE_CLASS} font-semibold` : SIDEBAR_ITEM_IDLE_CLASS}`}
+                onClick={() => useStore.getState().setShowSettings(true, 'about')}
+                className="flex h-8 w-full items-center justify-between rounded-xl px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.04] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
               >
-                <span className="truncate">{title}</span>
-                <span className={`text-micro tabular-nums ${active ? 'opacity-80' : 'text-slate-400'}`}>{count}</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Settings className="h-3.5 w-3.5 text-slate-400" />
+                  <span>设置与帮助</span>
+                </span>
+                <span className="font-mono text-micro text-slate-400">v{__APP_VERSION__}</span>
               </button>
-            )
-          })}
-          </div>}
+            </div>
+          </>
+        )}
       </aside>
       <div className="flex-1 min-w-0 h-full">
         <SkillHubView

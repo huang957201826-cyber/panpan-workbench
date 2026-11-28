@@ -987,36 +987,120 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             ========================================================================= */}
         <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
           {/* Left Vertical Sub-Tabs on Desktop/Tablet, Horizontal Segmented Tabs on Phone */}
-          <aside className="w-full md:w-[180px] shrink-0 px-3 py-2 md:p-3 border-b md:border-b-0 md:border-r border-black/[0.05] dark:border-white/[0.06] bg-white/75 dark:bg-[#11131b] flex flex-row md:flex-col justify-between">
-            <div className="flex md:block items-center gap-1 md:gap-0 md:space-y-1 overflow-x-auto no-scrollbar text-caption w-full">
-              {[
-                { id: 'api', label: 'API 配置', icon: Key },
-                { id: 'general', label: '通用', icon: Sliders },
-                { id: 'appearance', label: '外观', icon: Palette },
-                { id: 'data', label: '数据', icon: Database },
-                { id: 'about', label: '关于', icon: Info },
-              ].map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setConfirmCloseUnsaved(false);
-                      setActiveTab(item.id as SettingsTab);
-                    }}
-                    className={`shrink-0 md:w-full h-9 md:h-10 px-3 md:px-3.5 rounded-full flex items-center gap-2 md:gap-2.5 transition-all cursor-pointer text-left font-medium whitespace-nowrap ${
-                      isActive
-                        ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 stroke-[1.8] shrink-0" />
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
+          <aside className="relative w-full md:w-[196px] shrink-0 px-3 py-2 md:p-3 border-b md:border-b-0 md:border-r border-black/[0.05] dark:border-white/[0.06] bg-white/85 dark:bg-[#11131b] flex flex-row md:flex-col justify-between overflow-hidden">
+            <div className="sidebar-scroll-hint flex md:flex-col items-center md:items-stretch gap-1 md:gap-0 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto no-scrollbar text-caption w-full md:flex-1 md:min-h-0 pr-6 md:pr-0">
+              <div className="hidden md:block px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                生成与偏好
+              </div>
+              <div className="flex md:flex-col items-center md:items-stretch gap-1 md:space-y-1 shrink-0">
+                {[
+                  { id: 'api', label: 'API 配置', icon: Key },
+                  { id: 'general', label: '通用', icon: Sliders },
+                  { id: 'appearance', label: '外观', icon: Palette },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setConfirmCloseUnsaved(false);
+                        setActiveTab(item.id as SettingsTab);
+                      }}
+                      className={`shrink-0 md:w-full h-9 md:h-9 px-3 md:px-3 rounded-xl flex items-center gap-2 md:gap-2.5 transition-all cursor-pointer text-left whitespace-nowrap ${
+                        isActive
+                          ? 'bg-black text-white font-semibold dark:bg-white dark:text-black shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300 font-medium hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 stroke-[1.8] shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block my-3 border-t border-black/[0.05] dark:border-white/[0.06]" />
+              <span className="md:hidden mx-0.5 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />
+
+              <div className="hidden md:block px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                存储与备份
+              </div>
+              <div className="flex md:flex-col items-center md:items-stretch gap-1 md:space-y-1 shrink-0">
+                {[
+                  { id: 'data', label: '数据', icon: Database },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setConfirmCloseUnsaved(false);
+                        setActiveTab(item.id as SettingsTab);
+                      }}
+                      className={`shrink-0 md:w-full h-9 md:h-9 px-3 md:px-3 rounded-xl flex items-center gap-2 md:gap-2.5 transition-all cursor-pointer text-left whitespace-nowrap ${
+                        isActive
+                          ? 'bg-black text-white font-semibold dark:bg-white dark:text-black shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300 font-medium hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 stroke-[1.8] shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <span className="md:hidden mx-0.5 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />
+
+              {/* Bottom fixed section on Desktop/Tablet, inline tail on Phone */}
+              <div className="shrink-0 flex md:flex-col items-center md:items-stretch gap-1 md:gap-1.5 md:mt-auto md:pt-2.5 md:border-t md:border-black/[0.05] dark:md:border-white/[0.06]">
+                <button
+                  onClick={() => {
+                    setConfirmCloseUnsaved(false);
+                    setActiveTab('about');
+                  }}
+                  className={`shrink-0 md:w-full h-9 md:h-9 px-3 md:px-3 rounded-xl flex items-center gap-2 md:gap-2.5 transition-all cursor-pointer text-left whitespace-nowrap ${
+                    activeTab === 'about'
+                      ? 'bg-black text-white font-semibold dark:bg-white dark:text-black shadow-sm'
+                      : 'text-slate-600 dark:text-slate-300 font-medium hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <Info className="w-4 h-4 stroke-[1.8] shrink-0" />
+                  <span className="truncate">关于</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleCheckUpdate(true)}
+                  disabled={updateCheckStatus === 'checking'}
+                  className={`hidden md:flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left transition cursor-pointer disabled:opacity-60 ${
+                    updateCheckStatus === 'available'
+                      ? 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-black/[0.03] hover:bg-black/[0.06] dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-200 border border-black/[0.05] dark:border-white/[0.06]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${updateCheckStatus === 'checking' ? 'animate-spin' : ''}`} />
+                    <span className="text-caption font-semibold truncate">
+                      {updateCheckStatus === 'checking'
+                        ? '检查更新中…'
+                        : updateCheckStatus === 'available'
+                        ? '发现新版本'
+                        : '版本升级'}
+                    </span>
+                  </span>
+                  <span className="font-mono text-micro text-slate-500 dark:text-slate-400 shrink-0">
+                    v{__APP_VERSION__}
+                  </span>
+                </button>
+              </div>
             </div>
+            <div
+              className="md:hidden pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-white to-transparent dark:from-[#11131b]"
+              aria-hidden="true"
+            />
           </aside>
 
           {/* Right Content Stage */}

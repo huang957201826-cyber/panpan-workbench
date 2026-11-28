@@ -128,6 +128,14 @@ test('D-11/D-10：保存项目并运行后，刷新仍能看到项目、记录�
   await page.getByRole('button', { name: /运行电池组/ }).click()
   await expect(page.locator('div[title*="点击还原图与全部参数"]').first()).toBeVisible({ timeout: 60_000 })
 
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const raw = localStorage.getItem('panpan-project-workflows-v1')
+      const list = raw ? JSON.parse(raw) : []
+      return list[0]?.results?.length ?? 0
+    })
+  }, { timeout: 10_000 }).toBe(1)
+
   const storedBeforeReload = await page.evaluate(() => {
     const raw = localStorage.getItem('panpan-project-workflows-v1')
     return raw ? JSON.parse(raw) : []

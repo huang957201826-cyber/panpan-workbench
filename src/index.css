@@ -259,6 +259,35 @@ input[type="number"] {
   --page-scrollbar-width: 8px;
 }
 
+/* 侧边栏与弹窗滚动区可发现性细滚动条 */
+.sidebar-scroll-hint {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+.sidebar-scroll-hint::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.sidebar-scroll-hint::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll-hint::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 9999px;
+}
+.sidebar-scroll-hint:hover::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.72);
+}
+:root.dark .sidebar-scroll-hint {
+  scrollbar-color: rgba(100, 116, 139, 0.48) transparent;
+}
+:root.dark .sidebar-scroll-hint::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.48);
+}
+:root.dark .sidebar-scroll-hint:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.72);
+}
+
 :root[data-classic-scrollbar] [data-page-scroll] {
   height: 100dvh;
   overflow-y: scroll;
