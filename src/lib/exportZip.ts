@@ -91,7 +91,7 @@ const SAFE_SETTINGS_KEYS = new Set([
   'batchPromptConcurrency', 'referenceImageEditAction', 'zipDownloadRoutes',
   'saveLocationMode', 'agentScrollToBottomAfterSubmit', 'agentMaxToolRounds',
   'agentWebSearch', 'agentMathFormattingPrompt', 'agentApiConfigMode',
-  'agentTextProfileId', 'agentImageProfileId', 'studioShellEnabled', 'uiScale',
+  'agentTextProfileId', 'agentImageProfileId', 'studioShellEnabled', 'customAppName', 'aiLinkAutoSubmit', 'uiScale',
   'profiles', 'activeProfileId',
 ])
 

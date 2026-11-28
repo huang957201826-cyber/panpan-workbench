@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { useStore } from '../../store'
-import { loadBuiltinSkills } from '../../lib/capabilitySkills'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { PanelLeftClose, PanelLeftOpen, RotateCcw, Settings, Upload } from 'lucide-react'
+import { importData, useStore } from '../../store'
+import { defaultSkillValues, loadBuiltinSkills, resolveSkillParamPatch } from '../../lib/capabilitySkills'
+import { isFavoritesCanvas } from '../../lib/favorites'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { useWorkspaceStore } from '../../lib/workspaceStore'
 import {
   buildRegisteredSkillCatalog,
+  getRegisteredSkillSnapshot,
   removeRegisteredSkill,
+  replaceRegisteredSkillBackup,
   savePromptSkill,
   toggleRegisteredSkillFavorite,
   updateRegisteredSkill,
@@ -17,6 +20,10 @@ import { SkillHubView } from '../modules/skills/SkillHubView'
 import type { SkillItem } from '../modules/skills/types'
 import {
   SIDEBAR_BODY_CLASS,
+  SIDEBAR_FOOTER_BUTTON_CLASS,
+  SIDEBAR_FOOTER_CLASS,
+  SIDEBAR_GROUP_DIVIDER_CLASS,
+  SIDEBAR_GROUP_TITLE_CLASS,
   SIDEBAR_HEADER_CLASS,
   SIDEBAR_ICON_BUTTON_CLASS,
   SIDEBAR_ITEM_ACTIVE_CLASS,
@@ -55,14 +62,28 @@ function toItem(skill: Skill): SkillItem {
     description: skill.description,
     recommendedModel: skill.model || '通用',
     promptTemplate: skill.basePrompt,
+    negativePrompt: skill.negativePrompt,
     tags: skill.tags ?? [],
     variables: skill.slots
-      .filter((slot) => slot.type !== 'image' && slot.type !== 'multi-image')
+      .filter(
+        (slot): slot is typeof slot & { type: 'text' | 'enum' | 'multi' | 'number' | 'bool' } =>
+          slot.type !== 'image' && slot.type !== 'multi-image',
+      )
       .map((slot) => ({
         key: slot.key,
         label: slot.label,
-        defaultValue:
-          typeof slot.defaultValue === 'string' ? slot.defaultValue : (slot.options?.[0] ?? ''),
+        type: slot.type,
+        defaultValue: Array.isArray(slot.defaultValue)
+          ? slot.defaultValue.join('、')
+          : typeof slot.defaultValue === 'boolean'
+          ? slot.defaultValue
+            ? '是'
+            : '否'
+          : typeof slot.defaultValue === 'number'
+          ? String(slot.defaultValue)
+          : typeof slot.defaultValue === 'string'
+          ? slot.defaultValue
+          : (slot.options?.[0] ?? ''),
         placeholder: slot.placeholder,
         options: slot.options,
       })),
@@ -90,9 +111,12 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   const [category, setCategory] = useState('all')
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem('panpan-skill-sidebar-collapsed') === '1'
+      const saved = localStorage.getItem('panpan-skill-sidebar-collapsed')
+      if (saved === '1') return true
+      if (saved === '0') return window.innerWidth < 680
+      return window.innerWidth < 1080
     } catch {
-      return false
+      return window.innerWidth < 1080
     }
   })
   const overrides = useCapabilitySkillStore((state) => state.builtinOverrides)
@@ -131,18 +155,192 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     [skills, overrides, customSkills, mineCapabilitySkills],
   )
   const items = useMemo(() => registrySkills.map(toItem), [registrySkills])
+  const allCategoryLabels = useMemo(() => {
+    const extras: string[] = []
+    items.forEach((item) => {
+      if (item.category && !CATEGORY_LABELS.includes(item.category) && !extras.includes(item.category)) {
+        extras.push(item.category)
+      }
+    })
+    return [...CATEGORY_LABELS, ...extras]
+  }, [items])
 
-  const handleApplySkill = (item: SkillItem, text: string, mode: 'replace' | 'append' = 'replace') => {
+  const handleApplySkill = (
+    item: SkillItem,
+    text: string,
+    mode: 'replace' | 'append' = 'replace',
+    variableValues?: Record<string, string>,
+  ) => {
+    const storeState = useStore.getState()
+    if (mode === 'replace' && storeState.activeSkillId) {
+      clearSkillChip()
+    }
+    const matchedSkill = registrySkills.find(
+      (skill) => (skill.registryId ?? skill.id) === item.id || skill.id === item.id,
+    )
+    if (matchedSkill) {
+      const mergedValues = {
+        ...defaultSkillValues(matchedSkill),
+        ...(variableValues ?? {}),
+      }
+      const patch = resolveSkillParamPatch(matchedSkill, mergedValues)
+      if (patch.size || patch.count) {
+        const paramPatch = {
+          ...(patch.size ? { size: patch.size as typeof storeState.params.size } : {}),
+          ...(patch.count ? { n: patch.count as typeof storeState.params.n } : {}),
+        }
+        storeState.setParams(paramPatch)
+        const ws = useWorkspaceStore.getState()
+        const activeCanvas = ws.canvases.find((c) => c.id === ws.activeCanvasId)
+        if (activeCanvas && !isFavoritesCanvas(activeCanvas.id)) {
+          ws.updateCanvas(activeCanvas.id, {
+            paramsDraft: { ...storeState.params, ...paramPatch },
+          })
+        }
+      }
+    }
     const current = useStore.getState().prompt.trim()
     setPrompt(mode === 'append' && current ? `${current}，${text}` : text)
     onApplied()
   }
 
+  const scrollBodyRef = useRef<HTMLDivElement>(null)
+  const skillPackInputRef = useRef<HTMLInputElement>(null)
+  const [canScrollUp, setCanScrollUp] = useState(false)
+  const [canScrollDown, setCanScrollDown] = useState(false)
+  const hasPromptOverrides = useMemo(
+    () => Object.values(overrides).some((item) => Boolean(item?.basePrompt || item?.negativePrompt)),
+    [overrides],
+  )
+
+  const handleImportSkillPack = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      if (file.name.toLowerCase().endsWith('.json')) {
+        const parsed = JSON.parse(await file.text()) as {
+          capabilityOverrides?: Record<string, { basePrompt?: string; negativePrompt?: string; description?: string; name?: string }>
+        }
+        if (parsed?.capabilityOverrides && typeof parsed.capabilityOverrides === 'object') {
+          const snapshot = getRegisteredSkillSnapshot()
+          replaceRegisteredSkillBackup({
+            overrides: { ...snapshot.overrides, ...parsed.capabilityOverrides },
+          })
+          useStore.getState().showToast('已导入技能精调包', 'success')
+          return
+        }
+      }
+      await importData(file, { importConfig: true, importTasks: false })
+    } catch (err) {
+      useStore.getState().showToast(err instanceof Error ? err.message : '导入技能包失败', 'error')
+    }
+  }
+
+  const handleResetBuiltinPromptOverrides = () => {
+    const nextOverrides = Object.fromEntries(
+      Object.entries(overrides).flatMap(([id, item]) => {
+        if (!item) return []
+        const { basePrompt: _b, negativePrompt: _neg, description: _d, name: _n, slots: _s, ...rest } = item
+        return Object.keys(rest).length ? [[id, rest]] : []
+      }),
+    )
+    useCapabilitySkillStore.getState().replaceOverrides(nextOverrides)
+    useStore.getState().showToast('已恢复官方默认内置技能提示词', 'info')
+  }
+
+  useEffect(() => {
+    const el = scrollBodyRef.current
+    if (!el || collapsed) {
+      setCanScrollUp(false)
+      setCanScrollDown(false)
+      return
+    }
+    const updateScrollState = () => {
+      setCanScrollUp(el.scrollTop > 4)
+      setCanScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+    }
+    updateScrollState()
+    el.addEventListener('scroll', updateScrollState, { passive: true })
+    const ro = new ResizeObserver(updateScrollState)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScrollState)
+      ro.disconnect()
+    }
+  }, [collapsed, allCategoryLabels.length, items.length])
+
+  const getCategoryCount = (label: string) =>
+    label === 'all'
+      ? items.length
+      : label === 'mine'
+      ? items.filter((item) => item.isCustom).length
+      : label === 'favorites'
+      ? items.filter((item) => item.isFavorite).length
+      : items.filter((item) => item.category === label).length
+
+  const renderSidebarItem = (label: string) => {
+    const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
+    const count = getCategoryCount(label)
+    const active = category === label
+    return (
+      <button
+        key={label}
+        type="button"
+        onClick={() => setCategory(label)}
+        className={`${SIDEBAR_ITEM_CLASS} justify-between text-left ${active ? SIDEBAR_ITEM_ACTIVE_CLASS : SIDEBAR_ITEM_IDLE_CLASS}`}
+      >
+        <span className="truncate">{title}</span>
+        <span
+          className={`text-micro tabular-nums ${
+            active ? 'rounded-md bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          {count}
+        </span>
+      </button>
+    )
+  }
+
   return (
-    <div className="flex h-full min-h-0 bg-[#f3f4f8] dark:bg-[#0c0e14]">
+    <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
+      <input
+        ref={skillPackInputRef}
+        type="file"
+        accept=".zip,.json"
+        className="hidden"
+        onChange={(e) => { void handleImportSkillPack(e) }}
+      />
+      <div className="relative flex min-[680px]:hidden shrink-0 items-center border-b border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-3 py-2 pr-8">
+          {['all', 'mine', 'favorites', ...allCategoryLabels].map((label, idx) => {
+            const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
+            const count = getCategoryCount(label)
+            const active = category === label
+            return (
+              <div key={label} className="contents">
+                {idx === 3 && <span className="mx-1 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />}
+                <button
+                  type="button"
+                  onClick={() => setCategory(label)}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+                    active
+                      ? 'bg-black text-white shadow-sm dark:bg-white dark:text-black'
+                      : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
+                  }`}
+                >
+                  <span>{title}</span>
+                  <span className={`text-micro tabular-nums ${active ? 'opacity-85' : 'text-slate-500 dark:text-slate-400'}`}>{count}</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-[#fbfcfd] to-transparent dark:from-[#12141c]" aria-hidden="true" />
+      </div>
       <aside
         data-skill-rail
-        className={`${collapsed ? 'flex w-12 shrink-0 flex-col overflow-y-auto border-r border-black/[0.04] bg-[#fbfcfd] p-2 dark:border-white/[0.05] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
+        className={`hidden min-[680px]:flex ${collapsed ? 'w-12 shrink-0 flex-col overflow-y-auto border-r border-black/[0.04] bg-[#fbfcfd] p-2 dark:border-white/[0.05] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
       >
         <div className={`${SIDEBAR_HEADER_CLASS} ${collapsed ? 'items-center justify-center px-0' : ''}`}>
           {!collapsed && (
@@ -162,32 +360,87 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
             {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
         </div>
-        {!collapsed &&
-          <div className={`${SIDEBAR_BODY_CLASS} space-y-1`}>
-          {['all', 'mine', ...CATEGORY_LABELS, 'favorites'].map((label) => {
-            const title = label === 'all' ? '全部技能' : label === 'mine' ? '我的技能' : label === 'favorites' ? '我的收藏' : label
-            const count =
-              label === 'all'
-                ? items.length
-                : label === 'mine'
-                ? items.filter((item) => item.isCustom).length
-                : label === 'favorites'
-                ? items.filter((item) => item.isFavorite).length
-                : items.filter((item) => item.category === label).length
-            const active = category === label
-            return (
+        {!collapsed && (
+          <>
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+              {canScrollUp && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 top-0 z-10 h-5 bg-gradient-to-b from-[#fbfcfd] to-transparent dark:from-[#12141c]"
+                  aria-hidden="true"
+                />
+              )}
+              <div ref={scrollBodyRef} className={SIDEBAR_BODY_CLASS}>
+                <div className="space-y-1">
+                  <div className={SIDEBAR_GROUP_TITLE_CLASS}>常用视图</div>
+                  {['all', 'mine', 'favorites'].map(renderSidebarItem)}
+                </div>
+
+                <div className={SIDEBAR_GROUP_DIVIDER_CLASS} />
+
+                <div className="space-y-1 pb-2">
+                  <div className={SIDEBAR_GROUP_TITLE_CLASS}>场景分类</div>
+                  {allCategoryLabels.map(renderSidebarItem)}
+                </div>
+              </div>
+              {canScrollDown && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-7 items-end justify-center bg-gradient-to-t from-[#fbfcfd] via-[#fbfcfd]/90 to-transparent pb-1 dark:from-[#12141c] dark:via-[#12141c]/90"
+                  aria-hidden="true"
+                >
+                  <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-micro font-medium text-slate-500 dark:bg-white/[0.08] dark:text-slate-400">
+                    ↓ 更多分类
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className={`${SIDEBAR_FOOTER_CLASS} space-y-1.5`}>
+              {category !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setCategory('all')}
+                  className={SIDEBAR_FOOTER_BUTTON_CLASS}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>重置分类筛选</span>
+                </button>
+              )}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => skillPackInputRef.current?.click()}
+                  className={`${SIDEBAR_FOOTER_BUTTON_CLASS} flex-1`}
+                  title="导入技能包（支持 panpan-pro-skills.zip）"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>导入技能包</span>
+                </button>
+                {hasPromptOverrides && (
+                  <button
+                    type="button"
+                    onClick={handleResetBuiltinPromptOverrides}
+                    className="flex h-8 shrink-0 items-center justify-center gap-1 rounded-xl bg-black/[0.04] px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.06] dark:text-slate-300 dark:hover:bg-white/[0.1]"
+                    title="还原为官方默认内置技能提示词"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>恢复默认</span>
+                  </button>
+                )}
+              </div>
               <button
-                key={label}
                 type="button"
-                onClick={() => setCategory(label)}
-                className={`${SIDEBAR_ITEM_CLASS} justify-between text-left ${active ? `${SIDEBAR_ITEM_ACTIVE_CLASS} font-semibold` : SIDEBAR_ITEM_IDLE_CLASS}`}
+                onClick={() => useStore.getState().setShowSettings(true, 'about')}
+                className="flex h-8 w-full items-center justify-between rounded-xl px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.04] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
               >
-                <span className="truncate">{title}</span>
-                <span className={`text-micro tabular-nums ${active ? 'opacity-80' : 'text-slate-400'}`}>{count}</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Settings className="h-3.5 w-3.5 text-slate-400" />
+                  <span>设置与帮助</span>
+                </span>
+                <span className="font-mono text-micro text-slate-400">v{__APP_VERSION__}</span>
               </button>
-            )
-          })}
-          </div>}
+            </div>
+          </>
+        )}
       </aside>
       <div className="flex-1 min-w-0 h-full">
         <SkillHubView
@@ -244,6 +497,10 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
           }}
           activeCategory={category}
           onSelectCategory={setCategory}
+          isSidebarCollapsed={collapsed}
+          onToggleSidebar={() => setCollapsed((value) => !value)}
+          onImportSkillPack={() => skillPackInputRef.current?.click()}
+          onResetBuiltinOverrides={hasPromptOverrides ? handleResetBuiltinPromptOverrides : undefined}
         />
       </div>
     </div>

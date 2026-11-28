@@ -20,9 +20,9 @@ import { useCanvasViewStore } from '../lib/canvasViewStore'
 import { autoLayoutCanvasNodes, getTaskNodeSize, nodeIdsInRect } from '../lib/canvasNodes'
 import { fitNodesViewport, nodeInView, screenToWorld, zoomAtPoint } from '../lib/canvasMath'
 import { isUiModalOpen } from '../lib/uiLayers'
-import { ensureImageCached } from '../lib/imageCache'
+import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { downloadImage } from '../lib/downloadImage'
-import { getDownloadErrorMessage } from '../lib/downloadImages'
+import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { useWorkspaceStore } from '../lib/workspaceStore'
 import { addCanvasImageNode, createCanvasImageNode, fitCanvasImageNodeSize } from '../lib/canvasImageNodes'
 import { assertCanvasUndoActive, createCanvasUndoEntry, getCanvasUndoDepth, isCanvasUndoing, pushCanvasUndo, runCanvasUndo, subscribeCanvasUndo } from '../lib/canvasUndo'
@@ -115,6 +115,8 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   const placeholderCanvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef(viewport)
   const panRef = useRef<{ startX: number; startY: number; base: typeof viewport } | null>(null)
+  const touchPointsRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null)
   const userInteractedRef = useRef(false)
   const didFitRef = useRef(false)
   viewportRef.current = viewport
@@ -449,7 +451,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       didFitRef.current = true
       setViewport(fit)
     }
-  }, [size, bottomInset, allRects, setViewport, canvasId])
+  }, [size, bottomInset, nodeRects, allRects, setViewport, canvasId])
 
   useEffect(() => {
     const el = rootRef.current
@@ -583,6 +585,25 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }, [showPerf])
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointsRef.current.size === 2) {
+        const [a, b] = Array.from(touchPointsRef.current.values())
+        pinchRef.current = {
+          dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+          midX: (a.x + b.x) / 2,
+          midY: (a.y + b.y) / 2,
+        }
+        panRef.current = null
+        setBox(null)
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
+      }
+      if ((event.target as HTMLElement).closest('[data-canvas-node],[data-canvas-image-node]')) return
+      panRef.current = { startX: event.clientX, startY: event.clientY, base: viewport }
+      event.currentTarget.setPointerCapture(event.pointerId)
+      return
+    }
     if (event.button !== 0 && event.button !== 1) return
     const panWithPointer = event.button === 1 || spaceDown
     if (!panWithPointer && (event.target as HTMLElement).closest('[data-canvas-node],[data-canvas-image-node]')) return
@@ -599,6 +620,29 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' && touchPointsRef.current.has(event.pointerId)) {
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      if (touchPointsRef.current.size === 2 && pinchRef.current) {
+        const [a, b] = Array.from(touchPointsRef.current.values())
+        const nextDist = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const nextMidX = (a.x + b.x) / 2
+        const nextMidY = (a.y + b.y) / 2
+        const rect = event.currentTarget.getBoundingClientRect()
+        const factor = nextDist / Math.max(1, pinchRef.current.dist)
+        const dx = nextMidX - pinchRef.current.midX
+        const dy = nextMidY - pinchRef.current.midY
+        userInteractedRef.current = true
+        const zoomed = zoomAtPoint(
+          viewportRef.current,
+          nextMidX - rect.left,
+          nextMidY - rect.top,
+          factor,
+        )
+        setViewport({ ...zoomed, x: zoomed.x + dx, y: zoomed.y + dy })
+        pinchRef.current = { dist: nextDist, midX: nextMidX, midY: nextMidY }
+        return
+      }
+    }
     if (box) {
       event.stopPropagation()
       const rect = event.currentTarget.getBoundingClientRect()
@@ -772,6 +816,16 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      touchPointsRef.current.delete(event.pointerId)
+      if (touchPointsRef.current.size < 2) {
+        pinchRef.current = null
+      }
+      if (touchPointsRef.current.size === 1) {
+        const [remaining] = Array.from(touchPointsRef.current.values())
+        panRef.current = { startX: remaining.x, startY: remaining.y, base: viewportRef.current }
+      }
+    }
     if (box) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       const rect = event.currentTarget.getBoundingClientRect()
@@ -1004,9 +1058,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
         >
           {imageNodes.map((node) => {
             const view = imagePreview[node.id] ?? node
-            const url = imageUrls[node.imageId]
-            const selected = selectedImageIds.has(node.id)
             const refIndex = inputImages.findIndex((image) => image.id === node.imageId)
+            const url = imageUrls[node.imageId] || (refIndex >= 0 ? inputImages[refIndex]?.dataUrl : undefined) || getCachedImage(node.imageId)
+            const selected = selectedImageIds.has(node.id)
             const nodeLabel = refIndex >= 0 ? `图${refIndex + 1}` : '素材'
             return (
               <div
@@ -1018,6 +1072,10 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                 onPointerDown={(event) => {
                   if (event.button !== 0) return
                   event.stopPropagation()
+                  if (pickMode) {
+                    void onPickImage?.(node.imageId)
+                    return
+                  }
                   setSelectedImageIds(new Set([node.id]))
                   setSelectedIds(new Set())
                   setImageMenu(null)
@@ -1048,32 +1106,40 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                 <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-caption text-white">
                   {nodeLabel}
                 </span>
-                <button
-                  type="button"
-                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/65 text-body-sm text-white opacity-0 transition group-hover:opacity-100"
-                  title="下载原图"
-                  aria-label="下载原图"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void downloadImage(node.imageId, nodeLabel).then((result) => {
-                      if (result.canceled || result.successCount) return
-                      useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
-                    })
-                  }}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className="absolute -bottom-1 -right-1 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-black/70 opacity-0 transition group-hover:opacity-100"
-                  title="缩放素材"
-                  aria-label="缩放素材"
-                  onPointerDown={(event) => {
-                    event.stopPropagation()
-                    setImageDrag({ id: node.id, mode: 'resize', startX: event.clientX, startY: event.clientY, origin: node })
-                  }}
-                />
+                {!pickMode && (
+                  <>
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/65 text-body-sm text-white opacity-0 transition group-hover:opacity-100"
+                      title="下载原图"
+                      aria-label="下载原图"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void downloadImage(node.imageId, nodeLabel).then((result) => {
+                          if (result.canceled) return
+                          if (result.successCount) {
+                            useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+                            return
+                          }
+                          useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
+                        })
+                      }}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute -bottom-1 -right-1 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-black/70 opacity-0 transition group-hover:opacity-100"
+                      title="缩放素材"
+                      aria-label="缩放素材"
+                      onPointerDown={(event) => {
+                        event.stopPropagation()
+                        setImageDrag({ id: node.id, mode: 'resize', startX: event.clientX, startY: event.clientY, origin: node })
+                      }}
+                    />
+                  </>
+                )}
               </div>
             )
           })}
@@ -1138,9 +1204,9 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
       )}
 
       {tasks.length === 0 && imageNodes.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center">
           <p className="text-body text-gray-500">
-            {allTaskCount && allTaskCount > 0 ? '没有匹配任务' : '还没有内容，拖入图片或在左侧输入提示词开始生成'}
+            {allTaskCount && allTaskCount > 0 ? '没有匹配任务' : '还没有内容，拖入或导入图片，或输入提示词开始生成'}
           </p>
         </div>
       )}

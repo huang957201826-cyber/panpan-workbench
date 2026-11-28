@@ -3,10 +3,13 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { stopBatchPrompts, submitTask, updateTaskInStore, useStore, withInputPending } from '../store'
 import { deleteTask, deleteTasks, retryTaskAction, reuseTaskConfig } from '../lib/taskActions'
 import { useCanvasTasks } from '../hooks/useCanvasTasks'
-import { isTauri } from '../lib/platform'
+import { useViewportLayout } from '../hooks/useViewportLayout'
+import { isMobile, isTauri, isTouchDevice } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
-import { addImageFileToCanvas } from '../lib/canvasImageInput'
+import { addInputImageFile, ensureInputImageOnCanvas } from '../lib/canvasImageInput'
+import { parseGenerateDeepLink, type GenerateDeepLinkPayload } from '../lib/importLink'
+import { takePendingGenerateDeepLink } from '../hooks/useImportLinks'
 import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { downloadTasksImages } from '../lib/taskExport'
 import { pickSaveDir, type SaveDir } from '../lib/saveFile'
@@ -17,7 +20,7 @@ import { filterStudioTasks } from '../lib/studioGrid'
 import { deleteCanvas, deleteProject, enqueueWorkspaceAction, getCanvasTasks, getProjectTasks, getRunningTasks, restoreActiveCanvasSnapshot, saveActiveCanvasSnapshot, stopTasks, switchCanvas } from '../lib/workspaceActions'
 import { clearAllSelection } from '../lib/selection'
 import { clearCanvasUndo, retainCanvasUndo } from '../lib/canvasUndo'
-import { composeSkillPrompt, loadBuiltinSkills, skillCoverColor } from '../lib/capabilitySkills'
+import { composeSkillPrompt, loadBuiltinSkills, pruneDetachedSkillImages, skillCoverColor } from '../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../lib/capabilitySkillStore'
 import { useSkillStore } from '../lib/skillStore'
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill, saveCapabilitySkill } from '../lib/skillRegistry'
@@ -76,7 +79,35 @@ export default function StudioShell() {
   const [activeActivity, setActiveActivity] = useState<ActiveActivity>(() =>
     localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
   )
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
+  const viewportLayout = useViewportLayout()
+  const isOverlaySidebar = viewportLayout.isPhone || (viewportLayout.isTablet && (isTouchDevice || viewportLayout.width < 900))
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900 || (isTouchDevice && window.innerWidth < 1080))
+  const [mobileCanvasSheetOpen, setMobileCanvasSheetOpen] = useState(false)
+  const prevOverlayRef = useRef(isOverlaySidebar)
+  useEffect(() => {
+    if (prevOverlayRef.current !== isOverlaySidebar) {
+      prevOverlayRef.current = isOverlaySidebar
+      if (isOverlaySidebar) {
+        setSidebarCollapsed(true)
+      }
+    }
+    if (!viewportLayout.isPhone) {
+      setMobileCanvasSheetOpen(false)
+    }
+  }, [isOverlaySidebar, viewportLayout.isPhone])
+  useEffect(() => {
+    if (!mobileCanvasSheetOpen && (sidebarCollapsed || !isOverlaySidebar)) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (mobileCanvasSheetOpen) {
+        setMobileCanvasSheetOpen(false)
+      } else if (!sidebarCollapsed && isOverlaySidebar) {
+        setSidebarCollapsed(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [mobileCanvasSheetOpen, sidebarCollapsed, isOverlaySidebar])
   const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -88,6 +119,8 @@ export default function StudioShell() {
   const [cardSort, setCardSort] = useState<'newest' | 'oldest' | 'prompt'>('newest')
   const [selectionMode, setSelectionMode] = useState(false)
   const [editingCanvasId, setEditingCanvasId] = useState<string | null>(null)
+  const [mobileEditingCanvasId, setMobileEditingCanvasId] = useState<string | null>(null)
+  const [mobileEditingCanvasName, setMobileEditingCanvasName] = useState('')
   const [localExportFormat, setLocalExportFormat] = useState<'gif' | 'svg' | null>(() => {
     const saved = localStorage.getItem('panpan-local-export-format')
     return saved === 'gif' || saved === 'svg' ? saved : null
@@ -187,7 +220,7 @@ export default function StudioShell() {
       document.documentElement.style.removeProperty('--input-bar-clearance')
       useCanvasViewStore.getState().setBottomInset(0)
     }
-  }, [workspace.inputDockPosition])
+  }, [workspace.inputDockPosition, activeActivity, activeCanvas?.id])
 
   useEffect(() => {
     if (!activeCanvas?.id) return
@@ -251,7 +284,7 @@ export default function StudioShell() {
       event.preventDefault()
       void withInputPending(async () => {
         for (const file of files) {
-          await addImageFileToCanvas(useWorkspaceStore.getState().activeCanvasId, file)
+          await addInputImageFile(file)
         }
       })
     }
@@ -320,7 +353,7 @@ export default function StudioShell() {
   }, [])
 
   useEffect(() => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     void getCurrentWindow().isMaximized().then(setIsMaximized).catch(() => {})
   }, [])
 
@@ -455,7 +488,16 @@ export default function StudioShell() {
     showToast('已保存为技能', 'success')
   }
 
-  const handleGenerate = async (promptText: string, nextParams: typeof generationParams) => {
+  const handleGenerate = async (rawPromptText: string, rawNextParams: typeof generationParams) => {
+    const parsedLink = parseGenerateDeepLink(rawPromptText)
+    const promptText = parsedLink ? parsedLink.prompt : rawPromptText
+    const nextParams = parsedLink
+      ? {
+          ...rawNextParams,
+          ...(parsedLink.size ? { size: parsedLink.size } : {}),
+          ...(parsedLink.model ? { model: parsedLink.model } : {}),
+        }
+      : rawNextParams
     if (isFavoritesCanvas(activeCanvas?.id)) {
       showToast('收藏是跨项目汇总视图，请到具体项目里生成', 'info')
       return
@@ -487,7 +529,9 @@ export default function StudioShell() {
         showToast('技能暂不支持批量提交，请先关闭批量或只保留一条提示词', 'info')
         return
       }
-      finalPrompt = composeSkillPrompt(skill, liveSlotValues, promptText)
+      const activeImageIds = liveState.inputImages.map((img) => img.id)
+      const effectiveSlotValues = pruneDetachedSkillImages(skill, liveSlotValues, activeImageIds)
+      finalPrompt = composeSkillPrompt(skill, effectiveSlotValues, promptText)
       if (finalPrompt.length > MAX_PROMPT_LENGTH) {
         showToast(`技能与输入合并后超过 ${MAX_PROMPT_LENGTH} 字上限，请精简后再试`, 'error')
         return
@@ -497,7 +541,7 @@ export default function StudioShell() {
         name: skill.name,
         basePrompt: skill.basePrompt,
         slots: skill.slots,
-        slotValues: liveSlotValues,
+        slotValues: effectiveSlotValues,
         userPrompt: promptText,
         version: skill.version,
       }
@@ -513,16 +557,83 @@ export default function StudioShell() {
         promptOverride: finalPrompt,
         skillContext,
         localExportFormat: nextParams.format === 'GIF' ? 'gif' : nextParams.format === 'SVG' ? 'svg' : undefined,
+        onBeforePlaceTasks: async (images, targetCanvasId) => {
+          if (!targetCanvasId || isFavoritesCanvas(targetCanvasId)) return
+          for (const img of images) {
+            await ensureInputImageOnCanvas(img, targetCanvasId)
+          }
+        },
+        onTaskDispatched: (_taskId, targetCanvasId) => {
+          useStore.getState().clearInputImages()
+          if (skill) {
+            const cur = useStore.getState()
+            if (cur.activeSkillId) {
+              cur.setSkillSlotValues(pruneDetachedSkillImages(skill, cur.skillSlotValues, []))
+            }
+          }
+          if (targetCanvasId && !isFavoritesCanvas(targetCanvasId)) {
+            useWorkspaceStore.getState().updateCanvas(targetCanvasId, {
+              referenceImageIds: [],
+              maskDraft: null,
+              maskEditorImageId: null,
+            })
+          }
+        },
       })
       const taskIds = await pending
-      if (taskIds.length && useStore.getState().settings.clearInputAfterSubmit) {
-        setPrompt('')
-        clearSkillChip()
+      if (taskIds.length) {
+        useStore.getState().clearInputImages()
+        if (useStore.getState().settings.clearInputAfterSubmit) {
+          setPrompt('')
+          clearSkillChip()
+        }
       }
     } finally {
       setSubmitting(false)
     }
   }
+
+  const handleGenerateRef = useRef(handleGenerate)
+  handleGenerateRef.current = handleGenerate
+  const generationParamsRef = useRef(generationParams)
+  generationParamsRef.current = generationParams
+
+  useEffect(() => {
+    const applyDeepLink = (payload: GenerateDeepLinkPayload) => {
+      setShowSettings(false)
+      setActiveActivity('projects')
+      setPrompt(payload.prompt)
+      const ws = useWorkspaceStore.getState()
+      if (ws.activeCanvasId && !isFavoritesCanvas(ws.activeCanvasId)) {
+        ws.updateCanvas(ws.activeCanvasId, { promptDraft: payload.prompt })
+      }
+      const nextParams = {
+        ...generationParamsRef.current,
+        ...(payload.size ? { size: payload.size } : {}),
+        ...(payload.model ? { model: payload.model } : {}),
+      }
+      handleParamsChange(nextParams)
+      const currentSettings = useStore.getState().settings
+      const profile = getActiveApiProfile(currentSettings)
+      const shouldAutoSubmit = Boolean(payload.auto || currentSettings.aiLinkAutoSubmit)
+      if (shouldAutoSubmit && Boolean(profile.apiKey?.trim())) {
+        showToast('已从外部 AI 联动发起生图', 'success')
+        void handleGenerateRef.current(payload.prompt, nextParams)
+      } else {
+        showToast('已从外部 AI 载入提示词', 'success')
+      }
+    }
+
+    const pending = takePendingGenerateDeepLink()
+    if (pending) applyDeepLink(pending)
+
+    const onDeepLink = (event: Event) => {
+      const detail = (event as CustomEvent<GenerateDeepLinkPayload>).detail
+      if (detail?.prompt) applyDeepLink(detail)
+    }
+    window.addEventListener('panpan:deep-link-generate', onDeepLink)
+    return () => window.removeEventListener('panpan:deep-link-generate', onDeepLink)
+  }, [])
 
   const findTask = (taskId?: string) => tasks.find((task) => task.id === taskId)
   const selectedTasks = pickSelectedTasks(filteredTasks, selectedTaskIds)
@@ -578,7 +689,7 @@ export default function StudioShell() {
       setBatchDownloadProgress(null)
     }
     if (failed) showToast(`有 ${failed} 张图片下载失败${error ? `：${error}` : ''}`, 'error')
-    else if (location) showToast(withSaveLocation('下载完成', location), 'success')
+    else showToast(withSaveLocation('下载完成', location), 'success')
   }
 
   const batchDelete = () => {
@@ -747,10 +858,30 @@ export default function StudioShell() {
     })
   }
 
+  const activeProjectCanvases = useMemo(
+    () => workspace.canvases.filter((canvas) => canvas.projectId === activeProject?.id && !isFavoritesCanvas(canvas.id)),
+    [workspace.canvases, activeProject?.id],
+  )
+
+  const appDisplayName = settings.customAppName?.trim() || '盼盼工作台'
+
+  useEffect(() => {
+    document.title = appDisplayName
+    if (isTauri && !isMobile) {
+      void getCurrentWindow().setTitle(appDisplayName).catch(() => {})
+    }
+    const androidBridge = (window as unknown as { __PANPAN_ANDROID__?: { setAppTitle?: (t: string) => void } }).__PANPAN_ANDROID__
+    try {
+      androidBridge?.setAppTitle?.(appDisplayName)
+    } catch {
+      // ignore
+    }
+  }, [appDisplayName])
+
   return (
-    <div className="studio-root">
+    <div className={`studio-root ${isMobile ? 'studio-safe-top' : ''}`}>
       <TitleBar
-        currentProjectTitle={activeProject?.name ?? '盼盼工作台'}
+        currentProjectTitle={settings.customAppName?.trim() ? `${appDisplayName} · ${activeProject?.name ?? ''}`.replace(/ · $/, '') : (activeProject?.name ?? appDisplayName)}
         folders={folders}
         activeFolderId={activeProject?.id ?? ''}
         activeSchemeId={activeCanvas?.id ?? ''}
@@ -784,14 +915,16 @@ export default function StudioShell() {
         isSidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
         canManageProjects={true}
-        showWindowControls={isTauri}
+        showWindowControls={isTauri && !isMobile}
       />
 
       <div className="relative flex-1 w-full flex overflow-hidden">
         {canvasPickMode && (
-          <div className="absolute left-1/2 top-2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-black/10 bg-white/95 px-3 py-1 text-caption text-slate-600 shadow-lg backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300">
-            <span>点选画布中的一张图片加入参考图 · Esc 取消</span>
-            <button onClick={() => setCanvasPickMode(false)} className="rounded-full bg-black/[0.06] px-2 py-0.5 dark:bg-white/[0.1]">取消</button>
+          <div className="absolute left-1/2 top-2 z-40 flex max-w-[92vw] -translate-x-1/2 items-center gap-2 rounded-full border border-black/10 bg-white/95 px-3 py-1.5 text-caption text-slate-600 shadow-lg backdrop-blur dark:border-white/10 dark:bg-[#161822]/95 dark:text-slate-300">
+            <span className="truncate">
+              {isTouchDevice ? '点选画布中的一张图片加入参考图' : '点选画布中的一张图片加入参考图 · Esc 取消'}
+            </span>
+            <button onClick={() => setCanvasPickMode(false)} className="shrink-0 rounded-full bg-black/[0.08] px-2.5 py-0.5 font-medium text-slate-700 dark:bg-white/[0.12] dark:text-slate-100">取消</button>
           </div>
         )}
         {maskDraft && (
@@ -823,18 +956,90 @@ export default function StudioShell() {
           isCollapsed={sidebarCollapsed || activeActivity === 'home' || activeActivity === 'skills' || activeActivity === 'workflow'}
           enabledActivities={['home', 'projects', 'workflow', 'skills']}
           canManageProjects={true}
+          hideRail={viewportLayout.isPhone}
+          overlayDrawer={isOverlaySidebar}
+          appName={appDisplayName}
         />
 
         <div className="relative flex flex-1 overflow-hidden">
           <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {sidebarCollapsed && (
+          {viewportLayout.isPhone && (
+            <header
+              data-mobile-topbar
+              className="z-30 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] bg-white/95 px-2.5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
+            >
+              {activeActivity === 'projects' ? (
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed((value) => !value)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-700 hover:bg-black/[0.05] dark:text-slate-200 dark:hover:bg-white/[0.08]"
+                  title="打开项目抽屉"
+                  aria-label="打开项目抽屉"
+                >
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                    <path d="M2.5 5h13M2.5 9h13M2.5 13h9" />
+                  </svg>
+                </button>
+              ) : (
+                <div className="h-10 w-10 shrink-0" aria-hidden="true" />
+              )}
+
+              {activeActivity === 'projects' && activeCanvas && !isFavoritesCanvas(activeCanvas.id) ? (
+                <button
+                  type="button"
+                  onClick={() => setMobileCanvasSheetOpen(true)}
+                  className="flex min-w-0 max-w-[64%] items-center gap-1.5 rounded-full border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[13px] font-medium text-slate-800 dark:border-white/[0.1] dark:bg-white/[0.06] dark:text-slate-100"
+                  aria-label="切换画布"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-900 dark:bg-white" />
+                  <span className="truncate">
+                    {settings.customAppName?.trim() ? `${appDisplayName} · ${activeCanvas.name}` : activeCanvas.name}
+                  </span>
+                  <span className="text-[11px] text-slate-400">▾</span>
+                </button>
+              ) : (
+                <span className="truncate text-[14px] font-semibold text-slate-800 dark:text-slate-100">
+                  {activeActivity === 'home'
+                    ? appDisplayName
+                    : activeActivity === 'workflow'
+                      ? '工作流'
+                      : activeActivity === 'skills'
+                        ? '技能库'
+                        : activeProject?.name ?? appDisplayName}
+                </span>
+              )}
+
+              <div className="flex shrink-0 items-center gap-1">
+                {activeActivity === 'projects' && activeCanvas && (
+                  <button
+                    type="button"
+                    onClick={() => useWorkspaceStore.getState().setViewMode(workspace.viewMode === 'canvas' ? 'grid' : 'canvas')}
+                    className="flex h-10 items-center justify-center rounded-xl px-2.5 text-[12px] font-medium text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+                    title={workspace.viewMode === 'canvas' ? '切换到卡片网格' : '切换到无限画布'}
+                  >
+                    {workspace.viewMode === 'canvas' ? '网格' : '画布'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]"
+                  title="设置"
+                  aria-label="设置"
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+              </div>
+            </header>
+          )}
+          {sidebarCollapsed && !viewportLayout.isPhone && activeActivity === 'projects' && (
             <div className="absolute left-4 top-14 z-40">
               <button
                 type="button"
-                onClick={() => {
-                  setSidebarCollapsed(false)
-                  if (activeActivity !== 'projects') setActiveActivity('projects')
-                }}
+                onClick={() => setSidebarCollapsed(false)}
                 className="flex h-[34px] items-center gap-1.5 rounded-full border border-black/[0.04] bg-white/90 px-3 text-[11.5px] font-medium text-slate-700 shadow-[0_10px_30px_-4px_rgba(15,23,42,0.05)] backdrop-blur-xl transition hover:text-black dark:border-white/[0.06] dark:bg-[#141620]/90 dark:text-slate-200 dark:hover:text-white"
                 title="展开方案抽屉"
               >
@@ -885,6 +1090,17 @@ export default function StudioShell() {
                 sizeOptions={sizeOptions}
                 countOptions={[1, 2, 4]}
                 onParamsChange={handleParamsChange}
+                onAddReferenceFile={async (file) => {
+                  try {
+                    const added = await addInputImageFile(file)
+                    if (!added) {
+                      useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
+                  }
+                }}
                 onGenerate={(text, nextParams) => {
                   if (!activeCanvas) {
                     showToast('请先新建项目和画布', 'info')
@@ -918,9 +1134,9 @@ export default function StudioShell() {
                 </div>
               ) : (
                 <>
-                  {!isFavoritesCanvas(activeCanvas?.id) && (
+                  {!isFavoritesCanvas(activeCanvas?.id) && !viewportLayout.isPhone && (
                     <CanvasCapsuleBar
-                      canvases={workspace.canvases.filter((canvas) => canvas.projectId === activeProject?.id && !isFavoritesCanvas(canvas.id))}
+                      canvases={activeProjectCanvases}
                       activeCanvasId={activeCanvas?.id ?? ''}
                       editingCanvasId={editingCanvasId}
                       onEditingChange={setEditingCanvasId}
@@ -980,6 +1196,13 @@ export default function StudioShell() {
                             addInputImage({ id: imageId, dataUrl })
                             const added = useStore.getState().inputImages.some((image) => image.id === imageId)
                             if (!added) return
+                            const ws = useWorkspaceStore.getState()
+                            const currentCanvas = ws.canvases.find((item) => item.id === ws.activeCanvasId)
+                            if (currentCanvas?.removedImageIds?.includes(imageId)) {
+                              ws.updateCanvas(currentCanvas.id, {
+                                removedImageIds: currentCanvas.removedImageIds.filter((id) => id !== imageId),
+                              })
+                            }
                             setCanvasPickMode(false)
                             showToast('已加入参考图')
                           })
@@ -1000,7 +1223,18 @@ export default function StudioShell() {
             <div
               ref={bottomBarRef}
               data-input-bar
-              className="ui-scale-chrome absolute bottom-4 left-0 right-0 z-30 pointer-events-none flex justify-center"
+              className={`ui-scale-chrome absolute left-0 right-0 z-30 pointer-events-none flex justify-center ${
+                viewportLayout.isPhone ? 'px-2' : 'bottom-4 studio-safe-bottom'
+              }`}
+              style={
+                viewportLayout.isPhone
+                  ? {
+                      bottom: viewportLayout.keyboardOpen
+                        ? `${Math.max(8, viewportLayout.keyboardInset + 8)}px`
+                        : 'calc(64px + env(safe-area-inset-bottom, 0px))',
+                    }
+                  : undefined
+              }
             >
               <BottomPromptBar
                 prompt={prompt}
@@ -1009,7 +1243,17 @@ export default function StudioShell() {
                 isGenerating={submitting || pendingInputs > 0}
                 referenceImages={toReferenceImages(inputImages, missingInputIds)}
                 onAddReferenceImage={(image) => addInputImage({ id: image.id, dataUrl: image.url })}
-                onAddReferenceFile={(file) => void addImageFileToCanvas(activeCanvas?.id ?? '', file)}
+                onAddReferenceFile={async (file) => {
+                  try {
+                    const added = await addInputImageFile(file)
+                    if (!added) {
+                      useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    useStore.getState().showToast(`导入图片失败：${msg}`, 'error')
+                  }
+                }}
                 onRemoveReferenceImage={(id) => {
                   const index = inputImages.findIndex((image) => image.id === id)
                   if (index >= 0) useStore.getState().removeInputImage(index)
@@ -1032,7 +1276,223 @@ export default function StudioShell() {
                 onManageModels={() => setShowSettings(true, 'api')}
                 viewMode={workspace.viewMode}
                 onViewModeChange={(mode) => useWorkspaceStore.getState().setViewMode(mode)}
+                compactMobile={viewportLayout.isPhone}
               />
+            </div>
+          )}
+
+          {viewportLayout.isPhone && !viewportLayout.keyboardOpen && (
+            <nav
+              data-mobile-tabbar
+              aria-label="主导航"
+              className="studio-safe-bottom z-30 flex shrink-0 items-center justify-around border-t border-black/[0.06] bg-white/95 px-2 pt-1.5 pb-1 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#10121a]/95"
+            >
+              {(
+                [
+                  {
+                    id: 'home',
+                    label: '首页',
+                    title: '首页灵感中心',
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M3 9.5L10 3L17 9.5V17C17 17.5523 16.5523 18 16 18H4C3.44772 18 3 17.5523 3 17V9.5Z" />
+                        <path d="M9 18V12H11V18" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'projects',
+                    label: '工作区',
+                    title: '工作区与设计方案',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                        <line x1="2" y1="6.5" x2="14" y2="6.5" />
+                        <line x1="6.5" y1="3" x2="6.5" y2="6.5" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'workflow',
+                    label: '工作流',
+                    title: '工作流',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="2" y="2.5" width="4.5" height="4.5" rx="1" />
+                        <rect x="9.5" y="9" width="4.5" height="4.5" rx="1" />
+                        <path d="M6.5 4.8h2a2 2 0 0 1 2 2v2.2" />
+                        <circle cx="6.5" cy="4.8" r="0.8" fill="currentColor" />
+                        <circle cx="9.5" cy="11.2" r="0.8" fill="currentColor" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    id: 'skills',
+                    label: '技能库',
+                    title: '技能库',
+                    icon: (
+                      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M8 1.5l1.5 4.5 4.5 1.5-4.5 1.5L8 13.5 6.5 9 2 7.5l4.5-1.5L8 1.5z" />
+                        <circle cx="13" cy="3" r="1" fill="currentColor" />
+                      </svg>
+                    ),
+                  },
+                ] as const
+              ).map((tab) => {
+                const active = activeActivity === tab.id || (tab.id === 'skills' && activeActivity === 'models')
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveActivity(tab.id)}
+                    title={tab.title}
+                    aria-label={tab.label}
+                    className="flex flex-1 flex-col items-center justify-center gap-0.5 py-0.5 transition-all"
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-full transition-all ${
+                        active
+                          ? 'bg-black text-white shadow-md dark:bg-white dark:text-black'
+                          : 'text-slate-400 hover:bg-black/[0.04] hover:text-slate-800 dark:hover:bg-white/[0.06] dark:hover:text-slate-200'
+                      }`}
+                    >
+                      {tab.icon}
+                    </span>
+                    <span
+                      className={`text-[10px] leading-tight transition-colors ${
+                        active ? 'font-semibold text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      {tab.label}
+                    </span>
+                  </button>
+                )
+              })}
+            </nav>
+          )}
+
+          {viewportLayout.isPhone && mobileCanvasSheetOpen && activeProject && (
+            <div
+              className="fixed inset-0 z-50 flex flex-col justify-end bg-black/35 backdrop-blur-[1px]"
+              onClick={() => {
+                setMobileEditingCanvasId(null)
+                setMobileCanvasSheetOpen(false)
+              }}
+            >
+              <div
+                className="studio-safe-bottom-padded max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-black/10 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-[#141720]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-black/15 dark:bg-white/20" />
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-[14px] font-semibold text-slate-900 dark:text-white">
+                    {activeProject.name} · 画布 ({activeProjectCanvases.length})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileEditingCanvasId(null)
+                      createStudioCanvas(activeProject.id)
+                      setMobileCanvasSheetOpen(false)
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white dark:bg-white dark:text-slate-900"
+                  >
+                    + 新建画布
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {activeProjectCanvases.map((canvas) => {
+                    const isCurrent = canvas.id === activeCanvas?.id
+                    const isEditing = mobileEditingCanvasId === canvas.id
+                    if (isEditing) {
+                      return (
+                        <div
+                          key={canvas.id}
+                          className="flex min-h-[44px] w-full items-center gap-2 rounded-xl border border-black/15 bg-black/[0.03] px-3 py-1.5 dark:border-white/15 dark:bg-white/[0.06]"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={mobileEditingCanvasName}
+                            onChange={(event) => setMobileEditingCanvasName(event.target.value)}
+                            onKeyDown={(event) => {
+                              event.stopPropagation()
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                const nextName = mobileEditingCanvasName.trim()
+                                if (nextName) useWorkspaceStore.getState().renameCanvas(canvas.id, nextName)
+                                setMobileEditingCanvasId(null)
+                              }
+                              if (event.key === 'Escape') {
+                                event.preventDefault()
+                                setMobileEditingCanvasId(null)
+                              }
+                            }}
+                            aria-label="画布名称"
+                            className="select-text min-w-0 flex-1 rounded-lg border border-black/15 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 outline-none dark:border-white/15 dark:bg-[#1a1c28] dark:text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextName = mobileEditingCanvasName.trim()
+                              if (nextName) useWorkspaceStore.getState().renameCanvas(canvas.id, nextName)
+                              setMobileEditingCanvasId(null)
+                            }}
+                            className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white dark:bg-white dark:text-slate-900"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div
+                        key={canvas.id}
+                        className={`flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl px-3.5 py-2 text-[13px] transition ${
+                          isCurrent
+                            ? 'bg-slate-900 font-medium text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-black/[0.03] text-slate-700 hover:bg-black/[0.06] dark:bg-white/[0.05] dark:text-slate-200'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void switchCanvas(canvas.id)
+                            setMobileCanvasSheetOpen(false)
+                          }}
+                          className="min-w-0 flex-1 truncate text-left"
+                        >
+                          {canvas.name}
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {isCurrent && <span className="text-[11px] opacity-75">当前</span>}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setMobileEditingCanvasId(canvas.id)
+                              setMobileEditingCanvasName(canvas.name)
+                            }}
+                            title="重命名画布"
+                            aria-label={`重命名画布 ${canvas.name}`}
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                              isCurrent
+                                ? 'text-white/80 hover:bg-white/15 dark:text-slate-900/80 dark:hover:bg-black/10'
+                                : 'text-slate-500 hover:bg-black/10 dark:text-slate-400 dark:hover:bg-white/10'
+                            }`}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 

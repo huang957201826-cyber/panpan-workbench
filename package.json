@@ -30,8 +30,13 @@
     "sync:skills": "node scripts/sync-skill-kit.mjs",
     "predev": "npm run sync:skills",
     "prebuild": "npm run sync:skills",
+    "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:android:init": "tauri android init",
+    "tauri:android:build": "tauri android build",
+    "tauri:ios:init": "tauri ios init",
+    "tauri:ios:build": "tauri ios build",
     "updater:manifest": "node scripts/make-update-manifest.mjs",
     "notices": "node scripts/build-notices.mjs",
     "scan:typography": "node scripts/scan-typography.mjs"

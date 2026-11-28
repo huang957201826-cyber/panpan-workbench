@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   Folder,
@@ -50,6 +51,12 @@ interface AppSidebarProps {
   enabledActivities?: ActiveActivity[];
   /** 项目新建/重命名/删除入口 */
   canManageProjects?: boolean;
+  /** 手机窄屏时隐藏左侧 68px 导航轨（改由底部 Tab Bar 承接） */
+  hideRail?: boolean;
+  /** 平板/手机下项目抽屉以覆盖式 Slide-over 浮层展开，避免挤压画布 */
+  overlayDrawer?: boolean;
+  /** 自定义软件显示名称 */
+  appName?: string;
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -66,13 +73,27 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   isCollapsed,
   enabledActivities = ['home', 'projects', 'workflow', 'skills'],
   canManageProjects = true,
+  hideRail = false,
+  overlayDrawer = false,
+  appName = '盼盼工作台',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const cancelRenameRef = useRef(false);
+  const renameStartedAtRef = useRef(0);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; projectId: string; name: string } | null>(null);
+
+  useEffect(() => {
+    if (!editingProjectId) return;
+    const focusTimer = window.setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 30);
+    return () => window.clearTimeout(focusTimer);
+  }, [editingProjectId]);
 
   useEffect(() => {
     if (!rowMenu) return;
@@ -97,11 +118,24 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     setEditingProjectId(null);
   };
 
+  const showProjectDrawer = !isCollapsed && activeActivity === 'projects';
+
+  if (hideRail && !showProjectDrawer) return null;
+
   return (
     <div className="ui-scale-chrome relative z-30 flex h-full shrink-0 select-none text-slate-800 dark:text-slate-200">
-      <aside data-app-rail className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center border-r border-black/[0.05] bg-white py-6 dark:border-white/[0.06] dark:bg-[#10121a]">
-        <div className="flex h-9 w-9 items-center justify-center text-slate-900 dark:text-white" title="盼盼工作台 · STUDIO">
-          <AppLogo size={24} className="h-6 w-6" />
+      {!hideRail && (
+      <aside data-app-rail className="z-20 flex h-full w-[68px] shrink-0 flex-col items-center border-r border-black/[0.05] bg-white py-5 dark:border-white/[0.06] dark:bg-[#10121a]">
+        <div className="flex flex-col items-center gap-1 px-1 max-w-full" title={`${appName} · STUDIO`}>
+          <div className="flex h-9 w-9 items-center justify-center text-slate-900 dark:text-white">
+            <AppLogo size={24} className="h-6 w-6" />
+          </div>
+          <span
+            data-app-rail-title
+            className="max-w-[60px] truncate text-center text-micro font-semibold text-slate-600 dark:text-slate-300"
+          >
+            {appName}
+          </span>
         </div>
 
         <div className="flex flex-1 flex-col items-center justify-center gap-[18px]">
@@ -192,13 +226,22 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           </button>
         </div>
       </aside>
+      )}
 
-      {!isCollapsed && activeActivity === 'projects' && (
-        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} z-10 transition-all duration-150`}>
+      {showProjectDrawer && (() => {
+        const drawerNode = (
+        <div
+          className={
+            overlayDrawer
+              ? `ui-scale-chrome fixed z-[70] flex select-none text-slate-800 dark:text-slate-200 ${hideRail ? 'inset-0' : 'inset-y-0 right-0 left-[68px]'}`
+              : 'contents'
+          }
+        >
+        <div data-project-rail className={`${SIDEBAR_PANEL_CLASS} ${overlayDrawer ? 'z-50 shadow-2xl studio-safe-top studio-safe-bottom' : 'z-10'} transition-all duration-150`}>
           <div className={SIDEBAR_HEADER_CLASS}>
-            <div>
+            <div className="min-w-0">
               <h2 className={SIDEBAR_TITLE_CLASS}>项目</h2>
-              <p className={SIDEBAR_SUBTITLE_CLASS}>共 {projects.length} 个项目</p>
+              <p className={`${SIDEBAR_SUBTITLE_CLASS} truncate`}>{appName} · 共 {projects.length} 个项目</p>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -252,7 +295,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
               return (
                 <div
                   key={project.id}
-                  onClick={() => onSelectProject(project.id)}
+                  onClick={() => {
+                    if (editingProjectId === project.id) return;
+                    onSelectProject(project.id);
+                    if (overlayDrawer) onCollapse();
+                  }}
                   onContextMenu={(event) => {
                     if (!canManageProjects || project.isFavorites) return;
                     event.preventDefault();
@@ -261,12 +308,13 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                   onDoubleClick={() => {
                     if (!canManageProjects || project.isFavorites) return;
                     cancelRenameRef.current = false;
+                    renameStartedAtRef.current = Date.now();
                     setEditingProjectId(project.id);
                     setEditingName(project.name);
                   }}
                   className={`${SIDEBAR_ITEM_CLASS} group cursor-pointer justify-between ${isActive ? SIDEBAR_ITEM_ACTIVE_CLASS : SIDEBAR_ITEM_IDLE_CLASS}`}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     {project.isFavorites ? (
                       <Star className="h-3.5 w-3.5 shrink-0 text-amber-500" fill="currentColor" strokeWidth={1.2} />
                     ) : (
@@ -274,8 +322,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                     )}
                     {editingProjectId === project.id ? (
                       <input
+                        ref={renameInputRef}
+                        type="text"
                         autoFocus
                         value={editingName}
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
                         onChange={(event) => setEditingName(event.target.value)}
                         onBlur={() => {
@@ -284,17 +335,26 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                             setEditingProjectId(null);
                             return;
                           }
+                          if (Date.now() - renameStartedAtRef.current < 280) {
+                            renameInputRef.current?.focus();
+                            return;
+                          }
                           commitRename(project);
                         }}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter') commitRename(project);
+                          event.stopPropagation();
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitRename(project);
+                          }
                           if (event.key === 'Escape') {
+                            event.preventDefault();
                             cancelRenameRef.current = true;
                             setEditingProjectId(null);
                           }
                         }}
                         aria-label="项目名称"
-                        className="min-w-0 flex-1 rounded border border-black/20 bg-white px-1 py-0.5 text-body-sm text-slate-800 outline-none dark:border-white/20 dark:bg-[#1a1c28] dark:text-slate-100"
+                        className="select-text min-w-0 flex-1 rounded border border-black/20 bg-white px-1.5 py-0.5 text-body-sm text-slate-800 outline-none dark:border-white/20 dark:bg-[#1a1c28] dark:text-slate-100"
                       />
                     ) : (
                       <span className="truncate font-medium">{project.name}</span>
@@ -310,7 +370,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                           event.stopPropagation();
                           setRowMenu({ x: event.clientX, y: event.clientY, projectId: project.id, name: project.name });
                         }}
-                        className={`rounded p-0.5 opacity-0 transition group-hover:opacity-100 ${isActive ? 'text-white/70 hover:bg-white/15' : 'text-slate-500 hover:bg-black/10 dark:hover:bg-white/15'}`}
+                        className={`rounded p-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100 ${isActive ? 'text-white/70 hover:bg-white/15' : 'text-slate-500 hover:bg-black/10 dark:hover:bg-white/15'}`}
                         title="更多项目操作"
                         aria-label="更多项目操作"
                       >
@@ -338,38 +398,56 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </button>
           </div>
         </div>
-      )}
-
-      {rowMenu && (
-        <div
-          className="fixed z-[9999] w-40 rounded-lg border border-black/10 bg-white/98 p-1 text-body-sm shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#1a1d28]/98"
-          style={{ left: Math.min(rowMenu.x, window.innerWidth - 176), top: Math.min(rowMenu.y, window.innerHeight - 100) }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
+        {overlayDrawer && (
           <button
             type="button"
-            onClick={() => {
-              cancelRenameRef.current = false;
-              setEditingProjectId(rowMenu.projectId);
-              setEditingName(rowMenu.name);
-              setRowMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
-          >
-            <Pencil className="h-3 w-3" /> 重命名
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onDeleteProject(rowMenu.projectId);
-              setRowMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-500 hover:bg-red-500/10"
-          >
-            <Trash2 className="h-3 w-3" /> 删除
-          </button>
+            aria-label="关闭项目抽屉"
+            onClick={onCollapse}
+            className="flex-1 bg-black/45 backdrop-blur-[2px] dark:bg-black/60"
+          />
+        )}
         </div>
-      )}
+        );
+        return overlayDrawer && typeof document !== 'undefined'
+          ? createPortal(drawerNode, document.body)
+          : drawerNode;
+      })()}
+
+      {rowMenu && (() => {
+        const menuNode = (
+          <div
+            className="fixed z-[9999] w-40 rounded-lg border border-black/10 bg-white/98 p-1 text-body-sm text-slate-800 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#1a1d28]/98 dark:text-slate-200"
+            style={{ left: Math.min(rowMenu.x, window.innerWidth - 176), top: Math.min(rowMenu.y, window.innerHeight - 100) }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                cancelRenameRef.current = false;
+                renameStartedAtRef.current = Date.now();
+                setEditingProjectId(rowMenu.projectId);
+                setEditingName(rowMenu.name);
+                setRowMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+            >
+              <Pencil className="h-3 w-3" /> 重命名
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onDeleteProject(rowMenu.projectId);
+                setRowMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-500 hover:bg-red-500/10"
+            >
+              <Trash2 className="h-3 w-3" /> 删除
+            </button>
+          </div>
+        );
+        return typeof document !== 'undefined' ? createPortal(menuNode, document.body) : menuNode;
+      })()}
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderOpen, Image as ImageIcon, Maximize2, PanelLeftClose, PanelLeftOpen, Paintbrush, Scissors } from 'lucide-react'
+import { useViewportLayout } from '../../hooks/useViewportLayout'
 import { useStore } from '../../store'
 import { WORKFLOWS } from '../workflows/manifest'
 import {
@@ -73,19 +74,24 @@ function savedProjects(): Promise<WorkflowProject[]> {
 /** 工作流画布：页面内左栏（引擎 / 流程）+ 底部「保存的工作流」弹层 */
 export function WorkflowHub() {
   const showToast = useStore((state) => state.showToast)
+  const viewportLayout = useViewportLayout()
   const engine = useEngineStatus()
   const [flowKey, setFlowKey] = useState('upscale')
   const [projects, setProjects] = useState<WorkflowProject[]>([DRAFT_PROJECT])
   const [activeProjectId, setActiveProjectId] = useState('draft')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [enginePanelOpen, setEnginePanelOpen] = useState(false)
   const [saveProjectOpen, setSaveProjectOpen] = useState(false)
   const [saveProjectName, setSaveProjectName] = useState('')
   const pendingValuesRef = useRef<Record<string, string | number | boolean>>({})
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(SIDEBAR_KEY) === '1'
+      const saved = localStorage.getItem(SIDEBAR_KEY)
+      if (saved === '1') return true
+      if (saved === '0') return window.innerWidth < 680
+      return window.innerWidth < 1080
     } catch {
-      return false
+      return window.innerWidth < 1080
     }
   })
 
@@ -239,10 +245,44 @@ export function WorkflowHub() {
   }
 
   return (
-    <div className="flex h-full w-full bg-[#f3f4f8] dark:bg-[#0c0e14]">
+    <div className="flex h-full w-full flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
+      {viewportLayout.isPhone && (
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
+        <button
+          type="button"
+          onClick={() => setEnginePanelOpen((open) => !open)}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-black/10 bg-white px-2.5 py-1 text-caption font-medium text-slate-700 dark:border-white/15 dark:bg-white/[0.06] dark:text-slate-200"
+          title={engine.probe?.ok ? '算力引擎已连接，点击配置地址' : '算力引擎未连接，点击配置地址'}
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+          {engine.probe?.ok ? '引擎在线' : '连接引擎'}
+        </button>
+        {FLOWS.map((flow) => (
+          <button
+            key={flow.key}
+            type="button"
+            onClick={() => setFlowKey(flow.key)}
+            className={`shrink-0 rounded-full px-3 py-1.5 text-caption font-medium transition ${
+              flowKey === flow.key
+                ? 'bg-black text-white dark:bg-white dark:text-black'
+                : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
+            }`}
+          >
+            {flow.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="ml-auto shrink-0 rounded-full border border-black/10 px-2.5 py-1 text-caption text-slate-600 dark:border-white/15 dark:text-slate-300"
+        >
+          已保存
+        </button>
+      </div>
+      )}
       <aside
         data-workflow-rail
-        className={`${collapsed ? 'flex h-full w-12 shrink-0 flex-col border-r border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
+        className={`hidden min-[680px]:flex ${collapsed ? 'h-full w-12 shrink-0 flex-col border-r border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}
       >
         <div className={`${SIDEBAR_HEADER_CLASS} ${collapsed ? 'items-center justify-center px-2' : ''}`}>
           {!collapsed && (
@@ -260,10 +300,15 @@ export function WorkflowHub() {
 
         {collapsed ? (
           <div className="flex flex-col items-center gap-2 pt-1">
-            <span
-              className={`h-2 w-2 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`}
-              title={engine.probe?.ok ? '本地引擎运行中' : '本地引擎未运行'}
-            />
+            <button
+              type="button"
+              onClick={() => setEnginePanelOpen((open) => !open)}
+              title={engine.probe?.ok ? '本地引擎运行中（点击配置地址）' : '本地引擎未运行（点击配置地址）'}
+              aria-label="配置算力引擎"
+              className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
+            >
+              <span className={`h-2 w-2 rounded-full ${engine.probe?.ok ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+            </button>
             {FLOWS.map((flow) => {
               const Icon = FLOW_ICONS[flow.key as keyof typeof FLOW_ICONS] ?? Maximize2
               return (
@@ -288,7 +333,7 @@ export function WorkflowHub() {
           <div className={`${SIDEBAR_BODY_CLASS} space-y-4`}>
             <section className="space-y-2">
               <div className="px-1 text-micro font-semibold tracking-wide text-slate-400">本地引擎</div>
-              <EngineRow engine={engine} />
+              <EngineRow engine={engine} onConfigure={() => setEnginePanelOpen((open) => !open)} />
             </section>
 
             <section className="space-y-1.5">
@@ -354,10 +399,14 @@ export function WorkflowHub() {
           onQueueComplete={(message) => showToast(message, 'info')}
         />
 
-        <LocalEngineCard engine={engine} />
+        <LocalEngineCard
+          engine={engine}
+          forceOpen={enginePanelOpen}
+          onClose={() => setEnginePanelOpen(false)}
+        />
 
-        {/* 当前工作流 / 草稿状态 */}
-        <div className="absolute top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+        {/* 当前工作流 / 草稿状态（手机端底部栏已展示，隐藏顶部悬浮以免遮挡工具栏） */}
+        <div className="hidden min-[680px]:block absolute top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
           <div
             className={`h-8 px-3 rounded-full backdrop-blur-md border flex items-center gap-1.5 text-caption ${
               activeProject

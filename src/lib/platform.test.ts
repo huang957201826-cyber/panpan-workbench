@@ -203,4 +203,23 @@ describe('apiFetch（客户端）', () => {
     done.abort()
     expect(invoke.mock.calls.some((call) => call[0] === 'http_cancel')).toBe(false)
   })
+
+  it('支持 http_read 返回 Base64 字符串且 http_send 挂起时信号取消可立即结束等待', async () => {
+    const chunks = [btoa('{"data":[{"id":"gpt-image-2.5"}]}'), '']
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'http_send') return { status: 200, statusText: 'OK', headers: [['content-type', 'application/json']], url: 'https://api.example.com/v1/models' }
+      if (cmd === 'http_read') return chunks.shift() ?? ''
+      return undefined
+    })
+
+    const res = await apiFetch('https://api.example.com/v1/models')
+    expect(await res.json()).toEqual({ data: [{ id: 'gpt-image-2.5' }] })
+
+    invoke.mockImplementation((cmd: string) => cmd === 'http_send' ? new Promise(() => {}) : Promise.resolve())
+    const controller = new AbortController()
+    const hung = apiFetch('https://api.example.com/v1/models', { signal: controller.signal })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('http_send', expect.anything(), expect.anything()))
+    controller.abort(new DOMException('连接超时', 'AbortError'))
+    await expect(hung).rejects.toMatchObject({ name: 'AbortError', message: '连接超时' })
+  })
 })

@@ -1,6 +1,6 @@
 import type { ApiMode, ApiProfile as StoreApiProfile } from '../../types'
 import { createDefaultOpenAIProfile } from '../../lib/apiProfiles'
-import { apiFetch } from '../../lib/platform'
+import { FetchConnectError, apiFetch } from '../../lib/platform'
 import { useStore } from '../../store'
 
 /** 原型 SettingsModal 里的 ApiProfile 字段 */
@@ -143,44 +143,105 @@ export interface ConnectionResult {
   ok: boolean
   models: string[]
   error: string | null
+  normalizedUrl?: string
 }
 
-/** 真请求 `${baseUrl}/models`；401/403 与网络/超时分开报 */
+function extractModelIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return []
+  const record = payload as Record<string, unknown>
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(record.data)
+      ? record.data
+      : Array.isArray(record.models)
+        ? record.models
+        : []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of list) {
+    let raw = ''
+    if (typeof item === 'string') {
+      raw = item.trim()
+    } else if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>
+      const id = typeof obj.id === 'string' ? obj.id : typeof obj.name === 'string' ? obj.name : ''
+      raw = id.trim().replace(/^models\//, '')
+    }
+    if (raw && !seen.has(raw)) {
+      seen.add(raw)
+      result.push(raw)
+    }
+  }
+  return result
+}
+
+/** 真请求 `${baseUrl}/models`（未带 /v1 时自动回退尝试 `${baseUrl}/v1/models`）；401/403 与网络/超时分开报 */
 export async function testConnection(
   baseUrl: string,
   apiKey: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; profileId?: string } = {},
 ): Promise<ConnectionResult> {
-  const cleanUrl = baseUrl.trim().replace(/\/+$/, '')
+  const cleanUrl = baseUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/(models|chat\/completions|images\/generations|images\/edits|responses)$/i, '')
   if (!/^https?:\/\//i.test(cleanUrl)) {
     return { ok: false, models: [], error: '地址需以 http:// 或 https:// 开头' }
   }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000)
+  const timer = setTimeout(() => controller.abort(new DOMException('连接超时', 'AbortError')), options.timeoutMs ?? 12000)
   try {
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { Accept: 'application/json' }
     const settings = useStore.getState().settings
     const storedKey = apiKey === KEY_SENTINEL
-      ? (settings.profiles.find((profile) => profile.id === settings.activeProfileId)?.apiKey ?? '')
-      : apiKey
+      ? (
+        (options.profileId ? settings.profiles.find((profile) => profile.id === options.profileId)?.apiKey : undefined)
+        ?? settings.profiles.find((profile) => profile.baseUrl.replace(/\/+$/, '') === cleanUrl && profile.apiKey)?.apiKey
+        ?? settings.profiles.find((profile) => profile.id === settings.activeProfileId)?.apiKey
+        ?? settings.apiKey
+        ?? ''
+      )
+      : apiKey.trim()
     if (storedKey && storedKey !== KEY_SENTINEL) headers.Authorization = `Bearer ${storedKey}`
-    const response = await apiFetch(`${cleanUrl}/models`, {
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    })
-    if (response.status === 401 || response.status === 403) {
-      return { ok: false, models: [], error: `密钥无效（HTTP ${response.status}）` }
+
+    const candidates = /\/v\d+(?:beta)?$/i.test(cleanUrl)
+      ? [cleanUrl]
+      : [cleanUrl, `${cleanUrl}/v1`]
+
+    let lastStatus = 0
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidateBase = candidates[i]
+      const response = await apiFetch(`${candidateBase}/models`, {
+        headers,
+        signal: controller.signal,
+        cache: 'no-store',
+      })
+      if (response.status === 401 || response.status === 403) {
+        return { ok: false, models: [], error: `密钥无效（HTTP ${response.status}）` }
+      }
+      lastStatus = response.status
+      if (!response.ok) {
+        if (i + 1 < candidates.length && (response.status === 404 || response.status === 405)) {
+          continue
+        }
+        return { ok: false, models: [], error: `服务返回 HTTP ${response.status}` }
+      }
+      try {
+        const payload = await response.json()
+        const models = extractModelIds(payload)
+        return { ok: true, models, error: null, normalizedUrl: candidateBase }
+      } catch {
+        if (i + 1 < candidates.length) continue
+        return { ok: false, models: [], error: '接口返回的不是有效 JSON，请确认 API 地址包含 /v1' }
+      }
     }
-    if (!response.ok) {
-      return { ok: false, models: [], error: `服务返回 HTTP ${response.status}` }
-    }
-    const payload = (await response.json()) as { data?: Array<{ id?: string }> }
-    const models = (payload.data ?? []).map((item) => item.id).filter((id): id is string => Boolean(id))
-    return { ok: true, models, error: null }
+    return { ok: false, models: [], error: lastStatus ? `服务返回 HTTP ${lastStatus}` : '未获取到模型列表' }
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return { ok: false, models: [], error: `连接超时（${Math.round((options.timeoutMs ?? 8000) / 1000)} 秒）` }
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      return { ok: false, models: [], error: `连接超时（${Math.round((options.timeoutMs ?? 12000) / 1000)} 秒）` }
+    }
+    if (error instanceof FetchConnectError && error.message) {
+      return { ok: false, models: [], error: error.message }
     }
     return { ok: false, models: [], error: '网络错误：检查地址、网络或代理' }
   } finally {

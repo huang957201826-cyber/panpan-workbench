@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { trackDataTransfer } from '../../lib/dataOperations'
 import { formatBytes } from '../../lib/formatBytes'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../../lib/clipboard'
-import { changeDefaultSaveDir, migrateDefaultSaveDir, type MoveIssue, type MoveReport } from '../../lib/saveFile'
+import { changeDefaultSaveDir, migrateDefaultSaveDir, setDefaultSaveDir, type MoveIssue, type MoveReport, type PreviousSaveDir } from '../../lib/saveFile'
 import { useStore } from '../../store'
 import { CopyIcon } from '../icons'
 
@@ -78,9 +78,7 @@ function showResult(report: MoveReport) {
   })
 }
 
-/** 仅客户端：弹出目录选择框更改默认保存地址；原地址中有文件时询问是否迁移。返回新地址，取消时返回 null */
-export async function changeSaveDirWithMigration() {
-  const change = await changeDefaultSaveDir()
+function confirmSaveDirMigration(change: { path: string, previous: PreviousSaveDir | null } | null) {
   if (!change?.previous) return change?.path ?? null
   const prev = change.previous
   const store = useStore.getState()
@@ -124,4 +122,14 @@ export async function changeSaveDirWithMigration() {
     },
   })
   return change.path
+}
+
+/** 仅客户端：弹出目录选择框更改默认保存地址；原地址中有文件时询问是否迁移。返回新地址，取消时返回 null */
+export async function changeSaveDirWithMigration() {
+  return confirmSaveDirMigration(await changeDefaultSaveDir())
+}
+
+/** 仅客户端：按指定路径更改默认保存地址（用于移动端或无原生目录选择框的平台）；原地址中有文件时按官方规则询问是否迁移 */
+export async function setSaveDirWithMigration(path: string) {
+  return confirmSaveDirMigration(await setDefaultSaveDir(path))
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { changeDataDir, getStorageInfo, openStorageDir, pickDataDir, type StorageInfo } from '../../lib/dbTauri'
 import { formatBytes } from '../../lib/formatBytes'
+import { isMobile } from '../../lib/platform'
 import { flushTauriStorage } from '../../lib/tauriStorage'
 import { useStore } from '../../store'
 import { ExternalLinkIcon } from '../icons'
@@ -14,14 +15,16 @@ export default function StorageInfoSection() {
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  const loadInfo = () => {
     getStorageInfo()
       .then(setInfo)
       .catch((err) => {
         console.error('读取存储信息失败：', err)
         setError(err instanceof Error ? err.message : String(err))
       })
-  }, [])
+  }
+
+  useEffect(loadInfo, [])
 
   const handleOpen = async () => {
     try {
@@ -106,7 +109,7 @@ export default function StorageInfoSection() {
           <div className="break-all">
             <span className="text-gray-600 dark:text-gray-300">数据目录：</span>
             <span className="select-text">{info?.dataDir ?? '读取中…'}</span>
-            {info && (
+            {info && !isMobile && (
               // 紧跟在路径末尾，与文字同高同色，悬停时才加深
               <button
                 type="button"
@@ -134,13 +137,15 @@ export default function StorageInfoSection() {
           )}
         </div>
       )}
-      <button
-        onClick={handleChange}
-        className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-body font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white flex items-center justify-center gap-2"
-      >
-        更改数据目录
-      </button>
-      <DeleteBackupSection />
+      {!isMobile && (
+        <button
+          onClick={handleChange}
+          className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-body font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white flex items-center justify-center gap-2"
+        >
+          更改数据目录
+        </button>
+      )}
+      <DeleteBackupSection onRestored={loadInfo} />
     </div>
   )
 }

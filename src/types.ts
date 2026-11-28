@@ -193,6 +193,10 @@ export interface AppSettings {
   agentImageProfileId?: string | null
   /** 是否启用 Studio 壳子；关闭时回退旧布局 */
   studioShellEnabled?: boolean
+  /** 自定义软件显示名称（默认“盼盼工作台”，支持安卓/平板/iPhone/iPad/桌面端） */
+  customAppName?: string
+  /** 外部 AI 唤醒链接打开后是否默认自动提交生图（默认 false：仅填入输入框） */
+  aiLinkAutoSubmit?: boolean
   /** 界面缩放百分比：只缩放 UI 外壳，画布世界坐标不变 */
   uiScale?: UiScale
   profiles: ApiProfile[]
@@ -777,8 +781,18 @@ export interface ExportData {
   skills?: PromptSkill[]
   /** 能力技能（B04B）；保持 version 4，旧版忽略此字段 */
   capabilitySkills?: Skill[]
-  /** 内置技能的收藏/封面/模型覆盖层；与 capabilitySkills 分开 */
-  capabilityOverrides?: Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+  /** 内置技能的收藏/封面/模型/指令覆盖层；与 capabilitySkills 分开 */
+  capabilityOverrides?: Record<string, {
+    favorite?: boolean
+    coverImageId?: string
+    model?: string
+    basePrompt?: string
+    negativePrompt?: string
+    slots?: SkillSlot[]
+    name?: string
+    description?: string
+    referenceImageIds?: string[]
+  }>
   savedWorkflows?: SavedWorkflowBackup[]
   workflowImageFiles?: Record<string, {
     path: string

@@ -15,6 +15,7 @@ export interface GenerationParams {
 export interface SkillVariable {
   key: string;
   label: string;
+  type?: 'text' | 'enum' | 'multi' | 'number' | 'bool';
   defaultValue: string;
   placeholder?: string;
   options?: string[];

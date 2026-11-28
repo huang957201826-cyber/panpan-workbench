@@ -10,6 +10,7 @@ commands.allow = [
   "save_abort",
   "download_dir_get",
   "download_dir_pick",
+  "download_dir_set",
   "download_dir_use",
   "download_dir_open",
   "download_dir_migrate",

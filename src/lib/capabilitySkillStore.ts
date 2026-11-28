@@ -76,6 +76,7 @@ export interface SkillOverride {
   coverImageId?: string
   model?: string
   basePrompt?: string
+  negativePrompt?: string
   slots?: SkillSlot[]
   name?: string
   description?: string
@@ -93,6 +94,7 @@ function normalizeOverrides(value: unknown): Record<string, SkillOverride> {
     if (typeof item.coverImageId === 'string' && item.coverImageId) override.coverImageId = item.coverImageId
     if (typeof item.model === 'string' && item.model.trim()) override.model = item.model.trim()
     if (typeof item.basePrompt === 'string' && item.basePrompt.trim()) override.basePrompt = item.basePrompt
+    if (typeof item.negativePrompt === 'string' && item.negativePrompt.trim()) override.negativePrompt = item.negativePrompt.trim()
     if (typeof item.name === 'string' && item.name.trim()) override.name = item.name.trim()
     if (typeof item.description === 'string' && item.description.trim()) override.description = item.description.trim()
     if (Array.isArray(item.slots)) override.slots = normalizeSlots(item.slots)
@@ -106,7 +108,7 @@ function normalizeOverrides(value: unknown): Record<string, SkillOverride> {
 
 /** 内置技能只存覆盖层，不复制进 mine */
 export function applySkillOverride(skill: Skill, overrides: Record<string, SkillOverride>): Skill {
-  const override = overrides[skill.id]
+  const override = overrides[skill.id] ?? overrides[skill.id.replace(/^builtin:/, '')]
   if (!override) return skill
   return {
     ...skill,
@@ -116,6 +118,7 @@ export function applySkillOverride(skill: Skill, overrides: Record<string, Skill
     coverImageId: override.coverImageId ?? skill.coverImageId,
     model: override.model ?? skill.model,
     basePrompt: override.basePrompt ?? skill.basePrompt,
+    negativePrompt: override.negativePrompt ?? skill.negativePrompt,
     slots: override.slots ?? skill.slots,
     name: override.name ?? skill.name,
     description: override.description ?? skill.description,

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useVirtualGrid } from '../../hooks/useVirtualGrid';
 import { downloadImage } from '../../lib/downloadImage';
 import { downloadTaskImages } from '../../lib/taskExport';
-import { getDownloadErrorMessage } from '../../lib/downloadImages';
+import { getDownloadErrorMessage, withSaveLocation } from '../../lib/downloadImages';
 import { useStore } from '../../store'
 import { EmptyState, SkeletonGrid } from '../../ui';
 import { ArtboardThumb } from './ArtboardThumb';
@@ -87,7 +87,7 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
     if (!grid) return
     const update = () => {
       const width = grid.clientWidth
-      setColumnCount(width >= 1250 ? 5 : width >= 950 ? 4 : 3)
+      setColumnCount(width >= 1250 ? 5 : width >= 950 ? 4 : width >= 540 ? 3 : 2)
     }
     update()
     const observer = new ResizeObserver(update)
@@ -109,12 +109,16 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
     const result = task && artboard.imageId
       ? await downloadTaskImages(task, [artboard.imageId], { fileNameBase: artboard.prompt || artboard.title })
       : await downloadImage(ref, artboard.prompt || artboard.title, artboard.imageIndex)
-    if (result.canceled || result.successCount) return
+    if (result.canceled) return
+    if (result.successCount) {
+      useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+      return
+    }
     useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
   };
 
   return (
-    <div ref={scrollRef} className="ui-scale-chrome relative flex-1 h-full overflow-y-auto no-scrollbar px-6 pb-56 pt-24 text-slate-800 dark:text-slate-100 select-none">
+    <div ref={scrollRef} className="ui-scale-chrome relative flex-1 h-full overflow-y-auto no-scrollbar px-3 pb-56 pt-14 md:px-6 md:pt-24 text-slate-800 dark:text-slate-100 select-none">
       {/* Seamless Dot Matrix Background */}
       <div className="absolute inset-0 bg-[#f3f4f8] dark:bg-[#0c0e14]" />
 
@@ -165,12 +169,12 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                     setInspectArtboard(artboard)
                   }
                 }}
-                className={`relative aspect-[16/9] w-full bg-surface-2 overflow-hidden ring-1 ring-inset ring-black/[0.04] dark:ring-white/[0.06] cursor-pointer ${selectionMode && selectedTaskIds?.has(artboard.taskId ?? '') ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
+                className={`relative aspect-[4/3] sm:aspect-[16/9] w-full bg-surface-2 overflow-hidden ring-1 ring-inset ring-black/[0.04] dark:ring-white/[0.06] cursor-pointer ${selectionMode && selectedTaskIds?.has(artboard.taskId ?? '') ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
               >
                 {artboard.isAsset && !selectionMode && (
-                  <span className="absolute left-2 top-2 z-20 flex h-5 items-center gap-1 rounded-chip bg-black/70 px-2 text-caption font-medium text-white backdrop-blur-md">
-                    <ImagePlus className="h-3 w-3 stroke-[1.6]" />
-                    素材 图{artboard.assetNumber}
+                  <span className="pointer-events-none absolute left-1.5 top-1.5 sm:left-2 sm:top-2 z-20 flex h-5 max-w-[calc(100%-12px)] items-center gap-1 rounded-chip bg-black/70 px-2 text-caption font-medium text-white backdrop-blur-md">
+                    <ImagePlus className="h-3 w-3 shrink-0 stroke-[1.6]" />
+                    <span className="truncate">素材 图{artboard.assetNumber}</span>
                   </span>
                 )}
                 {selectionMode && (
@@ -218,22 +222,22 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                   </div>
                 )}
 
-                {/* Hover Action Overlay: Pure Monochrome buttons */}
+                {/* Hover Action Overlay: Pure Monochrome buttons (mobile sits bottom-right with compact icons so it never overlaps top-left badges) */}
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className={`absolute top-2 right-2 flex items-center gap-1 transition-opacity z-10 ${selectionMode
+                  className={`absolute bottom-1.5 right-1.5 md:bottom-auto md:top-2 md:right-2 flex items-center gap-1 transition-opacity z-10 ${selectionMode
                     ? (artboard.taskId && selectedTaskIds?.has(artboard.taskId) ? 'opacity-100' : 'hidden')
-                    : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}
+                    : 'opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto'}`}
                 >
                   {/* Pin as Reference Image to Bottom Bar! */}
                   {onSetAsReference && artboard.imageId && (
                     <button
                       onClick={() => onSetAsReference(artboard)}
-                      className="flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/80 px-2.5 text-caption font-medium text-white shadow-sm backdrop-blur-md transition hover:bg-black"
+                      className="flex h-6 sm:h-7 cursor-pointer items-center gap-1 rounded-lg sm:rounded-full bg-black/80 px-1.5 sm:px-2.5 text-caption font-medium text-white shadow-sm backdrop-blur-md transition hover:bg-black"
                       title="加入输入台参考图"
                     >
                       <ImagePlus className="w-3 h-3 stroke-[1.5]" />
-                      <span>设为参考图</span>
+                      <span className="hidden sm:inline">设为参考图</span>
                     </button>
                   )}
 
@@ -241,7 +245,7 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                   {!artboard.isAsset && onRecallPrompt && artboard.imageId && (
                     <button
                       onClick={() => onRecallPrompt(artboard)}
-                      className="w-6 h-6 rounded-lg bg-black/80 hover:bg-black text-white flex items-center justify-center backdrop-blur-md transition cursor-pointer shadow-sm"
+                      className="hidden sm:flex w-6 h-6 rounded-lg bg-black/80 hover:bg-black text-white items-center justify-center backdrop-blur-md transition cursor-pointer shadow-sm"
                       title="一键载入该图参数到输入框"
                     >
                       <RotateCcw className="w-3 h-3 stroke-[1.5]" />
@@ -251,7 +255,7 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                   {/* Send to Main Canvas */}
                   {!artboard.isAsset && artboard.imageId && <button
                     onClick={() => onSendToCanvas(artboard)}
-                    className="w-6 h-6 rounded-lg bg-black/80 hover:bg-black text-white flex items-center justify-center backdrop-blur-md transition cursor-pointer shadow-sm"
+                    className="hidden sm:flex w-6 h-6 rounded-lg bg-black/80 hover:bg-black text-white items-center justify-center backdrop-blur-md transition cursor-pointer shadow-sm"
                     title="送入主画布"
                   >
                     <Layers className="w-3 h-3 stroke-[1.5]" />
@@ -296,7 +300,7 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
                   <div className="font-medium text-body-sm text-slate-800 dark:text-slate-100 truncate">
                     {artboard.title}
                   </div>
-                  <div className="text-caption text-slate-400 dark:text-slate-500 font-mono mt-0.5">
+                  <div className="text-caption text-slate-400 dark:text-slate-500 font-mono mt-0.5 truncate">
                     {artboard.isAsset
                       ? '参考图素材'
                       : <>{artboard.model}{artboard.status === 'running' ? ' · 生成中' : artboard.status === 'error' ? ' · 失败' : artboard.renderTime ? ` · 耗时 ${artboard.renderTime}` : ''}</>}

@@ -57,8 +57,8 @@ fn protect(raw: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(not(windows))]
-fn protect(_raw: &[u8]) -> Result<Vec<u8>, String> {
-    Err("当前平台不支持 Windows DPAPI".to_string())
+fn protect(raw: &[u8]) -> Result<Vec<u8>, String> {
+    Ok(raw.to_vec())
 }
 
 #[cfg(windows)]
@@ -102,8 +102,8 @@ fn unprotect(raw: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(not(windows))]
-fn unprotect(_raw: &[u8]) -> Result<Vec<u8>, String> {
-    Err("当前平台不支持 Windows DPAPI".to_string())
+fn unprotect(raw: &[u8]) -> Result<Vec<u8>, String> {
+    Ok(raw.to_vec())
 }
 
 #[tauri::command]

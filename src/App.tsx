@@ -33,7 +33,7 @@ import { showStartupNotices, type NoticeSection } from './components/startupNoti
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { takeDataDirNotice } from './lib/dbTauri'
 import { installCliBridge } from './lib/cliBridge'
-import { isTauri, TITLEBAR_HEIGHT } from './lib/platform'
+import { isMobile, isTauri, TITLEBAR_HEIGHT } from './lib/platform'
 import { setSaveToDefaultDir } from './lib/saveFile'
 import { setTauriLogEnabled } from './lib/tauriLog'
 import { getSecretCleanupError, getTauriStorageLoadError } from './lib/tauriStorage'
@@ -133,8 +133,8 @@ export default function App() {
   }, [writeLogFile])
 
   useEffect(() => {
-    // 网页版始终由浏览器下载，忽略备份中带来的该设置
-    setSaveToDefaultDir(isTauri && saveLocationMode === 'default')
+    // 网页版始终由浏览器下载，移动端默认直接保存到下载目录
+    setSaveToDefaultDir(isTauri && (isMobile || saveLocationMode === 'default'))
   }, [saveLocationMode])
 
   useEffect(() => {

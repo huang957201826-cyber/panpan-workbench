@@ -41,14 +41,44 @@ fn number_header(headers: &HeaderMap, name: &str) -> Option<i64> {
         .map(|n| n.round() as i64)
 }
 
-/// 原始请求体为文件内容，元数据放在 x-* 请求头中
+/// 原始请求体为文件内容（桌面端为二进制 Raw，安卓 WebView 下支持 base64 JSON 对象或字节数组），元数据放在 x-* 请求头中
 async fn put_from_request(
     state: State<'_, StorageState>,
     request: Request<'_>,
     kind: Kind,
 ) -> Result<()> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err(StorageError::new("invalid_argument", "请求体必须是二进制"));
+    use base64::Engine;
+    let bytes: Vec<u8> = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(serde_json::Value::Object(map)) => {
+            if let Some(b64) = map.get("base64").and_then(|v| v.as_str()) {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|err| {
+                        StorageError::new("invalid_argument", format!("base64 解码失败：{err}"))
+                    })?
+            } else {
+                return Err(StorageError::new("invalid_argument", "请求体必须是二进制"));
+            }
+        }
+        InvokeBody::Json(serde_json::Value::String(b64)) => {
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|err| {
+                    StorageError::new("invalid_argument", format!("base64 解码失败：{err}"))
+                })?
+        }
+        InvokeBody::Json(serde_json::Value::Array(items)) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(byte) = item.as_u64().and_then(|n| u8::try_from(n).ok()) else {
+                    return Err(StorageError::new("invalid_argument", "请求体必须是二进制"));
+                };
+                out.push(byte);
+            }
+            out
+        }
+        _ => return Err(StorageError::new("invalid_argument", "请求体必须是二进制")),
     };
     let headers = request.headers();
     let meta = FileMeta {
@@ -70,8 +100,6 @@ async fn put_from_request(
         created_at: number_header(headers, "x-created-at"),
         thumbnail_version: number_header(headers, "x-thumbnail-version"),
     };
-    // 请求体借用自 IPC 消息，需复制一份才能移入阻塞线程
-    let bytes = bytes.clone();
     run(state, move |s| s.put_file(kind, &meta, &bytes)).await
 }
 

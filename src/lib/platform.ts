@@ -3,11 +3,90 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 
 export const isTauri = detectTauri()
 
-/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版为 0 */
-export const TITLEBAR_HEIGHT = isTauri ? 32 : 0
+/** 是否运行在 iPadOS */
+export const isIPadOS = typeof navigator !== 'undefined' && (
+  /iPad/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+)
+
+/** 是否运行在 iPhone / iPod */
+export const isIOSPhone = typeof navigator !== 'undefined' && /iPhone|iPod/i.test(navigator.userAgent)
+
+/** 是否运行在 Apple 移动端（iOS / iPadOS） */
+export const isIOS = isIOSPhone || isIPadOS
+
+/** 是否运行在 Android（手机 / 平板 / 折叠屏） */
+export const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
+/** 是否运行在移动端（Android / iOS / iPadOS） */
+export const isMobile = isIOS || isAndroid
+
+/** 是否运行在 macOS 桌面端 */
+export const isMacOS = typeof navigator !== 'undefined' && !isMobile && /Mac/i.test(navigator.platform)
+
+/** 是否支持粗指针/触控交互 */
+export const isTouchDevice = typeof window !== 'undefined' && (
+  isMobile
+  || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
+  || (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches)
+)
+
+/** 是否运行在桌面端但无原生保存文件对话框（macOS / Linux） */
+export const isNonWindowsDesktop = typeof navigator !== 'undefined' && !isMobile && !/Win/i.test(navigator.platform)
+
+/** 客户端自绘标题栏的高度（src/components/TitleBar.tsx），页面经 `--safe-area-top` 让出；网页版与移动端为 0，macOS 原生透明叠层为 38 */
+export const TITLEBAR_HEIGHT = isTauri && !isMobile ? (isMacOS ? 38 : 32) : 0
 
 /** 提交快捷键提示：macOS 显示 ⌘↵，其余平台显示 Ctrl+↵；只用于展示，实际按键判定见各处 onKeyDown */
-export const submitShortcutHint = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵'
+export const submitShortcutHint = isMacOS ? '⌘↵' : 'Ctrl+↵'
+
+/**
+ * 安卓 WebView 下 Tauri IPC 请求体走 postMessage JSON 序列化，直接传 Uint8Array 会被 Array.from 展开为数百万个 JSON 数字导致卡死或内存溢出。
+ * 转为 { base64 } 对象后体积缩小 4 倍且无需构造巨型 JS 数组；桌面端与测试环境保持传 Uint8Array。
+ */
+export function toIpcBinaryBody(bytes: Uint8Array): Uint8Array | { base64: string } {
+  if (!isAndroid) return bytes
+  const CHUNK = 0x8000
+  const parts: string[] = []
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)))
+  }
+  return { base64: btoa(parts.join('')) }
+}
+
+function decodeHttpReadChunk(raw: string | ArrayBuffer | Uint8Array | null | undefined): Uint8Array {
+  if (!raw) return new Uint8Array(0)
+  if (typeof raw === 'string') {
+    if (!raw.length) return new Uint8Array(0)
+    const bin = atob(raw)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) {
+      out[i] = bin.charCodeAt(i)
+    }
+    return out
+  }
+  if (raw instanceof Uint8Array) return raw
+  return new Uint8Array(raw)
+}
+
+function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(abortReason(signal))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(val)
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      },
+    )
+  })
+}
 
 interface HttpHead {
   status: number
@@ -50,8 +129,11 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   signal?.addEventListener('abort', cancel, { once: true })
 
   const meta = { id, method: req.method, url: req.url, headers: [...req.headers] }
-  // 请求体以二进制传给 Rust，避免大图编辑请求经 JSON 数组放大数倍
-  const head = await invoke<HttpHead>('http_send', body, { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
+  // 请求体以二进制传给 Rust（安卓端转为 base64 对象），避免大图编辑请求经 JSON 数组放大数倍
+  const head = await raceWithSignal(
+    invoke<HttpHead>('http_send', toIpcBinaryBody(body), { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }),
+    signal,
+  ).catch((err) => {
     settle()
     throw signal?.aborted ? abortReason(signal) : new FetchConnectError(String(err))
   })
@@ -64,7 +146,8 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   }
   const pull = async (ctrl: ReadableStreamDefaultController<Uint8Array>) => {
     try {
-      const chunk = new Uint8Array(await invoke<ArrayBuffer>('http_read', { id }))
+      const raw = await raceWithSignal(invoke<string | ArrayBuffer>('http_read', { id }), signal)
+      const chunk = decodeHttpReadChunk(raw)
       if (chunk.byteLength) return ctrl.enqueue(chunk)
       settle()
       ctrl.close()

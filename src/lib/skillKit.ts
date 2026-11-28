@@ -58,10 +58,26 @@ async function fetchText(path: string): Promise<string> {
   return response.text()
 }
 
-/** 只读加载 MANIFEST + 每条技能的 skill.json / prompt.md */
+/** 只读加载 BUNDLE.json（单次请求），若不存在则回退到 MANIFEST + 每条技能的 skill.json / prompt.md */
 export function loadSkillKit(): Promise<SkillKit> {
   if (cached) return cached
   cached = (async () => {
+    try {
+      const bundleText = await fetchText('BUNDLE.json')
+      const bundle = JSON.parse(bundleText) as SkillKit
+      if (
+        bundle &&
+        bundle.manifest &&
+        Array.isArray(bundle.skills) &&
+        bundle.skills.length > 0 &&
+        bundle.skills.every((entry) => entry?.key && entry?.skill && typeof entry?.prompt === 'string')
+      ) {
+        return bundle
+      }
+    } catch {
+      // BUNDLE.json 不可用时回退至逐条读取
+    }
+
     let manifest: SkillKitManifest
     try {
       manifest = JSON.parse(await fetchText('MANIFEST.json')) as SkillKitManifest

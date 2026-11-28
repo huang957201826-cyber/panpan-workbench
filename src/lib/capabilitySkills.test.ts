@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Skill } from '../types'
-import { composeSkillPrompt, defaultSkillValues, validateSkillValues } from './capabilitySkills'
+import {
+  composeSkillPrompt,
+  defaultSkillValues,
+  pruneDetachedSkillImages,
+  resolveSkillParamPatch,
+  toCapabilitySkill,
+  validateSkillValues,
+} from './capabilitySkills'
 import { mergeImportedCapabilitySkills, serializeCapabilitySkillsForExport } from './exportZip'
 
 const SKILL: Skill = {
@@ -51,5 +58,72 @@ describe('capability skills', () => {
     const merged = mergeImportedCapabilitySkills([SKILL], [{ ...SKILL, description: '导入版本' }])
     expect(merged).toHaveLength(1)
     expect(merged[0].description).toBe('导入版本')
+  })
+
+  it('numbers multiple attached images across slots as @图1 and @图2 and deduplicates inline {key} slots', () => {
+    const multiSlotSkill: Skill = {
+      ...SKILL,
+      basePrompt: '执行材质替换（{material}）。',
+      negativePrompt: '抠图硬边，贴图失真',
+      slots: [
+        { key: 'base_image', label: '空间底图', type: 'image' },
+        { key: 'material_ref', label: '新材质参考图', type: 'image' },
+        { key: 'material', label: '目标材质', type: 'text', required: true },
+        { key: 'light', label: '光照条件', type: 'text' },
+      ],
+    }
+    const prompt = composeSkillPrompt(
+      multiSlotSkill,
+      { base_image: ['img-a'], material_ref: ['img-b'], material: '微水泥', light: '自然侧光' },
+      '',
+    )
+    expect(prompt).toBe(
+      '执行材质替换（微水泥）。\n\n【本次输入】\n- 空间底图（base_image）：已附参考图（对应 @图1）\n- 新材质参考图（material_ref）：已附参考图（对应 @图2）\n- 光照条件（light）：自然侧光\n\n【负向约束（避免出现）】\n抠图硬边，贴图失真',
+    )
+  })
+
+  it('prunes detached image IDs from skill slot values when inputImages are cleared', () => {
+    const cleaned = pruneDetachedSkillImages(
+      SKILL,
+      { space: '展厅', ref: ['img-old-1', 'img-keep-2'] },
+      ['img-keep-2'],
+    )
+    expect(cleaned).toEqual({ space: '展厅', ref: ['img-keep-2'] })
+    const afterClearAll = pruneDetachedSkillImages(SKILL, cleaned, [])
+    expect(afterClearAll).toEqual({ space: '展厅', ref: [] })
+    expect(composeSkillPrompt(SKILL, afterClearAll, '')).not.toContain('已附参考图')
+  })
+
+  it('maps ratio / ratios / layout slot values to workbench size parameters', () => {
+    const ratioSkill: Skill = {
+      ...SKILL,
+      slots: [
+        { key: 'ratio', label: '画幅', type: 'enum', options: ['16:9', '9:16', '1:1'], defaultValue: '16:9' },
+      ],
+    }
+    expect(resolveSkillParamPatch(ratioSkill, {})).toEqual({ size: '1536x1024' })
+    expect(resolveSkillParamPatch(ratioSkill, { ratio: '9:16 竖版' })).toEqual({ size: '1024x1536' })
+    expect(resolveSkillParamPatch(ratioSkill, { ratio: '1:1 方图' })).toEqual({ size: '1024x1024' })
+  })
+
+  it('preserves required flag on non-image builtin inputs and initializes enum defaults', () => {
+    const builtin = toCapabilitySkill({
+      key: 'graphic.poster',
+      prompt: '设计海报',
+      skill: {
+        key: 'graphic.poster',
+        name: '海报设计',
+        category: 'D 平面与传播',
+        priority: 'P0',
+        inputs: [
+          { k: 'brief', label: '主题与用途', type: 'text', required: true },
+          { k: 'ratio', label: '尺寸', type: 'enum', required: true, options: ['3:4', '16:9'] },
+          { k: 'reference', label: '参考图', type: 'image', required: true },
+        ],
+      },
+    })
+    expect(builtin.slots.find((s) => s.key === 'brief')?.required).toBe(true)
+    expect(builtin.slots.find((s) => s.key === 'ratio')?.defaultValue).toBe('3:4')
+    expect(builtin.slots.find((s) => s.key === 'reference')?.required).toBe(false)
   })
 })

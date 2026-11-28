@@ -31,14 +31,18 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
         }));
     // 插件初始化失败会导致应用无法启动，先确认日志文件可以追加写入，不可用时只输出到控制台。
     // 仍无法规避的情况：启动时 app.log 已超过 5MB 需要改名、或旧的历史文件需要删除，而文件恰好被其他程序锁住
-    let file = logs_dir().and_then(|dir| {
-        fs::create_dir_all(&dir)?;
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("app.log"))?;
-        Ok(dir)
-    });
+    let file = if cfg!(mobile) {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "Mobile delays log dir initialization"))
+    } else {
+        logs_dir().and_then(|dir| {
+            fs::create_dir_all(&dir)?;
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("app.log"))?;
+            Ok(dir)
+        })
+    };
     match file {
         Ok(path) => builder.target(
             Target::new(TargetKind::Folder {

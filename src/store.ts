@@ -56,7 +56,7 @@ import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { buildAgentApiInput, buildAgentContinuationInput } from './lib/agentInputBuilder'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId } from './lib/agentImageReferences'
-import { showBrowserNotification } from './lib/browserNotification'
+import { registerDownloadNotificationHandler, showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT, isHttpUrl } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { CustomPollDeadlineError, getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
@@ -399,6 +399,10 @@ function showTaskCompletionNotification(title: string, body: string, tag = 'task
   if (!settings.taskCompletionNotification) return
   showBrowserNotification(title, { body, tag })
 }
+
+registerDownloadNotificationHandler((title, body, tag) => {
+  showTaskCompletionNotification(title, body, tag)
+})
 
 // 隐私模式中丢弃进入前已开始的任务和对话的提示与通知，退出后也不补发
 function isTaskHiddenByPrivacyMode(task: TaskRecord) {
@@ -1071,7 +1075,17 @@ export const useStore = create<AppState>()(
         }),
       clearInputImages: () =>
         set((s) => {
-          for (const img of s.inputImages) deleteCachedImage(img.id)
+          const retainedIds = new Set<string>()
+          for (const task of s.tasks) {
+            for (const id of task.inputImageIds ?? []) retainedIds.add(id)
+            for (const id of task.outputImages ?? []) retainedIds.add(id)
+          }
+          for (const canvas of useWorkspaceStore.getState().canvases) {
+            for (const node of canvas.imageNodes ?? []) retainedIds.add(node.imageId)
+          }
+          for (const img of s.inputImages) {
+            if (!retainedIds.has(img.id)) deleteCachedImage(img.id)
+          }
           return syncActiveInputDraft(s, {
             ...updateInputDraftImages(s, []),
             maskDraft: null,
@@ -2256,6 +2270,10 @@ export interface SubmitTaskOptions {
   position?: { x: number; y: number }
   /** GIF/SVG 本地导出格式；API 仍按 PNG/JPEG/WebP 请求 */
   localExportFormat?: 'gif' | 'svg'
+  /** 任务校验通过后、计算画布落点前执行（如将待发送参考图框同步落入画布素材节点） */
+  onBeforePlaceTasks?: (images: InputImage[], targetCanvasId: string) => Promise<void> | void
+  /** 首条任务写入画布并进入执行队列时立即回调（如发送后清空输入栏参考图框） */
+  onTaskDispatched?: (taskId: string, targetCanvasId: string) => void
 }
 
 /** 提交新任务，返回已开始的任务 id；批量提交时等全部任务结束后才返回 */
@@ -2365,10 +2383,16 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
       await storeImage(img.dataUrl)
     }
   } catch (err) {
-    console.error('保存参考图失败', err)
-    endBatch(batchId)
-    showToast(`保存参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-    return []
+    if (orderedInputImages.every((img) => img.id.startsWith('mem-') && Boolean(img.dataUrl))) {
+      for (const img of orderedInputImages) {
+        cacheImage(img.id, img.dataUrl)
+      }
+    } else {
+      console.error('保存参考图失败', err)
+      endBatch(batchId)
+      showToast(`保存参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      return []
+    }
   }
 
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
@@ -2404,6 +2428,9 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   if (missingInputImageIds.length) {
     showToast(`有 ${missingInputImageIds.length} 张参考图已从画布删除，请先移除或重新拖入后再提交。`, 'error')
     return []
+  }
+  if (options.onBeforePlaceTasks && orderedInputImages.length > 0) {
+    await options.onBeforePlaceTasks(orderedInputImages, targetCanvasId)
   }
   const targetSize = canvasView.viewMode === 'canvas'
     ? { width: canvasView.size.width || 1200, height: (canvasView.size.height - canvasView.bottomInset) || 800 }
@@ -2496,6 +2523,9 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     if (outcome === 'superseded') return null
     if (batchId) batchTaskIds.add(task.id)
     taskIds.push(task.id)
+    if (taskIds.length === 1) {
+      options.onTaskDispatched?.(task.id, targetCanvasId)
+    }
     // 批量任务由 runBatchPrompts 控制并发；手动连续提交走全局队列
     if (batchId) executeTask(task.id)
     else enqueueManualTask(task.id)
@@ -4872,9 +4902,17 @@ async function executeTask(taskId: string) {
       taskExecutions.delete(taskId)
       taskControllers.delete(taskId)
     }
-    // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
+    // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载；内存回退与画布素材节点保留）
     if (!taskExecutions.has(taskId)) {
-      for (const imgId of task.inputImageIds) deleteCachedImage(imgId)
+      const canvasNodeImageIds = new Set<string>()
+      for (const canvas of useWorkspaceStore.getState().canvases) {
+        for (const node of canvas.imageNodes ?? []) canvasNodeImageIds.add(node.imageId)
+      }
+      for (const imgId of task.inputImageIds) {
+        if (!imgId.startsWith('mem-') && !canvasNodeImageIds.has(imgId)) {
+          deleteCachedImage(imgId)
+        }
+      }
     }
   }
 }
@@ -6505,11 +6543,19 @@ export async function importData(input: File | File[], options: ImportOptions = 
     }
 
     const settingsManifests = selected.filter((part) => part.manifest.settings)
+    const hasSkillPayload = selected.some(
+      (part) =>
+        Array.isArray(part.manifest.skills) ||
+        Array.isArray(part.manifest.capabilitySkills) ||
+        Boolean(part.manifest.capabilityOverrides && Object.keys(part.manifest.capabilityOverrides).length),
+    )
     const futureVersion = selected.find((part) => typeof part.manifest.version === 'number' && part.manifest.version > 5)
     if (futureVersion) {
       throw new Error(`备份版本 ${futureVersion.manifest.version} 高于当前支持的版本 5，请升级盼盼工作台后再导入。`)
     }
-    if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('这份备份里没有配置。')
+    if (options.importConfig && !options.importTasks && !settingsManifests.length && !hasSkillPayload) {
+      throw new Error('这份备份里没有配置。')
+    }
     if (selected.some((part) => part.manifest.version >= 5)) {
       return await restoreV5Data(selected, options, signal)
     }
@@ -6695,7 +6741,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
         capabilitySkills: mergeImportedCapabilitySkills(snapshot.capabilitySkills, importedCapabilitySkills),
       })
     }
-    const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as Record<string, { favorite?: boolean; coverImageId?: string; model?: string }>
+    const importedOverrides = Object.assign({}, ...selected.map((part) => part.manifest.capabilityOverrides ?? {})) as NonNullable<ExportData['capabilityOverrides']>
     if (Object.keys(importedOverrides).length) {
       replaceRegisteredSkillBackup({
         overrides: {
@@ -6786,10 +6832,58 @@ export async function withInputPending<T>(run: () => Promise<T>): Promise<T> {
 const MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_INPUT_IMAGE_EDGE = 8192
 
+const IMAGE_FILE_EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  jfif: 'image/jpeg',
+  pjpeg: 'image/jpeg',
+  pjp: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  svg: 'image/svg+xml',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+}
+
+async function detectImageMime(file: File): Promise<string | null> {
+  if (file.type.startsWith('image/')) return file.type
+  if (file.type && file.type !== 'application/octet-stream') return null
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  if (ext && IMAGE_FILE_EXT_MIME[ext]) return IMAGE_FILE_EXT_MIME[ext]
+  try {
+    const buf = await file.slice(0, 16).arrayBuffer()
+    const b = new Uint8Array(buf)
+    if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+    if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+    if (b.length >= 4 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif'
+    if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return 'image/bmp'
+    if (
+      b.length >= 12 &&
+      b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+      b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+    ) return 'image/webp'
+    if (
+      b.length >= 12 &&
+      b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70
+    ) {
+      const brand = String.fromCharCode(b[8], b[9], b[10], b[11]).toLowerCase()
+      if (brand === 'avif' || brand === 'avis') return 'image/avif'
+      if (brand === 'heic' || brand === 'heix' || brand === 'hevc' || brand === 'hevx' || brand === 'mif1' || brand === 'msf1') return 'image/heic'
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {
-  if (!file.type.startsWith('image/')) return null
-  let source: Blob = file
-  let needsCompress = file.size > MAX_INPUT_IMAGE_BYTES
+  const detectedMime = await detectImageMime(file)
+  if (!detectedMime) return null
+  let source: Blob = file.type === detectedMime ? file : new Blob([file], { type: detectedMime })
+  let needsCompress = file.size > MAX_INPUT_IMAGE_BYTES || detectedMime === 'image/heic' || detectedMime === 'image/heif'
   let bitmap: ImageBitmap | null = null
   try {
     bitmap = await createImageBitmap(file)
@@ -6804,7 +6898,7 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
       const ctx = canvas.getContext('2d')
       if (ctx) {
         ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-        const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+        const type = detectedMime === 'image/png' ? 'image/png' : 'image/jpeg'
         const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.9))
         if (compressed) source = compressed
       }
@@ -6819,7 +6913,13 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
     return null
   }
   const dataUrl = await blobToDataUrl(source)
-  const id = await storeImage(dataUrl, 'upload')
+  let id: string
+  try {
+    id = await storeImage(dataUrl, 'upload')
+  } catch (err) {
+    console.warn('[panpan] storeImage failed, falling back to in-memory image id:', err)
+    id = `mem-upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  }
   cacheImage(id, dataUrl)
   // 本地添加的图片即使与链接添加的内容相同，也不再沿用当时的链接，以免提交已过期的链接
   forgetImageSourceUrl(id)

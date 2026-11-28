@@ -4,7 +4,7 @@ import { formatBytes } from '../../lib/formatBytes'
 import { importData, useStore } from '../../store'
 
 /** 设置页：最近 5 份删除前快照，恢复复用现有 ZIP 导入。 */
-export default function DeleteBackupSection() {
+export default function DeleteBackupSection({ onRestored }: { onRestored?: () => void }) {
   const showToast = useStore((state) => state.showToast)
   const setConfirmDialog = useStore((state) => state.setConfirmDialog)
   const [files, setFiles] = useState<DeleteSnapshot[]>([])
@@ -35,6 +35,7 @@ export default function DeleteBackupSection() {
           if (imported) {
             showToast('删除快照已恢复', 'success')
             reload()
+            onRestored?.()
           }
           return true
         } catch (err) {
@@ -49,9 +50,6 @@ export default function DeleteBackupSection() {
   return (
     <div className="rounded-2xl border border-transparent bg-black/[0.04] p-4 dark:bg-white/[0.06] space-y-3">
       <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">最近删除快照</h4>
-      <p className="text-body-sm text-gray-500 dark:text-gray-400">
-        删除任务、画布或项目前会自动保存完整 ZIP（含图片），最近保留 5 份。
-      </p>
       {error ? (
         <p className="text-body-sm text-red-500 break-all">{error}</p>
       ) : files.length === 0 ? (

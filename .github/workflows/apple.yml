@@ -1,0 +1,170 @@
+name: Build Apple (macOS & iOS)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "可选：自定义软件名称（默认 PanPan Workbench）"
+        required: false
+        default: ""
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain & macOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync official skill-kit from upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
+          fi
+
+      - name: Apply custom app name (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_name != '' }}
+        env:
+          CUSTOM_APP_NAME: ${{ inputs.app_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            cfg.productName = process.env.CUSTOM_APP_NAME;
+            if (cfg.app?.windows?.[0]) cfg.app.windows[0].title = process.env.CUSTOM_APP_NAME;
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+          "
+
+      - name: Build Universal CLI sidecar binary
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --release --bin gpt-image-playground-cli --target aarch64-apple-darwin
+          cargo build --manifest-path src-tauri/Cargo.toml --release --bin gpt-image-playground-cli --target x86_64-apple-darwin
+          mkdir -p src-tauri/target/universal-apple-darwin/release
+          lipo -create \
+            src-tauri/target/aarch64-apple-darwin/release/gpt-image-playground-cli \
+            src-tauri/target/x86_64-apple-darwin/release/gpt-image-playground-cli \
+            -output src-tauri/target/universal-apple-darwin/release/gpt-image-playground-cli
+
+      - name: Build macOS Universal App & DMG
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Package & Name macOS Installers
+        id: pkg_macos
+        run: |
+          mkdir -p dist-macos
+          APP_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BASE_NAME="PanPan-Workbench-v${APP_VERSION}-macOS-Universal-${SHORT_SHA}"
+
+          DMG_SRC=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -maxdepth 1 -name "*.dmg" | head -n 1)
+          if [ -n "$DMG_SRC" ]; then
+            cp "$DMG_SRC" "dist-macos/${BASE_NAME}.dmg"
+          fi
+
+          APP_SRC=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -n "$APP_SRC" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$APP_SRC" "dist-macos/${BASE_NAME}.app.zip"
+          fi
+
+          echo "artifact_name=${BASE_NAME}" >> "$GITHUB_OUTPUT"
+          ls -lh dist-macos/
+
+      - name: Upload macOS DMG & App Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg_macos.outputs.artifact_name }}
+          path: dist-macos/*
+          if-no-files-found: error
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain & iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync official skill-kit from upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
+          fi
+
+      - name: Apply custom app name (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_name != '' }}
+        env:
+          CUSTOM_APP_NAME: ${{ inputs.app_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            cfg.productName = process.env.CUSTOM_APP_NAME;
+            if (cfg.app?.windows?.[0]) cfg.app.windows[0].title = process.env.CUSTOM_APP_NAME;
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+          "
+
+      - name: Initialize Tauri iOS project & verify iOS Rust compilation
+        run: |
+          npx tauri ios init --ci
+          PLIST=$(find src-tauri/gen/apple -name "Info.plist" | head -n 1)
+          if [ -n "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.panpan.workbench" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string panpan" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string panpan-workbench" "$PLIST" 2>/dev/null || true
+          fi
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios-sim

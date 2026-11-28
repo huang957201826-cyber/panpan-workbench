@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type { SaveLocationMode } from '../types'
 import { readLocal, writeLocal } from '../lib/localRecord'
-import { isTauri } from '../lib/platform'
+import { isMobile, isNonWindowsDesktop, isTauri } from '../lib/platform'
 import { getDefaultSaveDir, setBeforeSave, setSaveToDefaultDir } from '../lib/saveFile'
 import { useStore } from '../store'
 
@@ -59,6 +59,10 @@ async function askSaveLocation() {
 export function useSaveLocationPrompt() {
   useEffect(() => {
     if (!isTauri) return
+    if (isMobile || isNonWindowsDesktop) {
+      setSaveToDefaultDir(true)
+      return
+    }
     setBeforeSave(async () => {
       if (readLocal(ASKED_KEY) || useStore.getState().settings.saveLocationMode === 'default') return true
       pending ??= askSaveLocation().finally(() => {

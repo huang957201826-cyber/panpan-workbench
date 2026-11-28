@@ -14,7 +14,7 @@ import type { Artboard, ReferenceImage } from '../types.ts';
 import { INITIAL_REFERENCE_IMAGES } from '../constants.ts';
 import { downloadImage } from '../../lib/downloadImage';
 import { downloadTaskImages } from '../../lib/taskExport';
-import { getDownloadErrorMessage } from '../../lib/downloadImages';
+import { getDownloadErrorMessage, withSaveLocation } from '../../lib/downloadImages';
 import { useStore } from '../../store';
 
 interface ImageDetailModalProps {
@@ -64,7 +64,11 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
     const result = task && artboard.imageId
       ? await downloadTaskImages(task, [artboard.imageId], { fileNameBase: artboard.title || 'panpan-artwork' })
       : await downloadImage(ref, artboard.title || 'panpan-artwork', artboard.imageIndex);
-    if (result.canceled || result.successCount) return;
+    if (result.canceled) return;
+    if (result.successCount) {
+      useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+      return;
+    }
     useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error');
   };
 

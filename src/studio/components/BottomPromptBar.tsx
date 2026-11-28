@@ -15,13 +15,14 @@ import {
 import type { GenerationParams, ReferenceImage } from '../types.ts';
 import type { Skill, SkillSlotValue } from '../../types';
 import { getAtImageQuery, imageMentionMatches } from '../../lib/promptImageMentions';
+import { parseGenerateDeepLink } from '../../lib/importLink';
 import { MAX_PROMPT_LENGTH, clampPrompt } from '../../lib/promptLimits';
-import { submitShortcutHint } from '../../lib/platform';
+import { isMobile, isTouchDevice, submitShortcutHint } from '../../lib/platform';
 import { useStore } from '../../store';
 import { Menu as PopMenu } from '../../ui';
 import { PromptMentionOverlay } from './PromptMentionOverlay';
 import SizePickerModal from '../../components/SizePickerModal';
-import { loadBuiltinSkills, skillSlotImageIds } from '../../lib/capabilitySkills';
+import { loadBuiltinSkills, resolveSkillParamPatch, skillSlotImageIds } from '../../lib/capabilitySkills';
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore';
 import { useSkillStore } from '../../lib/skillStore';
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry';
@@ -36,7 +37,7 @@ interface BottomPromptBarProps {
   isGenerating: boolean;
   referenceImages: ReferenceImage[];
   onAddReferenceImage?: (image: ReferenceImage) => void;
-  onAddReferenceFile?: (file: File) => void;
+  onAddReferenceFile?: (file: File) => Promise<void> | void;
   onOpenMask?: () => void;
   batchEnabled?: boolean;
   onToggleBatch?: () => void;
@@ -55,6 +56,8 @@ interface BottomPromptBarProps {
   onManageModels?: () => void;
   viewMode?: 'canvas' | 'grid';
   onViewModeChange?: (mode: 'canvas' | 'grid') => void;
+  /** 手机窄屏模式：折叠参数胶囊为摘要条，点击展开完整参数 */
+  compactMobile?: boolean;
 }
 
 export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
@@ -79,6 +82,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   onManageModels,
   viewMode = 'canvas',
   onViewModeChange,
+  compactMobile = false,
   modelOptions = [{ id: 'gpt-image-2.5', label: 'gpt-image-2.5' }],
   aspectRatios = [
     { label: '1:1', res: '1024x1024' },
@@ -116,6 +120,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   const startPromptHeightRef = useRef(64);
 
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [mobileParamsExpanded, setMobileParamsExpanded] = useState(false);
   const [showSizePicker, setShowSizePicker] = useState(false);
   const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [builtinSkills, setBuiltinSkills] = useState<Skill[]>([]);
@@ -148,14 +153,24 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
       const dataUrl = await ensureImageCached(imageId);
       if (dataUrl) useStore.getState().addInputImage({ id: imageId, dataUrl });
     }
+    const patch = resolveSkillParamPatch(skill, values);
+    const nextParams = {
+      ...params,
+      ...(patch.size ? { dimension: patch.size } : {}),
+      ...(patch.count ? { count: patch.count } : {}),
+    };
+    if (patch.size || patch.count) {
+      onParamsChange?.(nextParams);
+    }
     setActiveSkillId(skill.registryId ?? skill.id);
     setSkillSlotValues(values);
     setShowSkillPicker(false);
+    return nextParams;
   };
 
   const applySkillAndGenerate = async (skill: Skill, values: Record<string, SkillSlotValue>) => {
-    await applySkill(skill, values);
-    onGenerate(prompt, params);
+    const nextParams = await applySkill(skill, values);
+    onGenerate(prompt, nextParams);
   };
 
   const atMenuRef = useRef<HTMLDivElement>(null);
@@ -305,142 +320,57 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
   };
 
   // Handle local file upload as reference
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    e.target.value = '';
-    if (onAddReferenceFile) {
-      onAddReferenceFile(file);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputEl = e.target;
+    const files = inputEl.files ? Array.from(inputEl.files) : [];
+    if (files.length === 0) {
+      inputEl.value = '';
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result && onAddReferenceImage) {
-        const newRef: ReferenceImage = {
-          id: `ref-${Date.now()}`,
-          url: event.target.result as string,
-          name: file.name,
-          tagNumber: (referenceImages?.length || 0) + 1,
-          weight: 0.75,
-          role: 'ref',
-        };
-        onAddReferenceImage(newRef);
+    try {
+      if (onAddReferenceFile) {
+        for (const file of files) {
+          await onAddReferenceFile(file);
+        }
+        return;
       }
-    };
-    reader.readAsDataURL(file);
+      const file = files[0];
+      await new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result && onAddReferenceImage) {
+            const newRef: ReferenceImage = {
+              id: `ref-${Date.now()}`,
+              url: event.target.result as string,
+              name: file.name,
+              tagNumber: (referenceImages?.length || 0) + 1,
+              weight: 0.75,
+              role: 'ref',
+            };
+            onAddReferenceImage(newRef);
+          }
+          resolve();
+        };
+        reader.onerror = () => resolve();
+        reader.readAsDataURL(file);
+      });
+    } finally {
+      inputEl.value = '';
+    }
   };
 
   // 输入台宽度随窗口自适应，大屏封顶保证行长可读；缩放控件在输入台下方的右侧角落
   return (
-    <div className="w-full max-w-[1320px] mx-auto px-4 lg:px-6 z-30 shrink-0 pointer-events-none">
-      {/* =========================================================================
-          1. FLOATING REFERENCE IMAGE SHELF (Exact replica of user reference image)
-          ========================================================================= */}
-      {referenceImages && referenceImages.length > 0 && (
-        <div className="pointer-events-auto mb-2 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
-          <div className="flex items-center gap-2 px-1">
-            {referenceImages.map((ref, idx) => (
-              <div
-                key={ref.id}
-                draggable
-                onDragStart={(e) => {
-                  setDraggedRefIndex(idx);
-                  e.dataTransfer.effectAllowed = 'copyMove';
-                  e.dataTransfer.setData('application/x-studio-image', JSON.stringify({ imageId: ref.id, url: ref.url, name: ref.name }));
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (dragOverIndex !== idx) setDragOverIndex(idx);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (draggedRefIndex !== null && draggedRefIndex !== idx && onReorderReferenceImages) {
-                    const next = [...referenceImages];
-                    const [removed] = next.splice(draggedRefIndex, 1);
-                    next.splice(idx, 0, removed);
-                    onReorderReferenceImages(next);
-                  }
-                  setDraggedRefIndex(null);
-                  setDragOverIndex(null);
-                }}
-                onDragEnd={() => {
-                  setDraggedRefIndex(null);
-                  setDragOverIndex(null);
-                }}
-                className={`relative group shrink-0 transition-all duration-150 ${
-                  draggedRefIndex === idx ? 'opacity-30 scale-95' : ''
-                } ${
-                  dragOverIndex === idx && draggedRefIndex !== idx
-                    ? 'ring-2 ring-black/40 dark:ring-white/40 scale-105'
-                    : ''
-                }`}
-              >
-                {/* Thumbnail card */}
-                <div
-                  onClick={() => { if (!ref.missing) insertImageTag(ref.tagNumber); }}
-                  className={`w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/15 dark:border-white/20 bg-black/5 dark:bg-white/5 shadow-sm relative ${ref.missing ? 'cursor-not-allowed' : 'cursor-pointer hover:scale-105 transition-all duration-150'}`}
-                  title={ref.missing ? `${ref.name}：画布素材已删除，请移除该参考图` : `点击在提示词插入 @图${ref.tagNumber} (${ref.name}) · 可左右拖动调整顺序`}
-                >
-                  {ref.missing ? (
-                    <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-black/[0.08] px-1 text-center text-caption leading-tight text-slate-500 dark:bg-white/[0.1] dark:text-slate-300">
-                      <span className="text-body-sm">×</span>
-                      <span>素材已删除</span>
-                    </div>
-                  ) : (
-                    <img
-                      src={ref.url}
-                      alt={ref.name}
-                      className="w-full h-full object-cover pointer-events-none"
-                      referrerPolicy="no-referrer"
-                    />
-                  )}
-                  {/* Number Badge (Bottom-left circular indicator: ❶ / 1) */}
-                  <div className="absolute bottom-1 left-1 min-w-4 rounded-full bg-black/80 px-1 text-white flex items-center justify-center text-caption font-mono font-bold shadow-xs">
-                    图{ref.tagNumber}
-                  </div>
-                </div>
-
-                {/* Floating Micro Delete Cross */}
-                {onRemoveReferenceImage && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveReferenceImage(ref.id);
-                    }}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/85 text-white hover:bg-red-600 flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity cursor-pointer shadow-xs text-caption"
-                    title="移除该参考图"
-                  >
-                    ×
-                  </button>
-                )}
-
-                {/* Hover Weight Slider Popover removed: 运行时权重未接线 */}
-              </div>
-            ))}
-
-            {/* Clear All Dotted Action Box (Matches user screenshot: 垃圾桶 + 清空) */}
-            {onClearReferenceImages && (
-              <button
-                onClick={onClearReferenceImages}
-                className="w-[52px] h-[52px] rounded-xl border border-dashed border-black/20 dark:border-white/20 hover:border-black/40 dark:hover:border-white/40 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.05] dark:hover:bg-white/[0.06] flex flex-col items-center justify-center gap-0.5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer shrink-0"
-                title="清空全部参考图"
-              >
-                <Trash2 className="w-3.5 h-3.5 stroke-[1.4]" />
-                <span className="text-caption">清空</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Hidden file input for uploading references */}
+    <div className={`w-full max-w-[1320px] mx-auto ${compactMobile ? 'px-1' : 'px-4 lg:px-6'} z-30 shrink-0 pointer-events-none`}>
+      {/* Visually hidden file input for uploading references (avoid display:none for Android WebView compatibility) */}
       <input
+        id="bottom-prompt-ref-upload"
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        onChange={handleFileUpload}
-        className="hidden"
+        multiple
+        onChange={(e) => { void handleFileUpload(e); }}
+        className="sr-only"
       />
 
       {/* Upward Drag Gripper Bar (Minimalist Monochrome) */}
@@ -459,6 +389,119 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
       {/* Main Generative Prompt Card (Frosted Floating Acrylic Glass HUD, 12px rounded-xl) */}
       <div data-input-card className="pointer-events-auto relative flex flex-col gap-2 rounded-[20px] border border-black/[0.05] bg-white/95 p-3 shadow-[0_16px_40px_-6px_rgba(15,23,42,0.09),0_0_0_1px_rgba(15,23,42,0.03)] backdrop-blur-xl transition-all duration-150 focus-within:shadow-[0_20px_48px_rgba(15,23,42,0.13)] dark:border-white/[0.08] dark:bg-[#151824]/95">
+        {/* 1. INLINE REFERENCE IMAGE PREVIEW SHELF (Inside prompt card so user clearly sees references sent with prompt) */}
+        {referenceImages && referenceImages.length > 0 && (
+          <div
+            data-reference-shelf
+            className="flex flex-col gap-1.5 rounded-xl border border-black/[0.05] bg-black/[0.02] px-2.5 py-2 dark:border-white/[0.07] dark:bg-white/[0.03]"
+          >
+            <div className="flex items-center justify-between gap-2 text-caption text-slate-500 dark:text-slate-400">
+              <span className="truncate font-medium">
+                已添加 {referenceImages.length} 张参考图 · 将随提示词一起发送（点击缩略图插入 @图N）
+              </span>
+              {onClearReferenceImages && (
+                <button
+                  type="button"
+                  onClick={onClearReferenceImages}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-caption text-slate-500 hover:bg-black/[0.06] hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-200 transition cursor-pointer"
+                  title="清空全部参考图"
+                >
+                  <Trash2 className="w-3 h-3 stroke-[1.5]" />
+                  <span>清空</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5 pb-0.5">
+              {referenceImages.map((ref, idx) => (
+                <div
+                  key={ref.id}
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggedRefIndex(idx);
+                    e.dataTransfer.effectAllowed = 'copyMove';
+                    e.dataTransfer.setData('application/x-studio-image', JSON.stringify({ imageId: ref.id, url: ref.url, name: ref.name }));
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragOverIndex !== idx) setDragOverIndex(idx);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggedRefIndex !== null && draggedRefIndex !== idx && onReorderReferenceImages) {
+                      const next = [...referenceImages];
+                      const [removed] = next.splice(draggedRefIndex, 1);
+                      next.splice(idx, 0, removed);
+                      onReorderReferenceImages(next);
+                    }
+                    setDraggedRefIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedRefIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  className={`relative group shrink-0 transition-all duration-150 ${
+                    draggedRefIndex === idx ? 'opacity-30 scale-95' : ''
+                  } ${
+                    dragOverIndex === idx && draggedRefIndex !== idx
+                      ? 'ring-2 ring-black/40 dark:ring-white/40 scale-105'
+                      : ''
+                  }`}
+                >
+                  {/* Thumbnail card */}
+                  <div
+                    onClick={() => { if (!ref.missing) insertImageTag(ref.tagNumber); }}
+                    className={`w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/15 dark:border-white/20 bg-black/5 dark:bg-white/5 shadow-sm relative ${ref.missing ? 'cursor-not-allowed' : 'cursor-pointer hover:scale-105 transition-all duration-150'}`}
+                    title={ref.missing ? `${ref.name}：画布素材已删除，请移除该参考图` : `点击在提示词插入 @图${ref.tagNumber} (${ref.name}) · 可左右拖动调整顺序`}
+                  >
+                    {ref.missing ? (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-black/[0.08] px-1 text-center text-caption leading-tight text-slate-500 dark:bg-white/[0.1] dark:text-slate-300">
+                        <span className="text-body-sm">×</span>
+                        <span>素材已删除</span>
+                      </div>
+                    ) : (
+                      <img
+                        src={ref.url}
+                        alt={ref.name}
+                        className="w-full h-full object-cover pointer-events-none"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    {/* Number Badge */}
+                    <div className="absolute bottom-1 left-1 min-w-4 rounded-full bg-black/80 px-1 text-white flex items-center justify-center text-caption font-mono font-bold shadow-xs">
+                      图{ref.tagNumber}
+                    </div>
+                  </div>
+
+                  {/* Floating Micro Delete Cross */}
+                  {onRemoveReferenceImage && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveReferenceImage(ref.id);
+                      }}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/85 text-white hover:bg-red-600 flex items-center justify-center opacity-85 group-hover:opacity-100 transition-opacity cursor-pointer shadow-xs text-caption"
+                      title="移除该参考图"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Add more reference images button inside shelf */}
+              <label
+                htmlFor="bottom-prompt-ref-upload"
+                className="w-[52px] h-[52px] rounded-xl border border-dashed border-black/20 dark:border-white/20 hover:border-black/40 dark:hover:border-white/40 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.05] dark:hover:bg-white/[0.06] flex flex-col items-center justify-center gap-0.5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer shrink-0"
+                title="继续添加参考图"
+              >
+                <Plus className="w-3.5 h-3.5 stroke-[1.6]" />
+                <span className="text-caption">添加</span>
+              </label>
+            </div>
+          </div>
+        )}
         {/* Clear prompt button if has text */}
         {prompt && (
           <div className="absolute top-2.5 right-2.5 z-10 text-slate-400">
@@ -525,7 +568,25 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               value={prompt}
               maxLength={MAX_PROMPT_LENGTH}
               onChange={(e) => {
-                const next = clampPrompt(e.target.value);
+                const rawVal = e.target.value;
+                if (/(?:panpan(?:-workbench)?:\/\/|\/open\/?\?[^\s]*prompt=)/i.test(rawVal)) {
+                  const parsed = parseGenerateDeepLink(rawVal);
+                  if (parsed) {
+                    const unpacked = clampPrompt(parsed.prompt);
+                    onPromptChange(unpacked);
+                    if (parsed.size || parsed.model) {
+                      onParamsChange?.({
+                        ...params,
+                        ...(parsed.size ? { size: parsed.size } : {}),
+                        ...(parsed.model ? { model: parsed.model } : {}),
+                      });
+                    }
+                    useStore.getState().showToast('已解析外部 AI 联动提示词', 'success');
+                    refreshAtMenu(unpacked, unpacked.length);
+                    return;
+                  }
+                }
+                const next = clampPrompt(rawVal);
                 onPromptChange(next);
                 if (!next.trim() && activeSkillId) clearSkillChip();
                 refreshAtMenu(next, e.target.selectionStart ?? next.length);
@@ -534,7 +595,11 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               onKeyDown={handleKeyDown}
               onCompositionStart={() => { isComposingRef.current = true; }}
               onCompositionEnd={() => { isComposingRef.current = false; }}
-              placeholder={`描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`}
+              placeholder={
+                compactMobile
+                  ? '描述你想生成的设计方案…（可输入 @图1 引用参考图）'
+                  : `描述你想生成的设计方案... (可输入 @图1、@图2 引用上方参考图，${enterSubmit ? 'Enter' : 'Ctrl+Enter'} 发送)`
+              }
               className={`relative w-full bg-transparent resize-none border-none p-1 pr-8 text-body-sm leading-relaxed text-transparent caret-slate-800 dark:caret-slate-100 placeholder-slate-400 focus:ring-0 outline-none font-sans no-scrollbar`}
             />
             <PromptMentionOverlay
@@ -552,8 +617,22 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
         {/* Single-line Pill Options Row (Strictly matching user screenshot) */}
         <div data-params-row className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-black/[0.04] dark:border-white/[0.05] relative text-caption select-none">
+          {compactMobile && (
+            <button
+              type="button"
+              onClick={() => setMobileParamsExpanded((v) => !v)}
+              aria-expanded={mobileParamsExpanded}
+              className="flex items-center gap-1.5 px-2.5 py-1 min-h-[32px] max-w-[65%] rounded-full bg-black/[0.04] dark:bg-white/[0.07] text-slate-700 dark:text-slate-200 text-caption font-medium transition cursor-pointer"
+              title="展开或收起生成参数"
+            >
+              <span className="truncate font-mono">
+                {params.model} · {aspectRatios.find((item) => item.res === params.dimension)?.label ?? params.dimension} · {params.count}张
+              </span>
+              <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform ${mobileParamsExpanded ? 'rotate-180' : ''}`} />
+            </button>
+          )}
           {/* Left: Scrollable single row of pills (no wrap, strictly 1 line) */}
-          <div className="contents">
+          <div className={compactMobile && !mobileParamsExpanded ? 'hidden' : 'contents'}>
             {/* 1. Model Capsule: gpt-image-2.5 ⌵ */}
             <div className="relative shrink-0">
               <button
@@ -733,7 +812,12 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                 </span>
                 <ChevronDown className="w-3 h-3 text-slate-400 stroke-[1.8]" />
               </button>
-              <PopMenu open={activeDropdown === 'more'} anchorRef={moreMenuRef} width={280} onClose={() => setActiveDropdown(null)}>
+              <PopMenu
+                open={activeDropdown === 'more'}
+                anchorRef={moreMenuRef}
+                width={compactMobile ? Math.min(268, (typeof window !== 'undefined' ? window.innerWidth : 360) - 24) : 280}
+                onClose={() => setActiveDropdown(null)}
+              >
                   <div className="text-body-sm font-semibold text-slate-800 dark:text-white pb-1 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
                     <span>通道与元数据设置</span>
                     <Sliders className="w-3 h-3 stroke-[1.4]" />
@@ -826,14 +910,24 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
           {/* Right Action Buttons: [+] Upload Reference, [◨] Canvas Pick, [✦] Skill, [↑] Generate */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
-            {/* [+] Button: Trigger reference image upload */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-6 h-6 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center transition cursor-pointer"
-              title="添加本地参考图"
+            {/* [+] Button: Trigger reference image upload via native label association for reliable mobile WebView activation */}
+            <label
+              htmlFor="bottom-prompt-ref-upload"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              className="h-6 px-2 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center gap-1 text-caption transition cursor-pointer"
+              title="添加本地参考图（发送前预览在参考图框，发送后进入画布）"
+              aria-label="添加本地参考图"
             >
               <Plus className="w-3.5 h-3.5 stroke-[1.8]" />
-            </button>
+              <span>参考图{referenceImages.length > 0 ? `(${referenceImages.length})` : ''}</span>
+            </label>
 
             {onStartCanvasPick && (
               <button
@@ -843,7 +937,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                     ? 'bg-black text-white dark:bg-white dark:text-black'
                     : 'bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200'
                 }`}
-                title="从画布选择参考图（Esc 取消）"
+                title={isTouchDevice ? '从画布选择参考图' : '从画布选择参考图（Esc 取消）'}
                 aria-label="从画布选择参考图"
                 aria-pressed={canvasPickActive}
               >
@@ -864,15 +958,15 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
 
             <button
               onClick={() => setShowSkillPicker(true)}
-              className="flex h-6 items-center gap-1 rounded-full bg-black/[0.04] px-2 text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12]"
+              className={`flex h-6 items-center justify-center gap-1 rounded-full bg-black/[0.04] text-caption text-slate-600 transition hover:bg-black/[0.08] dark:bg-white/[0.07] dark:text-slate-200 dark:hover:bg-white/[0.12] ${compactMobile ? 'w-6 px-0' : 'px-2'}`}
               title="选用技能"
               aria-label="选用技能"
             >
               <Sparkles className="h-3 w-3 stroke-[1.8]" />
-              选用技能
+              {!compactMobile && '选用技能'}
             </button>
 
-            {onSaveAsSkill && (
+            {onSaveAsSkill && !compactMobile && (
               <button
                 onClick={onSaveAsSkill}
                 disabled={!prompt.trim()}
@@ -884,7 +978,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               </button>
             )}
 
-            {onViewModeChange && (
+            {onViewModeChange && !compactMobile && (
               <div role="tablist" aria-label="视图切换" className="flex h-6 items-center rounded-full bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
                 <button
                   type="button"
@@ -922,14 +1016,18 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               onClick={handleSend}
               disabled={isGenerating || (!prompt.trim() && !activeSkillId) || missingReference}
               className="h-7 px-2.5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-85 active:scale-95 flex items-center justify-center gap-1 transition shadow-xs disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title="立即生成方案 (Ctrl+Enter)"
+              title={isMobile ? '立即生成方案' : `立即生成方案 (${submitHint})`}
             >
               {isGenerating ? (
                 <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white dark:border-black/30 dark:border-t-black rounded-full animate-spin"></div>
               ) : (
                 <>
                   <ArrowUp className="w-3.5 h-3.5 stroke-[2.2]" />
-                  <span className="text-caption font-mono opacity-50 font-normal">{submitHint}</span>
+                  {isMobile ? (
+                    <span className="text-caption font-medium">生成</span>
+                  ) : (
+                    <span className="text-caption font-mono opacity-50 font-normal">{submitHint}</span>
+                  )}
                 </>
               )}
             </button>

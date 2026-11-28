@@ -9,7 +9,7 @@ import { addTaskAsReference, deleteTask as removeTaskAction, editTaskOutputs, re
 import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
 import { resizeNodeFromCorner } from '../lib/canvasNodes'
 import { downloadTaskImages } from '../lib/taskExport'
-import { getDownloadErrorMessage } from '../lib/downloadImages'
+import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { classifyApiError } from '../lib/apiErrorClassification'
 import { Menu, MenuItem, Tooltip } from '../ui'
 
@@ -76,7 +76,9 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
     setDownloadMenu(false)
     try {
       const result = await downloadTaskImages(task, [id], { fileNameBase: task.prompt })
-      if (!result.canceled && !result.successCount) {
+      if (result.successCount) {
+        useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+      } else if (!result.canceled && !result.successCount) {
         useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
       }
     } finally {

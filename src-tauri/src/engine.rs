@@ -28,19 +28,96 @@ pub struct EngineStatus {
     pub detail: String,
 }
 
-fn engine_root() -> PathBuf {
-    match std::env::var("PANPAN_COMFY_ROOT") {
-        Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-        _ => PathBuf::from(r"D:\AI\ComfyUI"),
+fn expand_tilde(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            return PathBuf::from(home).join(rest);
+        }
     }
+    PathBuf::from(raw)
 }
 
-fn python_path(root: &PathBuf) -> PathBuf {
-    root.join("venv").join("Scripts").join("python.exe")
+fn candidate_roots(custom_root: Option<&str>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(raw) = custom_root.map(str::trim).filter(|s| !s.is_empty()) {
+        roots.push(expand_tilde(raw));
+    }
+    if let Ok(env_val) = std::env::var("PANPAN_COMFY_ROOT") {
+        let trimmed = env_val.trim();
+        if !trimmed.is_empty() {
+            roots.push(expand_tilde(trimmed));
+        }
+    }
+    #[cfg(target_os = "android")]
+    {
+        for p in [
+            "/storage/emulated/0/Download/ComfyUI",
+            "/storage/emulated/0/AI/ComfyUI",
+            "/sdcard/Download/ComfyUI",
+            "/sdcard/AI/ComfyUI",
+            "/data/data/com.termux/files/home/ComfyUI",
+        ] {
+            roots.push(PathBuf::from(p));
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
+    {
+        for p in ["~/AI/ComfyUI", "~/Downloads/ComfyUI", "/opt/ComfyUI"] {
+            roots.push(expand_tilde(p));
+        }
+    }
+    #[cfg(windows)]
+    {
+        roots.push(PathBuf::from(r"D:\AI\ComfyUI"));
+        roots.push(PathBuf::from(r"C:\AI\ComfyUI"));
+    }
+    if roots.is_empty() {
+        roots.push(PathBuf::from(r"D:\AI\ComfyUI"));
+    }
+    roots
 }
 
-fn comfy_dir(root: &PathBuf) -> PathBuf {
+fn resolve_workdir(root: &PathBuf) -> PathBuf {
+    let candidates = [
+        root.join("ComfyUI"),
+        root.clone(),
+        root.join("ComfyUI_windows_portable").join("ComfyUI"),
+    ];
+    for dir in &candidates {
+        if dir.join("main.py").exists() {
+            return dir.clone();
+        }
+    }
     root.join("ComfyUI")
+}
+
+fn resolve_python(root: &PathBuf) -> PathBuf {
+    let candidates = [
+        root.join("venv").join("Scripts").join("python.exe"),
+        root.join("python_embeded").join("python.exe"),
+        root.join("ComfyUI_windows_portable")
+            .join("python_embeded")
+            .join("python.exe"),
+        root.join("venv").join("bin").join("python3"),
+        root.join("venv").join("bin").join("python"),
+        PathBuf::from("/data/data/com.termux/files/usr/bin/python3"),
+        PathBuf::from("/opt/homebrew/bin/python3"),
+        PathBuf::from("/usr/local/bin/python3"),
+        PathBuf::from("/usr/bin/python3"),
+    ];
+    for bin in &candidates {
+        if bin.exists() {
+            return bin.clone();
+        }
+    }
+    #[cfg(windows)]
+    {
+        root.join("venv").join("Scripts").join("python.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        root.join("venv").join("bin").join("python3")
+    }
 }
 
 fn port_open() -> bool {
@@ -127,24 +204,32 @@ pub fn comfy_engine_status(state: State<EngineProcess>) -> EngineStatus {
 }
 
 #[tauri::command]
-pub fn comfy_engine_start(state: State<EngineProcess>) -> Result<EngineStatus, String> {
+pub fn comfy_engine_start(
+    state: State<EngineProcess>,
+    root_dir: Option<String>,
+) -> Result<EngineStatus, String> {
     if comfy_alive() {
         return Ok(status_of(&state));
     }
 
-    let root = engine_root();
-    let python = python_path(&root);
-    let workdir = comfy_dir(&root);
-    if !python.exists() {
-        return Err(format!(
-            "没有找到本地引擎：{}。请先运行 scripts\\fetch-local-engine.ps1 安装",
-            python.display()
-        ));
-    }
+    let roots = candidate_roots(root_dir.as_deref());
+    let root = roots
+        .iter()
+        .find(|candidate| resolve_workdir(candidate).join("main.py").exists() || candidate.exists())
+        .cloned()
+        .unwrap_or_else(|| roots[0].clone());
+    let python = resolve_python(&root);
+    let workdir = resolve_workdir(&root);
     if !workdir.join("main.py").exists() {
         return Err(format!(
-            "引擎目录不完整：{} 缺少 main.py",
+            "没有找到本地引擎目录：{}（缺少 main.py）。请先下载官方 ComfyUI 并解压到该目录",
             workdir.display()
+        ));
+    }
+    if !python.exists() {
+        return Err(format!(
+            "没有找到 Python 运行环境：{}。请确认已安装完整 ComfyUI 运行包",
+            python.display()
         ));
     }
 

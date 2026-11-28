@@ -176,6 +176,8 @@ test('R1/N39：侧栏折叠后画布、卡片、首页都能展开方案', async
   await expect(page.locator('[data-canvas-capsule]')).toBeVisible()
 
   await page.getByRole('button', { name: '首页' }).click()
+  await expect(page.getByRole('button', { name: '展开方案' })).toHaveCount(0)
+  await page.getByRole('button', { name: '工作区' }).click()
   await expect(page.getByRole('button', { name: '展开方案' })).toBeVisible()
   await page.getByRole('button', { name: '展开方案' }).click()
 

@@ -22,6 +22,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
+      - name: Sync official skill-kit from upstream release
+        shell: bash
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            echo "Downloading upstream Windows installer to extract official 27 skills..."
+            curl -fL --retry 3 -o /tmp/PanPan-setup.exe \
+              "https://github.com/huang957201826-cyber/panpan-workbench/releases/download/v1.8.0/PanPan.Workbench_1.8.0_x64-setup.exe"
+            python scripts/extract-official-skill-kit.py --exe /tmp/PanPan-setup.exe --out "$HOME/lovart-skill-kit"
+            rm -f /tmp/PanPan-setup.exe
+            node scripts/sync-skill-kit.mjs
+          fi
       - name: Frontend gate
         run: npm run gate:dev
       - name: Security scan

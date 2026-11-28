@@ -34,7 +34,7 @@
         "style-src-attr": "'unsafe-inline'",
         "img-src": "'self' data: blob: http: https:",
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://tauri.localhost https://tauri.localhost data: blob:",
         "worker-src": "'self' blob:",
         "frame-src": "'self'",
         "object-src": "'none'",
@@ -55,8 +55,20 @@
       }
     },
     "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["panpan", "panpan-workbench"],
+          "appLink": false
+        },
+        {
+          "scheme": ["https", "http"],
+          "host": "meiyoutou.github.io",
+          "pathPrefix": ["/panpan-workbench"],
+          "appLink": false
+        }
+      ],
       "desktop": {
-        "schemes": ["panpan-workbench"]
+        "schemes": ["panpan-workbench", "panpan"]
       }
     }
   },
@@ -68,7 +80,7 @@
     "resources": {
       "../skills/gpt-image-playground/": "skills/gpt-image-playground/"
     },
-    "targets": ["nsis"],
+    "targets": ["nsis", "dmg", "app"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

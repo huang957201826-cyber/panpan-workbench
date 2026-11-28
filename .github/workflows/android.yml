@@ -1,0 +1,390 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "可选：自定义安卓安装包名称（默认 PanPan Workbench）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android NDK & Build-Tools
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
+          echo "NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain & Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync official skill-kit from upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "$HOME/lovart-skill-kit/MANIFEST.json" ]; then
+            python3 scripts/extract-official-skill-kit.py --out "$HOME/lovart-skill-kit"
+          fi
+
+      - name: Apply custom app name (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.app_name != '' }}
+        env:
+          CUSTOM_APP_NAME: ${{ inputs.app_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            cfg.productName = process.env.CUSTOM_APP_NAME;
+            if (cfg.app?.windows?.[0]) cfg.app.windows[0].title = process.env.CUSTOM_APP_NAME;
+            fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+          "
+
+      - name: Initialize Tauri Android project
+        env:
+          CUSTOM_APP_NAME: ${{ inputs.app_name }}
+        run: |
+          if [ ! -d "src-tauri/gen/android" ]; then
+            npx tauri android init --ci
+          fi
+          # Copy custom launcher icons if present
+          if [ -d "src-tauri/icons/android" ]; then
+            cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/ || true
+          fi
+          # Patch strings.xml so launcher icon defaults to Chinese "盼盼工作台" (or workflow_dispatch app_name)
+          node -e '
+            const fs = require("fs");
+            const stringsPath = "src-tauri/gen/android/app/src/main/res/values/strings.xml";
+            const targetName = (process.env.CUSTOM_APP_NAME || "").trim() || "盼盼工作台";
+            const escaped = targetName
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "\\\"")
+              .replace(/\x27/g, "\\\x27");
+            if (fs.existsSync(stringsPath)) {
+              let xml = fs.readFileSync(stringsPath, "utf8");
+              xml = xml.replace(/<string name="app_name">.*?<\/string>/, `<string name="app_name">${escaped}</string>`);
+              xml = xml.replace(/<string name="main_activity_title">.*?<\/string>/, `<string name="main_activity_title">${escaped}</string>`);
+              fs.writeFileSync(stringsPath, xml);
+            }
+          '
+          # Patch AndroidManifest.xml with legacy gallery permissions and POST_NOTIFICATIONS
+          node -e '
+            const fs = require("fs");
+            const manifestPath = "src-tauri/gen/android/app/src/main/AndroidManifest.xml";
+            if (fs.existsSync(manifestPath)) {
+              let xml = fs.readFileSync(manifestPath, "utf8");
+              if (!xml.includes("WRITE_EXTERNAL_STORAGE")) {
+                xml = xml.replace(
+                  "<application",
+                  "    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" />\n    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />\n    <application"
+                );
+              }
+              fs.writeFileSync(manifestPath, xml);
+            }
+          '
+          # Patch MainActivity.kt with MediaScannerConnection + FileObserver + native deep-link + notification & title bridge
+          MAIN_KT=$(find src-tauri/gen/android/app/src/main/java -name "MainActivity.kt" | head -n 1)
+          if [ -n "$MAIN_KT" ]; then
+            PKG_LINE=$(grep -E "^package " "$MAIN_KT" | head -n 1)
+            cat > "$MAIN_KT" <<EOF
+          ${PKG_LINE}
+
+          import android.Manifest
+          import android.app.ActivityManager
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.media.MediaScannerConnection
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.FileObserver
+          import android.webkit.JavascriptInterface
+          import android.webkit.WebView
+          import org.json.JSONObject
+          import java.io.File
+
+          class MainActivity : TauriActivity() {
+            private val observers = mutableListOf<FileObserver>()
+            private var appWebView: WebView? = null
+            private var pendingDeepLinkUrl: String? = null
+
+            inner class PanPanAndroidBridge {
+              @JavascriptInterface
+              fun requestNotificationPermission() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+                  }
+                }
+              }
+
+              @JavascriptInterface
+              fun postNotification(title: String, body: String, tag: String) {
+                runCatching {
+                  val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                  val channelId = "panpan_tasks"
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(channelId, "盼盼工作台通知", NotificationManager.IMPORTANCE_DEFAULT)
+                    nm.createNotificationChannel(channel)
+                  }
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+                      return
+                    }
+                  }
+                  val launchIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                  }
+                  val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                  } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                  }
+                  val pi = PendingIntent.getActivity(this@MainActivity, 0, launchIntent, piFlags)
+                  val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Notification.Builder(this@MainActivity, channelId)
+                  } else {
+                    @Suppress("DEPRECATION")
+                    Notification.Builder(this@MainActivity)
+                  }
+                  builder.setContentTitle(title.ifEmpty { "盼盼工作台" })
+                    .setContentText(body)
+                    .setSmallIcon(applicationInfo.icon)
+                    .setAutoCancel(true)
+                    .setContentIntent(pi)
+                  val notifyId = if (tag.isNotEmpty()) tag.hashCode() else (System.currentTimeMillis() and 0x7fffffff).toInt()
+                  nm.notify(notifyId, builder.build())
+                }
+              }
+
+              @JavascriptInterface
+              fun setAppTitle(title: String) {
+                val clean = title.trim().ifEmpty { "盼盼工作台" }
+                runOnUiThread {
+                  runCatching {
+                    this@MainActivity.title = clean
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                      setTaskDescription(ActivityManager.TaskDescription(clean, applicationInfo.icon))
+                    } else {
+                      @Suppress("DEPRECATION")
+                      setTaskDescription(ActivityManager.TaskDescription(clean))
+                    }
+                  }
+                }
+              }
+            }
+
+            private fun forwardDeepLink(intent: Intent?) {
+              val url = intent?.dataString?.trim() ?: return
+              if (url.isEmpty()) return
+              pendingDeepLinkUrl = url
+              deliverPendingDeepLink()
+            }
+
+            private fun deliverPendingDeepLink() {
+              val url = pendingDeepLinkUrl ?: return
+              val wv = appWebView ?: return
+              val quoted = JSONObject.quote(url)
+              val js = "window.__PANPAN_INITIAL_DEEP_LINK__ = " + quoted + "; window.dispatchEvent(new CustomEvent(\"panpan:native-deep-link\", { detail: " + quoted + " }));"
+              wv.post {
+                runCatching { wv.evaluateJavascript(js, null) }
+              }
+              wv.postDelayed({
+                runCatching { wv.evaluateJavascript(js, null) }
+              }, 650)
+            }
+
+            private fun scanGalleryDirs() {
+              val dirs = listOf(
+                File("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                File("/storage/emulated/0/DCIM/PanPanWorkbench"),
+                File("/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench")
+              )
+              val files = dirs.flatMap { dir ->
+                if (dir.exists() && dir.isDirectory) {
+                  dir.listFiles()?.filter {
+                    it.isFile && !it.name.startsWith(".") && !it.name.startsWith("panpan_probe_")
+                  }?.map { it.absolutePath } ?: emptyList()
+                } else {
+                  emptyList()
+                }
+              }.toTypedArray()
+              if (files.isNotEmpty()) {
+                MediaScannerConnection.scanFile(applicationContext, files, null, null)
+              }
+            }
+
+            override fun onWebViewCreate(webView: WebView) {
+              super.onWebViewCreate(webView)
+              appWebView = webView
+              runCatching { webView.addJavascriptInterface(PanPanAndroidBridge(), "__PANPAN_ANDROID__") }
+              deliverPendingDeepLink()
+            }
+
+            override fun onCreate(savedInstanceState: Bundle?) {
+              super.onCreate(savedInstanceState)
+              forwardDeepLink(intent)
+              val watchDirs = listOf(
+                File("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                File("/storage/emulated/0/DCIM/PanPanWorkbench")
+              )
+              for (dir in watchDirs) {
+                runCatching {
+                  if (!dir.exists()) dir.mkdirs()
+                  @Suppress("DEPRECATION")
+                  val obs = object : FileObserver(dir.absolutePath, CLOSE_WRITE or MOVED_TO) {
+                    override fun onEvent(event: Int, path: String?) {
+                      if (path != null && !path.startsWith(".") && !path.startsWith("panpan_probe_")) {
+                        val target = File(dir, path)
+                        if (target.exists()) {
+                          MediaScannerConnection.scanFile(applicationContext, arrayOf(target.absolutePath), null, null)
+                        }
+                      }
+                    }
+                  }
+                  obs.startWatching()
+                  observers.add(obs)
+                }
+              }
+              scanGalleryDirs()
+            }
+
+            override fun onNewIntent(intent: Intent) {
+              super.onNewIntent(intent)
+              setIntent(intent)
+              forwardDeepLink(intent)
+            }
+
+            override fun onResume() {
+              super.onResume()
+              scanGalleryDirs()
+            }
+
+            override fun onDestroy() {
+              observers.forEach { runCatching { it.stopWatching() } }
+              observers.clear()
+              appWebView = null
+              super.onDestroy()
+            }
+          }
+          EOF
+          fi
+          # Ensure monotonically increasing versionCode so new APKs upgrade in-place and preserve user data
+          APP_VERSION=$(node -p "require('./package.json').version")
+          VERSION_CODE=$((10000 + ${{ github.run_number }}))
+          PROPS_FILE="src-tauri/gen/android/app/tauri.properties"
+          if [ -f "$PROPS_FILE" ]; then
+            sed -i "s/^tauri\.android\.versionCode=.*/tauri.android.versionCode=${VERSION_CODE}/" "$PROPS_FILE"
+            sed -i "s/^tauri\.android\.versionName=.*/tauri.android.versionName=${APP_VERSION}/" "$PROPS_FILE"
+          else
+            printf "tauri.android.versionCode=%s\ntauri.android.versionName=%s\n" "$VERSION_CODE" "$APP_VERSION" > "$PROPS_FILE"
+          fi
+          cat "$PROPS_FILE"
+
+      - name: Build Android APK (aarch64)
+        run: npx tauri android build --apk --target aarch64
+
+      - name: Sign Android APK
+        id: sign_apk
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          mkdir -p dist-apk
+          APP_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          APK_NAME="PanPan-Workbench-v${APP_VERSION}-Android-arm64-${SHORT_SHA}.apk"
+          ARTIFACT_NAME="PanPan-Workbench-v${APP_VERSION}-Android-arm64-${SHORT_SHA}"
+          RAW_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          echo "Found APK: $RAW_APK"
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Using persistent release keystore from GitHub Secrets (in-place upgrade supported)"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            KS_PASS="${ANDROID_KEYSTORE_PASS}"
+            KS_ALIAS="${ANDROID_KEY_ALIAS:-panpan}"
+            KEY_PASS="${ANDROID_KEY_PASS:-$KS_PASS}"
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret found; generating ephemeral keystore"
+            KS_PASS="panpan123"
+            KS_ALIAS="panpan"
+            KEY_PASS="panpan123"
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias "$KS_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$KS_PASS" \
+              -keypass "$KEY_PASS" \
+              -dname "CN=PanPan Workbench, OU=AI, O=PanPan, L=Beijing, S=Beijing, C=CN"
+          fi
+
+          BUILD_TOOLS_DIR="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$RAW_APK" dist-apk/aligned.apk
+          "$BUILD_TOOLS_DIR/apksigner" sign \
+            --ks release.keystore \
+            --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "pass:${KS_PASS}" \
+            --key-pass "pass:${KEY_PASS}" \
+            --out "dist-apk/${APK_NAME}" \
+            dist-apk/aligned.apk
+          "$BUILD_TOOLS_DIR/apksigner" verify -v "dist-apk/${APK_NAME}"
+          rm -f dist-apk/aligned.apk release.keystore
+          echo "apk_path=dist-apk/${APK_NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+          ls -lh dist-apk/
+
+      - name: Upload Signed APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.sign_apk.outputs.artifact_name }}
+          path: ${{ steps.sign_apk.outputs.apk_path }}
+          if-no-files-found: error

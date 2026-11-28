@@ -3,9 +3,10 @@
 //! 更改后可把原地址中的内容迁移到新地址，原地址由 Rust 侧记下，前端不能指定。
 //! 文件内容以二进制 IPC 请求体分块传输：先在目标目录中创建临时文件，逐块追加，写完后改名为目标文件。
 //! 整个文件一次传输时，WebView2 浏览器进程会为几百 MB 的请求体占用数 GB 内存
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -14,6 +15,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tempfile::NamedTempFile;
 
+#[cfg(not(mobile))]
 use crate::data_dir;
 use crate::migrate::{self, MoveReport};
 use crate::storage::{self, Storage, StorageState};
@@ -36,9 +38,36 @@ pub(crate) fn header<'a>(request: &'a Request<'_>, name: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-fn body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], String> {
+fn body<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, String> {
+    use base64::Engine;
     match request.body() {
-        InvokeBody::Raw(bytes) => Ok(bytes),
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(serde_json::Value::Object(map)) => {
+            if let Some(b64) = map.get("base64").and_then(|v| v.as_str()) {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|err| format!("base64 解码失败：{err}"))?;
+                Ok(Cow::Owned(decoded))
+            } else {
+                Err("请求体必须是二进制".into())
+            }
+        }
+        InvokeBody::Json(serde_json::Value::String(b64)) => {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|err| format!("base64 解码失败：{err}"))?;
+            Ok(Cow::Owned(decoded))
+        }
+        InvokeBody::Json(serde_json::Value::Array(items)) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(byte) = item.as_u64().and_then(|n| u8::try_from(n).ok()) else {
+                    return Err("请求体必须是二进制".into());
+                };
+                out.push(byte);
+            }
+            Ok(Cow::Owned(out))
+        }
         _ => Err("请求体必须是二进制".into()),
     }
 }
@@ -158,8 +187,18 @@ impl Writes {
         self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
 
-    /// 在 dir 中创建临时文件，返回前端凭以追加和提交的序号
+    /// 在 dir 中创建临时文件（安卓端始终在应用内部缓存目录创建 .tmp，避免在相册 FUSE 目录产生隐藏临时文件），
+    /// 返回前端凭以追加和提交的序号
     fn begin(&self, dir: &Path, target: Target) -> io::Result<u32> {
+        #[cfg(target_os = "android")]
+        let tmp = {
+            fs::create_dir_all(dir)?;
+            tempfile::Builder::new()
+                .prefix(".gpt-image-playground-")
+                .suffix(".tmp")
+                .tempfile()?
+        };
+        #[cfg(not(target_os = "android"))]
         let tmp = tempfile::Builder::new()
             .prefix(".gpt-image-playground-")
             .suffix(".tmp")
@@ -190,14 +229,35 @@ impl Writes {
             .as_file()
             .sync_all()
             .map_err(|err| format!("刷新文件失败：{err}"))?;
-        match pending.target {
+        let result = match pending.target {
             Target::Replace(path) => match pending.tmp.persist(&path) {
                 Ok(_) => Ok(path),
-                Err(err) => Err(format!("写入 {} 失败：{}", path.display(), err.error)),
+                Err(mut err) => {
+                    if err.file.as_file_mut().seek(SeekFrom::Start(0)).is_ok() {
+                        if let Ok(mut dest) = fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(&path)
+                        {
+                            if io::copy(err.file.as_file_mut(), &mut dest).is_ok()
+                                && dest.sync_all().is_ok()
+                            {
+                                return Ok(path);
+                            }
+                        }
+                    }
+                    Err(format!("写入 {} 失败：{}", path.display(), err.error))
+                }
             },
             Target::Unique(dir, name) => persist_unique(pending.tmp, &dir, &name)
                 .map_err(|err| format!("写入 {name} 失败：{err}")),
+        };
+        #[cfg(target_os = "android")]
+        if let Ok(ref saved_path) = result {
+            notify_android_media_scanner(saved_path);
         }
+        result
     }
 
     fn abort(&self, id: u32) {
@@ -212,9 +272,8 @@ impl Writes {
 
 const WRITE_GONE: &str = "保存已中断，请重试";
 
-/// 目录中已有同名文件时依次改用“名称 (2).扩展名”“名称 (3).扩展名”……，不覆盖用户已有的文件。
-/// 改名本身拒绝覆盖，挑选名称与写入之间不会被其他程序抢先
-fn persist_unique(mut tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<PathBuf> {
+fn persist_unique_in_dir(tmp: &mut Option<NamedTempFile>, dir: &Path, name: &str) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
     let base = Path::new(name);
     let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
     let ext = base.extension().and_then(|s| s.to_str());
@@ -225,13 +284,75 @@ fn persist_unique(mut tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<
             (_, None) => format!("{stem} ({n})"),
         };
         let path = dir.join(candidate);
-        match tmp.persist_noclobber(&path) {
+        let file = tmp.take().ok_or_else(|| io::Error::other("临时文件已释放"))?;
+        match file.persist_noclobber(&path) {
             Ok(_) => return Ok(path),
-            Err(err) if err.error.kind() == ErrorKind::AlreadyExists => tmp = err.file,
-            Err(err) => return Err(err.error),
+            Err(err) if err.error.kind() == ErrorKind::AlreadyExists => {
+                *tmp = Some(err.file);
+            }
+            Err(mut err) => {
+                // 安卓 FUSE 文件系统不支持 persist_noclobber 内部使用的 hard_link，或临时文件位于应用缓存目录跨分区：
+                // 改用 create_new(true)（O_CREAT | O_EXCL）原子创建目标文件并复制内容，保证不覆盖已有同名文件
+                match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                    Ok(mut dest) => {
+                        let copy_res = err
+                            .file
+                            .as_file_mut()
+                            .seek(SeekFrom::Start(0))
+                            .and_then(|_| io::copy(err.file.as_file_mut(), &mut dest))
+                            .and_then(|_| dest.sync_all());
+                        if let Err(copy_err) = copy_res {
+                            drop(dest);
+                            let _ = fs::remove_file(&path);
+                            *tmp = Some(err.file);
+                            return Err(copy_err);
+                        }
+                        return Ok(path);
+                    }
+                    Err(open_err) if open_err.kind() == ErrorKind::AlreadyExists => {
+                        *tmp = Some(err.file);
+                    }
+                    Err(open_err) => {
+                        *tmp = Some(err.file);
+                        return Err(open_err);
+                    }
+                }
+            }
         }
     }
     Err(io::Error::new(ErrorKind::AlreadyExists, "同名文件过多"))
+}
+
+/// 目录中已有同名文件时依次改用“名称 (2).扩展名”“名称 (3).扩展名”……，不覆盖用户已有的文件。
+/// 改名本身拒绝覆盖，挑选名称与写入之间不会被其他程序抢先
+fn persist_unique(tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<PathBuf> {
+    let mut holder = Some(tmp);
+    match persist_unique_in_dir(&mut holder, dir, name) {
+        Ok(path) => Ok(path),
+        Err(err) => {
+            #[cfg(target_os = "android")]
+            {
+                // 安卓 11+ Scoped Storage 下 Pictures/DCIM 目录仅允许图片/视频后缀，导出 .zip 备份时自动回退到 Download 或应用媒体目录
+                if matches!(
+                    err.kind(),
+                    ErrorKind::PermissionDenied | ErrorKind::InvalidInput | ErrorKind::Other
+                ) {
+                    for fallback in [
+                        PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench"),
+                        PathBuf::from("/storage/emulated/0/Android/media/com.panpan.workbench/Download/PanPanWorkbench"),
+                        PathBuf::from("/storage/emulated/0/Android/data/com.panpan.workbench/files/Download/PanPanWorkbench"),
+                    ] {
+                        if fallback != dir {
+                            if let Ok(path) = persist_unique_in_dir(&mut holder, &fallback, name) {
+                                return Ok(path);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err)
+        }
+    }
 }
 
 /// 弹出保存对话框，在所选位置开始一次分块写入，返回写入序号；用户取消时返回 None。对话框自带覆盖确认
@@ -239,11 +360,24 @@ fn persist_unique(mut tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<
 #[cfg(not(windows))]
 pub async fn save_file(
     _window: WebviewWindow,
-    _state: State<'_, StorageState>,
-    _writes: State<'_, Writes>,
-    _name: String,
+    state: State<'_, StorageState>,
+    writes: State<'_, Writes>,
+    name: String,
 ) -> Result<Option<u32>, String> {
-    Err("当前平台不支持系统保存对话框".to_string())
+    check_name(&name)?;
+    let storage = storage(&state)?;
+    let dir = tokio::task::block_in_place(|| {
+        let dir = download_dir(storage)?;
+        check_outside(&dir, Some(storage.root()))?;
+        ensure_writable(&dir).map_err(|err| format!("保存目录不可用（{}）：{err}", dir.display()))?;
+        Ok::<_, String>(dir)
+    })?;
+    tokio::task::block_in_place(|| {
+        writes
+            .begin(&dir, Target::Unique(dir.clone(), name.clone()))
+            .map_err(|err| format!("无法在 {} 中创建临时文件：{err}", dir.display()))
+    })
+    .map(Some)
 }
 
 #[cfg(windows)]
@@ -444,15 +578,23 @@ pub async fn save_dir_pick(
     state: State<'_, StorageState>,
     dirs: State<'_, SaveDirs>,
 ) -> Result<Option<SaveDir>, String> {
-    let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, None))
-        .await
-        .map_err(|err| format!("目录选择框异常结束：{err}"))??;
-    let Some(path) = picked else {
-        return Ok(None);
-    };
-    let data_dir = data_root(&state);
-    tokio::task::block_in_place(|| check_outside(&path, data_dir.as_deref()))?;
-    register_dir(&dirs, path).map(Some)
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        return download_dir_use(state, dirs).await.map(Some);
+    }
+    #[cfg(windows)]
+    {
+        let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, None))
+            .await
+            .map_err(|err| format!("目录选择框异常结束：{err}"))??;
+        let Some(path) = picked else {
+            return Ok(None);
+        };
+        let data_dir = data_root(&state);
+        tokio::task::block_in_place(|| check_outside(&path, data_dir.as_deref()))?;
+        register_dir(&dirs, path).map(Some)
+    }
 }
 
 /// 在 save_dir_pick 或 download_dir_use 登记的目录中开始一次分块写入，返回写入序号；
@@ -486,7 +628,7 @@ pub async fn save_write(writes: State<'_, Writes>, request: Request<'_>) -> Resu
         .parse::<u32>()
         .map_err(|_| WRITE_GONE.to_string())?;
     // 请求体借用自 IPC 消息，block_in_place 原地写入，不必再复制一份
-    tokio::task::block_in_place(|| writes.write(id, bytes))
+    tokio::task::block_in_place(|| writes.write(id, &bytes))
 }
 
 /// 写完全部分块后调用，返回实际写入的完整路径
@@ -537,17 +679,135 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
         .meta_get(DOWNLOAD_DIR_KEY)
         .map_err(|err| err.message)?;
     if let Some(dir) = saved {
-        return Ok(PathBuf::from(dir));
+        let path = PathBuf::from(&dir);
+        #[cfg(target_os = "android")]
+        {
+            let is_legacy_private_fallback = dir.contains("/Android/data/")
+                || dir.starts_with("/data/");
+            if !is_legacy_private_fallback
+                && !in_data_dir(&path, storage.root())
+                && ensure_writable(&path).is_ok()
+            {
+                return Ok(path);
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            return Ok(path);
+        }
     }
-    let base = data_dir::base_dir().map_err(|err| format!("无法定位安装目录：{err}"))?;
-    Ok(initial_download_dir(storage.root(), &base))
+    #[cfg(target_os = "android")]
+    {
+        for candidate in [
+            PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/DCIM/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/Android/data/com.panpan.workbench/files/Pictures/PanPanWorkbench"),
+        ] {
+            if ensure_writable(&candidate).is_ok() {
+                return Ok(candidate);
+            }
+        }
+        return Ok(storage.root().parent().unwrap_or_else(|| storage.root()).join("downloads"));
+    }
+    #[cfg(target_os = "ios")]
+    {
+        return Ok(storage.root().parent().unwrap_or_else(|| storage.root()).join("Documents").join("PanPanWorkbench"));
+    }
+    #[cfg(not(mobile))]
+    {
+        #[cfg(target_os = "macos")]
+        if !cfg!(debug_assertions) {
+            if let Some(home) = std::env::var_os("HOME") {
+                return Ok(PathBuf::from(home).join("Downloads").join("PanPanWorkbench"));
+            }
+        }
+        let base = data_dir::base_dir().map_err(|err| format!("无法定位安装目录：{err}"))?;
+        Ok(initial_download_dir(storage.root(), &base))
+    }
 }
 
 /// 不存在时创建，并实际创建临时文件探测权限，提前发现目录不可写或所在磁盘已移除
 fn ensure_writable(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
-    tempfile::tempfile_in(dir)?;
+    #[cfg(target_os = "android")]
+    {
+        // 安卓 11+ Scoped Storage 下 Pictures/DCIM 目录拒绝以点开头的隐藏文件或无图片后缀的 .tmp，
+        // 改用非隐藏的 .png 文件探测可写性
+        let probe = dir.join(format!("panpan_probe_{}.png", std::process::id()));
+        if let Ok(file) = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&probe)
+        {
+            drop(file);
+            let _ = fs::remove_file(&probe);
+            return Ok(());
+        }
+    }
+    if let Err(err) = tempfile::tempfile_in(dir) {
+        return Err(err);
+    }
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn notify_android_media_scanner(path: &Path) {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif");
+    let mut scan_paths = vec![path.to_path_buf()];
+
+    // 若保存目录不在公共 Pictures / DCIM 下，同步写入一份到公共相册目录以保证系统相册可见
+    let path_str = path.to_string_lossy();
+    if is_image
+        && !path_str.starts_with("/storage/emulated/0/Pictures/")
+        && !path_str.starts_with("/storage/emulated/0/DCIM/")
+    {
+        if let Some(file_name) = path.file_name() {
+            for pub_dir in [
+                PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                PathBuf::from("/storage/emulated/0/DCIM/PanPanWorkbench"),
+            ] {
+                if fs::create_dir_all(&pub_dir).is_ok() {
+                    let pub_target = pub_dir.join(file_name);
+                    if let (Ok(mut src), Ok(mut dst)) = (
+                        fs::File::open(path),
+                        fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(&pub_target),
+                    ) {
+                        if io::copy(&mut src, &mut dst).is_ok() && dst.sync_all().is_ok() {
+                            scan_paths.push(pub_target);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::thread::spawn(move || {
+        for p in scan_paths {
+            let uri = format!("file://{}", p.display());
+            let _ = std::process::Command::new("am")
+                .args([
+                    "broadcast",
+                    "-a",
+                    "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                    "-d",
+                    &uri,
+                ])
+                .output();
+        }
+    });
 }
 
 #[tauri::command]
@@ -606,19 +866,21 @@ pub(crate) fn env_dirs() -> SystemDirs {
 pub(crate) fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
     let path = app.path();
     let mut dirs = env_dirs();
-    dirs.known = [
+    let mut known = vec![
         path.download_dir(),
         path.picture_dir(),
-        path.desktop_dir(),
         path.document_dir(),
         path.video_dir(),
         path.audio_dir(),
         path.public_dir(),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|dir| normalize(&dir))
-    .collect();
+    ];
+    #[cfg(not(mobile))]
+    known.push(path.desktop_dir());
+    dirs.known = known
+        .into_iter()
+        .flatten()
+        .map(|dir| normalize(&dir))
+        .collect();
     dirs.protected.extend(
         [path.home_dir(), path.data_dir(), path.local_data_dir()]
             .into_iter()
@@ -752,6 +1014,58 @@ pub async fn download_dir_pick(
         path: path.display().to_string(),
         previous,
     }))
+}
+
+/// 按给定路径更改默认保存地址（用于移动端或无原生目录选择框的平台），
+/// 校验目录可写且不在应用数据目录内；原地址中有文件时返回其统计并记下待迁移源，复用官方迁移流程
+#[tauri::command]
+pub async fn download_dir_set(
+    app: AppHandle,
+    state: State<'_, StorageState>,
+    source: State<'_, MigrateSource>,
+    path: String,
+) -> Result<DirChange, String> {
+    source
+        .0
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .take();
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("保存目录不能为空".to_string());
+    }
+    let next_path = PathBuf::from(trimmed);
+    if !next_path.is_absolute() {
+        return Err("请输入完整的绝对目录路径".to_string());
+    }
+    let storage = storage(&state)?;
+    let dirs = system_dirs(&app);
+    let old = tokio::task::block_in_place(|| download_dir(storage))?;
+    let previous = tokio::task::block_in_place(|| {
+        check_outside(&next_path, Some(storage.root()))?;
+        ensure_writable(&next_path).map_err(|err| {
+            if err.kind() == ErrorKind::PermissionDenied {
+                format!(
+                    "系统存储权限限制，无法直接写入 {}；请改选「相册媒体目录」或「下载」下的子文件夹",
+                    next_path.display()
+                )
+            } else {
+                format!("无法写入该目录（{}）：{err}", next_path.display())
+            }
+        })?;
+        storage
+            .meta_set(DOWNLOAD_DIR_KEY, &next_path.display().to_string())
+            .map_err(|err| format!("保存默认保存地址失败：{}", err.message))?;
+        Ok::<_, String>(previous_dir(&old, &next_path, storage.root(), &dirs))
+    })?;
+    *source.0.lock().unwrap_or_else(|err| err.into_inner()) = previous
+        .as_ref()
+        .filter(|p| p.blocked.is_none())
+        .map(|_| old);
+    Ok(DirChange {
+        path: next_path.display().to_string(),
+        previous,
+    })
 }
 
 /// 把上次更改前的原地址中的全部内容移动到当前默认保存地址，移空后删除原目录本身（系统已知文件夹除外）

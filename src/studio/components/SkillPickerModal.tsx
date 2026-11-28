@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Search, Sparkles, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { RotateCcw, Search, Settings, Sparkles, X } from 'lucide-react'
 import type { Skill, SkillSlot, SkillSlotValue } from '../../types'
 import { createInputImageFromFile, useStore } from '../../store'
-import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, validateSkillValues } from '../../lib/capabilitySkills'
+import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, pruneDetachedSkillImages, validateSkillValues } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import {
@@ -64,30 +64,118 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     for (const skill of skills) counts.set(skill.category, (counts.get(skill.category) ?? 0) + 1)
     return counts
   }, [skills])
-  const categories = useMemo(() => ['全部', ...categoryCounts.keys()], [categoryCounts])
+  const mineCount = useMemo(() => skills.filter((skill) => skill.source !== 'builtin').length, [skills])
+  const favoriteCount = useMemo(() => skills.filter((skill) => skill.favorite === true).length, [skills])
+  const quickCategories = useMemo(
+    () => [
+      { key: '全部', count: skills.length },
+      { key: '我的技能', count: mineCount },
+      { key: '我的收藏', count: favoriteCount },
+    ],
+    [skills.length, mineCount, favoriteCount],
+  )
+  const sceneCategories = useMemo(() => [...categoryCounts.keys()], [categoryCounts])
+  const categories = useMemo(
+    () => ['全部', '我的技能', '我的收藏', ...sceneCategories],
+    [sceneCategories],
+  )
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return skills.filter((skill) => {
-      if (category !== '全部' && skill.category !== category) return false
+      if (category === '我的技能') {
+        if (skill.source === 'builtin') return false
+      } else if (category === '我的收藏') {
+        if (skill.favorite !== true) return false
+      } else if (category !== '全部' && skill.category !== category) {
+        return false
+      }
       if (!keyword) return true
       return `${skill.name} ${skill.description} ${skill.category}`.toLowerCase().includes(keyword)
     })
   }, [skills, category, query])
 
+  const catScrollRef = useRef<HTMLDivElement>(null)
+  const [catScrollUp, setCatScrollUp] = useState(false)
+  const [catScrollDown, setCatScrollDown] = useState(false)
+
+  useEffect(() => {
+    const el = catScrollRef.current
+    if (!el || detailOnly) {
+      setCatScrollUp(false)
+      setCatScrollDown(false)
+      return
+    }
+    const updateScroll = () => {
+      setCatScrollUp(el.scrollTop > 4)
+      setCatScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+    }
+    updateScroll()
+    el.addEventListener('scroll', updateScroll, { passive: true })
+    const ro = new ResizeObserver(updateScroll)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScroll)
+      ro.disconnect()
+    }
+  }, [detailOnly, sceneCategories.length, skills.length])
+
+  const buildInitialStateForSkill = (
+    skill: Skill,
+    seed?: Record<string, SkillSlotValue>,
+  ): { nextValues: Record<string, SkillSlotValue>; nextPreviews: Record<string, string> } => {
+    const existingImages = useStore.getState().inputImages
+    const nextValues: Record<string, SkillSlotValue> = pruneDetachedSkillImages(
+      skill,
+      {
+        ...defaultSkillValues(skill),
+        ...(seed ?? {}),
+      },
+      existingImages.map((img) => img.id),
+    )
+    const nextPreviews: Record<string, string> = {}
+    for (const img of existingImages) {
+      nextPreviews[img.id] = img.dataUrl
+    }
+
+    const imageSlots = skill.slots.filter((slot) => slot.type === 'image' || slot.type === 'multi-image')
+    const hasAnySlotImage = imageSlots.some((slot) => {
+      const current = nextValues[slot.key]
+      return Array.isArray(current) ? current.length > 0 : Boolean(current)
+    })
+    if (!hasAnySlotImage && existingImages.length > 0 && imageSlots.length > 0) {
+      let cursor = 0
+      for (const slot of imageSlots) {
+        if (cursor >= existingImages.length) break
+        if (slot.type === 'multi-image') {
+          const slice = existingImages.slice(cursor, cursor + 6).map((img) => img.id)
+          nextValues[slot.key] = slice
+          cursor += slice.length
+        } else {
+          nextValues[slot.key] = [existingImages[cursor].id]
+          cursor += 1
+        }
+      }
+    }
+    return { nextValues, nextPreviews }
+  }
+
   useEffect(() => {
     if (!activeSkillId) return
     const skill = resolveRegisteredSkill(skills, activeSkillId)
     if (!skill) return
+    const { nextValues, nextPreviews } = buildInitialStateForSkill(skill, initialValues)
     setSelected(skill)
-    setValues(initialValues ?? defaultSkillValues(skill))
+    setValues(nextValues)
+    setPreviews((prev) => ({ ...prev, ...nextPreviews }))
     setBasePrompt(skill.basePrompt)
   }, [activeSkillId, initialValues, skills])
 
   const choose = (skill: Skill) => {
+    const { nextValues, nextPreviews } = buildInitialStateForSkill(skill)
     setSelected(skill)
-    setValues(defaultSkillValues(skill))
+    setValues(nextValues)
     setBasePrompt(skill.basePrompt)
-    setPreviews({})
+    setPreviews(nextPreviews)
     setError('')
   }
 
@@ -157,36 +245,163 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
           </button>
         </header>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           {!detailOnly && (
-            <aside className="flex w-[170px] shrink-0 flex-col border-r border-black/[0.06] dark:border-white/[0.08]">
-              <div className="px-3 pb-1 pt-3 text-caption font-medium text-slate-400">分类</div>
-              <div data-skill-categories className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-                {categories.map((item) => {
-                  const count = item === '全部' ? skills.length : categoryCounts.get(item) ?? 0
+            <div className="relative flex sm:hidden shrink-0 items-center border-b border-black/[0.06] dark:border-white/[0.08]">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-3 py-2 pr-8">
+                {categories.map((item, idx) => {
+                  const count =
+                    item === '全部'
+                      ? skills.length
+                      : item === '我的技能'
+                      ? mineCount
+                      : item === '我的收藏'
+                      ? favoriteCount
+                      : categoryCounts.get(item) ?? 0
                   const active = category === item
                   return (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setCategory(item)}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-body-sm transition-colors ${
-                        active
-                          ? 'bg-black text-white dark:bg-white dark:text-black'
-                          : 'text-slate-600 hover:bg-black/[0.05] dark:text-slate-300 dark:hover:bg-white/[0.08]'
-                      }`}
-                    >
-                      <span className="truncate">{item}</span>
-                      <span className={`shrink-0 font-mono text-caption ${active ? 'text-white/60 dark:text-black/60' : 'text-slate-400'}`}>{count}</span>
-                    </button>
+                    <div key={item} className="contents">
+                      {idx === 3 && <span className="mx-1 h-4 w-px shrink-0 bg-black/[0.08] dark:bg-white/[0.1]" aria-hidden="true" />}
+                      <button
+                        type="button"
+                        onClick={() => { setCategory(item); setSelected(null) }}
+                        className={`shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1 text-caption font-medium transition-colors ${
+                          active
+                            ? 'bg-black text-white shadow-sm dark:bg-white dark:text-black'
+                            : 'bg-black/[0.04] text-slate-600 dark:bg-white/[0.08] dark:text-slate-300'
+                        }`}
+                      >
+                        <span>{item}</span>
+                        <span className={`font-mono text-micro ${active ? 'opacity-80' : 'text-slate-500 dark:text-slate-400'}`}>{count}</span>
+                      </button>
+                    </div>
                   )
                 })}
+              </div>
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-white to-transparent dark:from-[#161822]" aria-hidden="true" />
+            </div>
+          )}
+
+          {!detailOnly && (
+            <aside className="hidden sm:flex w-[156px] md:w-[178px] shrink-0 flex-col border-r border-black/[0.06] bg-[#fbfcfd] dark:border-white/[0.08] dark:bg-[#13151e]">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                {catScrollUp && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 z-10 h-5 bg-gradient-to-b from-[#fbfcfd] to-transparent dark:from-[#13151e]"
+                    aria-hidden="true"
+                  />
+                )}
+                <div
+                  ref={catScrollRef}
+                  data-skill-categories
+                  className="sidebar-scroll-hint min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2"
+                >
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                      常用视图
+                    </div>
+                    {quickCategories.map(({ key: item, count }) => {
+                      const active = category === item
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setCategory(item)}
+                          className={`flex h-8 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-caption transition-colors ${
+                            active
+                              ? 'bg-black font-semibold text-white shadow-sm dark:bg-white dark:text-black'
+                              : 'font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate">{item}</span>
+                          <span
+                            className={`shrink-0 font-mono text-micro tabular-nums ${
+                              active ? 'rounded bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="my-2.5 border-t border-black/[0.05] dark:border-white/[0.06]" />
+
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 pt-0.5 text-micro font-semibold tracking-wider text-slate-400 dark:text-slate-500 select-none">
+                      场景分类
+                    </div>
+                    {sceneCategories.map((item) => {
+                      const count = categoryCounts.get(item) ?? 0
+                      const active = category === item
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setCategory(item)}
+                          className={`flex h-8 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-caption transition-colors ${
+                            active
+                              ? 'bg-black font-semibold text-white shadow-sm dark:bg-white dark:text-black'
+                              : 'font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate">{item}</span>
+                          <span
+                            className={`shrink-0 font-mono text-micro tabular-nums ${
+                              active ? 'rounded bg-white/15 px-1.5 py-0.5 text-white dark:bg-black/15 dark:text-black' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                {catScrollDown && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-7 items-end justify-center bg-gradient-to-t from-[#fbfcfd] via-[#fbfcfd]/90 to-transparent pb-1 dark:from-[#13151e] dark:via-[#13151e]/90"
+                    aria-hidden="true"
+                  >
+                    <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-micro font-medium text-slate-500 dark:bg-white/[0.08] dark:text-slate-400">
+                      ↓ 更多分类
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 space-y-1 border-t border-black/[0.05] p-2 dark:border-white/[0.06]">
+                {(category !== '全部' || query.trim() !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setCategory('全部'); setQuery('') }}
+                    className="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl bg-black/[0.04] text-caption font-medium text-slate-700 transition hover:bg-black/[0.08] dark:bg-white/[0.06] dark:text-slate-200 dark:hover:bg-white/[0.1]"
+                  >
+                    <RotateCcw size={12} />
+                    <span>重置筛选</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose()
+                    useStore.getState().setShowSettings(true, 'about')
+                  }}
+                  className="flex h-8 w-full items-center justify-between rounded-xl px-2.5 text-caption font-medium text-slate-600 transition hover:bg-black/[0.04] hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Settings size={13} className="text-slate-400" />
+                    <span>设置与帮助</span>
+                  </span>
+                  <span className="font-mono text-micro text-slate-400">v{__APP_VERSION__}</span>
+                </button>
               </div>
             </aside>
           )}
 
           {!detailOnly && (
-            <div className="flex w-[300px] shrink-0 flex-col border-r border-black/[0.06] dark:border-white/[0.08]">
+            <div className={`${selected ? 'hidden sm:flex' : 'flex'} w-full sm:w-[240px] md:w-[300px] min-h-0 flex-1 sm:flex-none shrink-0 flex-col sm:border-r border-black/[0.06] dark:border-white/[0.08]`}>
               <div className="shrink-0 px-3 pb-2 pt-3">
                 <div className="relative">
                   <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -194,15 +409,15 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="搜索技能"
-                    className="h-8 w-full rounded-lg border border-black/10 bg-white pl-8 pr-2 text-body-sm outline-none focus:border-black/30 dark:border-white/15 dark:bg-black/20 dark:focus:border-white/30"
+                    className="h-9 sm:h-8 w-full rounded-lg border border-black/10 bg-white pl-8 pr-2 text-body-sm outline-none focus:border-black/30 dark:border-white/15 dark:bg-black/20 dark:focus:border-white/30"
                   />
                 </div>
               </div>
-              <div data-skill-list className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+              <div data-skill-list className="sidebar-scroll-hint min-h-0 flex-1 overflow-y-auto px-3 pb-3">
                 {loading ? (
                   <p className="px-2 py-8 text-center text-body-sm text-slate-400">正在加载技能…</p>
                 ) : loadError ? (
-                  <p className="px-2 py-8 text-center text-body-sm text-red-500">{loadError}</p>
+                  <p className="px-2 py-8 text-center text-body-sm text-red-500 break-words">{loadError}</p>
                 ) : filtered.length === 0 ? (
                   <p className="px-2 py-8 text-center text-body-sm text-slate-400">没有匹配的技能</p>
                 ) : (
@@ -233,7 +448,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
             </div>
           )}
 
-          <div className={`flex min-w-0 flex-col ${detailOnly ? 'w-full' : 'flex-1'}`}>
+          <div className={`${!detailOnly && !selected ? 'hidden sm:flex' : 'flex'} min-h-0 min-w-0 flex-col ${detailOnly ? 'w-full flex-1' : 'flex-1'}`}>
             {!selected ? (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                 <Sparkles size={22} className="text-slate-300" />
@@ -243,6 +458,15 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
             ) : (
               <>
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                  {!detailOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setSelected(null)}
+                      className="mb-3 inline-flex sm:hidden items-center gap-1 rounded-full bg-black/[0.05] px-3 py-1 text-caption font-medium text-slate-600 dark:bg-white/[0.08] dark:text-slate-300"
+                    >
+                      ← 返回技能列表
+                    </button>
+                  )}
                   <h3 className="text-body font-semibold">{selected.name}</h3>
                   <p className="mt-1 text-caption leading-relaxed text-slate-500 dark:text-slate-400">{selected.description}</p>
                   {detailOnly && (
@@ -276,10 +500,12 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                             type="file"
                             accept="image/*"
                             multiple
-                            className="hidden"
+                            className="sr-only"
                             onChange={(event) => {
-                              void addReferenceFiles(selected, event.target.files)
-                              event.target.value = ''
+                              const inputEl = event.target
+                              void addReferenceFiles(selected, inputEl.files).finally(() => {
+                                inputEl.value = ''
+                              })
                             }}
                           />
                         </label>
@@ -325,7 +551,7 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                         value={values[slot.key]}
                         previews={previews}
                         onChange={(value) => setValue(slot.key, value)}
-                        onFiles={(files) => { void addImages(slot, files) }}
+                        onFiles={(files) => addImages(slot, files)}
                         onRemoveImage={(imageId) => { void removeImage(slot, imageId) }}
                       />
                     ))}
@@ -336,14 +562,14 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
                   </div>
                   {error && <p className="mt-2 text-caption text-red-500">{error}</p>}
                 </div>
-                <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-black/[0.06] px-4 py-3 dark:border-white/[0.08]">
-                  <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
+                <footer className="flex shrink-0 items-center justify-end gap-2.5 border-t border-black/[0.06] px-4 py-3 dark:border-white/[0.08]">
+                  <Button variant="ghost" size="md" className="h-10 min-w-[88px] px-4" onClick={onClose}>取消</Button>
                   {detailOnly && onSave && selected && (
-                    <Button variant="primary" size="sm" onClick={() => onSave({ ...selected, basePrompt })}>保存</Button>
+                    <Button variant="primary" size="md" className="h-10 min-w-[96px] px-4" onClick={() => onSave({ ...selected, basePrompt })}>保存</Button>
                   )}
-                  {!detailOnly && <Button variant="primary" size="sm" onClick={apply}>应用技能</Button>}
+                  {!detailOnly && <Button variant="primary" size="md" className="h-10 min-w-[104px] px-4" onClick={apply}>应用技能</Button>}
                   {!detailOnly && onApplyAndGenerate && (
-                    <Button variant="secondary" size="sm" onClick={() => {
+                    <Button variant="secondary" size="md" className="h-10 min-w-[104px] px-4" onClick={() => {
                       if (!selected) return
                       const errors = validateSkillValues(selected, values)
                       if (errors.length) {
@@ -368,7 +594,7 @@ function SkillSlotField({ slot, value, previews, onChange, onFiles, onRemoveImag
   value: SkillSlotValue | undefined
   previews: Record<string, string>
   onChange: (value: SkillSlotValue) => void
-  onFiles: (files: FileList | null) => void
+  onFiles: (files: FileList | null) => Promise<void> | void
   onRemoveImage: (imageId: string) => void
 }) {
   const inputClass = 'h-8 w-full rounded-lg border border-black/10 bg-white px-2 text-body-sm outline-none focus:border-black/30 dark:border-white/15 dark:bg-black/20 dark:focus:border-white/30'
@@ -430,7 +656,18 @@ function SkillSlotField({ slot, value, previews, onChange, onFiles, onRemoveImag
           {(slot.type === 'multi-image' || selected.length === 0) && (
             <label className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-lg border border-dashed border-black/20 text-caption text-slate-400 hover:border-black/40 dark:border-white/20 dark:hover:border-white/40">
               +
-              <input type="file" accept="image/*" multiple={slot.type === 'multi-image'} className="hidden" onChange={(event) => { onFiles(event.target.files); event.target.value = '' }} />
+              <input
+                type="file"
+                accept="image/*"
+                multiple={slot.type === 'multi-image'}
+                className="sr-only"
+                onChange={(event) => {
+                  const inputEl = event.target
+                  Promise.resolve(onFiles(inputEl.files)).finally(() => {
+                    inputEl.value = ''
+                  })
+                }}
+              />
             </label>
           )}
         </div>

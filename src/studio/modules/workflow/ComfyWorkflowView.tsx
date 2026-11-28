@@ -185,6 +185,15 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
   const [isPanning, setIsPanning] = useState(false);
   const startPanPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isSpacePressedRef = useRef(false);
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartRef = useRef<{
+    dist: number;
+    scale: number;
+    midX: number;
+    midY: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
 
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const nodeDragRef = useRef<{
@@ -403,9 +412,9 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
     setIsMaskModalOpen(false);
   };
 
-  // Split Compare dragging handlers
+  // Split Compare dragging handlers (mouse + touch via Pointer Events)
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       if (!draggingSplitScope) return;
       const box =
         draggingSplitScope === 'node' ? nodeCompareBoxRef.current : modalCompareBoxRef.current;
@@ -416,12 +425,14 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
     };
     const onUp = () => setDraggingSplitScope(null);
     if (draggingSplitScope) {
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     }
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, [draggingSplitScope]);
 
@@ -444,9 +455,29 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
     };
   }, [draggingNodeId]);
 
-  // Node & Group Mouse Handlers
+  // Node, Group, Pan & Two-Finger Pinch Pointer Handlers (mouse + touch)
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
+      if (activePointersRef.current.has(e.pointerId)) {
+        activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (pinchStartRef.current && activePointersRef.current.size >= 2 && containerRef.current) {
+        const [p1, p2] = Array.from(activePointersRef.current.values());
+        const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        if (dist > 0 && pinchStartRef.current.dist > 0) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const midX = (p1.x + p2.x) / 2 - rect.left;
+          const midY = (p1.y + p2.y) / 2 - rect.top;
+          const nextScale = Math.min(1.8, Math.max(0.35, pinchStartRef.current.scale * (dist / pinchStartRef.current.dist)));
+          const ratio = nextScale / pinchStartRef.current.scale;
+          setScale(nextScale);
+          setPan({
+            x: Math.round(midX - (pinchStartRef.current.midX - pinchStartRef.current.panX) * ratio),
+            y: Math.round(midY - (pinchStartRef.current.midY - pinchStartRef.current.panY) * ratio),
+          });
+        }
+        return;
+      }
       if (isPanning) {
         setPan({
           x: e.clientX - startPanPosRef.current.x,
@@ -458,7 +489,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         const dy = (e.clientY - drag.clientY) / scale;
         drag.dx = dx;
         drag.dy = dy;
-        // 拖拽期间只改 DOM transform，并按帧合并 mousemove，避免 React 重渲染和样式过渡滞后
+        // 拖拽期间只改 DOM transform，并按帧合并 pointermove，避免 React 重渲染和样式过渡滞后
         if (drag.el && drag.raf == null) {
           drag.raf = requestAnimationFrame(() => {
             drag.raf = null;
@@ -486,7 +517,11 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         );
       }
     };
-    const onUp = () => {
+    const onUp = (e: PointerEvent) => {
+      activePointersRef.current.delete(e.pointerId);
+      if (activePointersRef.current.size < 2) {
+        pinchStartRef.current = null;
+      }
       const drag = nodeDragRef.current;
       if (draggingNodeId && drag) {
         if (drag.raf != null) cancelAnimationFrame(drag.raf);
@@ -508,11 +543,13 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
       setDraggingGroupId(null);
       groupDragRef.current = null;
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, [isPanning, draggingNodeId, draggingGroupId, scale]);
 
@@ -568,20 +605,37 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
     zoomAtPoint(e.clientX, e.clientY, factor);
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+  const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointersRef.current.size === 2 && containerRef.current) {
+        const [p1, p2] = Array.from(activePointersRef.current.values());
+        const rect = containerRef.current.getBoundingClientRect();
+        pinchStartRef.current = {
+          dist: Math.hypot(p2.x - p1.x, p2.y - p1.y),
+          scale,
+          midX: (p1.x + p2.x) / 2 - rect.left,
+          midY: (p1.y + p2.y) / 2 - rect.top,
+          panX: pan.x,
+          panY: pan.y,
+        };
+        setIsPanning(false);
+        return;
+      }
+    }
     if ((e.target as HTMLElement).closest('.workflow-node, .workflow-group-header, button, input, select, textarea')) {
       return;
     }
     setWiringFrom(null);
     setIsProjectMenuOpen(false);
-    if (e.button === 0 || e.button === 1 || isSpacePressedRef.current) {
+    if (e.pointerType === 'touch' || e.button === 0 || e.button === 1 || isSpacePressedRef.current) {
       setIsPanning(true);
       startPanPosRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       setSelectedNodeId(null);
     }
   };
 
-  const handleGroupHeaderMouseDown = (e: React.MouseEvent, group: WorkflowGroupBox) => {
+  const handleGroupHeaderPointerDown = (e: React.PointerEvent, group: WorkflowGroupBox) => {
     e.stopPropagation();
     const childSnapshots: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n) => {
@@ -603,7 +657,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
     };
   };
 
-  const handleNodeHeaderMouseDown = (e: React.MouseEvent, node: WorkflowNode) => {
+  const handleNodeHeaderPointerDown = (e: React.PointerEvent, node: WorkflowNode) => {
     if ((e.target as HTMLElement).closest('button, select, input')) return;
     e.stopPropagation();
     setSelectedNodeId(node.id);
@@ -1008,8 +1062,8 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
           ========================================================================= */}
       <div
         ref={containerRef}
-        className="relative w-full h-full overflow-hidden cursor-grab active:cursor-grabbing"
-        onMouseDown={handleCanvasMouseDown}
+        className="relative w-full h-full overflow-hidden touch-none cursor-grab active:cursor-grabbing"
+        onPointerDown={handleCanvasPointerDown}
         onWheel={handleWheel}
       >
         <InteractiveDotGrid pan={pan} spacing={22} paused={Boolean(draggingNodeId || draggingGroupId || isPanning)} />
@@ -1037,10 +1091,10 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         )}
 
         {/* MINIMAL TOP FLOATING HEADER CAPSULES (Left: Title, Right: Save + Batch + Run) */}
-        <div className="absolute top-3.5 left-4 right-4 z-30 pointer-events-none flex items-center justify-between gap-2.5">
+        <div className="absolute top-3 left-3 right-3 sm:top-3.5 sm:left-4 sm:right-4 z-30 pointer-events-none flex items-center justify-between gap-2">
           {/* Left: Workflow Title */}
-          <div className="pointer-events-auto flex items-center gap-2 min-w-0">
-            <div className="h-9 px-3.5 rounded-full bg-white/90 dark:bg-[#141620]/90 backdrop-blur-md border border-black/[0.05] dark:border-white/[0.08] soft-card-shadow hidden sm:flex items-center gap-2 min-w-0">
+          <div className="pointer-events-auto hidden sm:flex items-center gap-2 min-w-0">
+            <div className="h-9 px-3.5 rounded-full bg-white/90 dark:bg-[#141620]/90 backdrop-blur-md border border-black/[0.05] dark:border-white/[0.08] soft-card-shadow flex items-center gap-2 min-w-0">
               <span className="text-[12px] font-bold text-slate-900 dark:text-white truncate max-w-[200px]">
                 {activePreset.name}
               </span>
@@ -1053,115 +1107,116 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
           </div>
 
           {/* Right: Save Local (Overwrite / Save As / Export JSON) + Batch + Run CTA */}
-          <div className="pointer-events-auto flex items-center gap-1.5 shrink-0 relative">
-            <button
-              type="button"
-              onClick={() => void handleDownloadOutput()}
-              aria-disabled={!outputBlobRef.current && !outputImageUrl}
-              title={outputBlobRef.current || outputImageUrl ? '下载本次生成或历史结果的图片' : '还没有生成结果'}
-              className={`h-9 px-3 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center gap-1.5 text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer ${
-                !outputBlobRef.current && !outputImageUrl ? 'opacity-40' : ''
-              }`}
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>下载图片</span>
-            </button>
+          <div className="pointer-events-auto relative ml-auto flex max-w-full items-center gap-1.5">
+            <div className="flex max-w-full items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <button
+                type="button"
+                onClick={() => void handleDownloadOutput()}
+                aria-disabled={!outputBlobRef.current && !outputImageUrl}
+                title={outputBlobRef.current || outputImageUrl ? '下载本次生成或历史结果的图片' : '还没有生成结果'}
+                className={`h-9 shrink-0 px-2.5 min-[680px]:px-3 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center gap-1.5 text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer whitespace-nowrap ${
+                  !outputBlobRef.current && !outputImageUrl ? 'opacity-40' : ''
+                }`}
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden min-[680px]:inline">下载图片</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onSaveProject?.(collectProjectValues())}
-              title={activeProject && activeProject.id !== 'draft' ? '保存到当前工作流' : '保存为新工作流'}
-              className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center gap-1.5 text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>保存工作流</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onSaveProject?.(collectProjectValues())}
+                title={activeProject && activeProject.id !== 'draft' ? '保存到当前工作流' : '保存为新工作流'}
+                className="h-9 shrink-0 px-2.5 min-[680px]:px-3 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center gap-1.5 text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer whitespace-nowrap"
+              >
+                <Save className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden min-[680px]:inline">保存工作流</span>
+              </button>
 
-            <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsSaveAsOpen(!isSaveAsOpen)}
                 title="工作流预设"
-                className="h-9 w-9 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center justify-center text-slate-500 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
+                className="h-9 w-9 shrink-0 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center justify-center text-slate-500 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
               >
                 <span className="text-[15px] leading-none">…</span>
               </button>
 
-              {isSaveAsOpen && (
-                <div className="absolute right-0 top-11 w-[200px] p-1.5 rounded-2xl bg-white dark:bg-[#161822] border border-black/[0.08] dark:border-white/[0.1] soft-float-shadow z-50">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSavePreset?.(activePreset.name);
-                      setIsSaveAsOpen(false);
-                    }}
-                    className="w-full h-8 rounded-xl px-2.5 text-left text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
-                  >
-                    保存工作流预设
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSavePreset?.(`${activePreset.name} 副本`);
-                      setIsSaveAsOpen(false);
-                    }}
-                    className="w-full h-8 rounded-xl px-2.5 text-left text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
-                  >
-                    另存为
-                  </button>
-                </div>
+              {/* Batch Count Pill (hide unimplemented ×2/×4 on narrow phone to avoid dead taps & overflow) */}
+              <div className="hidden min-[680px]:flex h-9 shrink-0 px-1 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow items-center text-[11px] font-mono">
+                {([1, 2, 4] as const).map((cnt) => {
+                  const disabled = cnt !== 1;
+                  return (
+                    <button
+                      key={cnt}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        if (!disabled) setBatchCount(cnt);
+                      }}
+                      className={`h-7 px-2 rounded-full transition ${
+                        disabled
+                          ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                          : batchCount === cnt
+                          ? 'bg-black text-white dark:bg-white dark:text-black font-bold cursor-pointer'
+                          : 'text-slate-400 hover:text-slate-800 dark:hover:text-white cursor-pointer'
+                      }`}
+                      title={disabled ? '批量出图尚未接通，当前仅支持单张' : '单次连续跑 1 张'}
+                    >
+                      ×{cnt}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleRunBatteryWorkflow()}
+                disabled={isExecuting || Boolean(missingInput)}
+                title={missingInput ?? undefined}
+                className="h-9 shrink-0 px-3.5 min-[680px]:px-4 rounded-full bg-black text-white dark:bg-white dark:text-black text-[12px] font-semibold flex items-center gap-1.5 hover:opacity-90 active:scale-[0.98] transition cursor-pointer soft-float-shadow disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40 whitespace-nowrap"
+              >
+                {isExecuting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>{execStageLabel || '执行中'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span className="hidden min-[680px]:inline">运行电池组</span>
+                    <span className="min-[680px]:hidden">运行</span>
+                  </>
+                )}
+              </button>
+
+              {missingInput && !isExecuting && (
+                <span className="hidden min-[680px]:inline text-[10.5px] text-rose-500 max-w-[150px] leading-tight shrink-0">{missingInput}</span>
               )}
             </div>
 
-            {/* Batch Count Pill */}
-            <div className="h-9 px-1 rounded-full bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] soft-card-shadow flex items-center text-[11px] font-mono">
-              {([1, 2, 4] as const).map((cnt) => {
-                const disabled = cnt !== 1;
-                return (
-                  <button
-                    key={cnt}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => {
-                      if (!disabled) setBatchCount(cnt);
-                    }}
-                    className={`h-7 px-2 rounded-full transition ${
-                      disabled
-                        ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                        : batchCount === cnt
-                        ? 'bg-black text-white dark:bg-white dark:text-black font-bold cursor-pointer'
-                        : 'text-slate-400 hover:text-slate-800 dark:hover:text-white cursor-pointer'
-                    }`}
-                    title={disabled ? '批量出图尚未接通，当前仅支持单张' : '单次连续跑 1 张'}
-                  >
-                    ×{cnt}
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void handleRunBatteryWorkflow()}
-              disabled={isExecuting || Boolean(missingInput)}
-              title={missingInput ?? undefined}
-              className="h-9 px-4 rounded-full bg-black text-white dark:bg-white dark:text-black text-[12px] font-semibold flex items-center gap-1.5 hover:opacity-90 active:scale-[0.98] transition cursor-pointer soft-float-shadow disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40 whitespace-nowrap"
-            >
-              {isExecuting ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>{execStageLabel || '执行中'}</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>运行电池组</span>
-                </>
-              )}
-            </button>
-
-            {missingInput && !isExecuting && (
-              <span className="text-[10.5px] text-rose-500 max-w-[150px] leading-tight">{missingInput}</span>
+            {isSaveAsOpen && (
+              <div className="absolute right-0 top-11 w-[200px] p-1.5 rounded-2xl bg-white dark:bg-[#161822] border border-black/[0.08] dark:border-white/[0.1] soft-float-shadow z-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSavePreset?.(activePreset.name);
+                    setIsSaveAsOpen(false);
+                  }}
+                  className="w-full h-8 rounded-xl px-2.5 text-left text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
+                >
+                  保存工作流预设
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSavePreset?.(`${activePreset.name} 副本`);
+                    setIsSaveAsOpen(false);
+                  }}
+                  className="w-full h-8 rounded-xl px-2.5 text-left text-[11.5px] font-medium text-slate-700 dark:text-slate-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] cursor-pointer"
+                >
+                  另存为
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -1187,9 +1242,9 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
               className="absolute rounded-2xl border bg-slate-500/[0.045] dark:bg-white/[0.03] pointer-events-none z-0"
             >
               <div
-                onMouseDown={(e) => handleGroupHeaderMouseDown(e, grp)}
+                onPointerDown={(e) => handleGroupHeaderPointerDown(e, grp)}
                 style={{ backgroundColor: `${grp.color}18`, borderColor: `${grp.color}28` }}
-                className="workflow-group-header pointer-events-auto h-8 px-3.5 rounded-t-2xl border-b flex items-center justify-between cursor-move"
+                className="workflow-group-header pointer-events-auto touch-none h-8 px-3.5 rounded-t-2xl border-b flex items-center justify-between cursor-move"
               >
                 <span className="text-[12px] font-bold tracking-tight text-slate-700 dark:text-slate-200">
                   {grp.title}
@@ -1261,8 +1316,8 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
               >
                 {/* Node Header */}
                 <div
-                  onMouseDown={(e) => handleNodeHeaderMouseDown(e, node)}
-                  className={`h-[34px] px-2.5 rounded-t-2xl border-b flex items-center justify-between gap-1.5 cursor-move ${
+                  onPointerDown={(e) => handleNodeHeaderPointerDown(e, node)}
+                  className={`h-[34px] px-2.5 rounded-t-2xl border-b flex items-center justify-between gap-1.5 touch-none cursor-move ${
                     isNote
                       ? 'bg-purple-500/15 border-purple-500/20'
                       : 'bg-[#fafafa] dark:bg-[#191c28] border-black/[0.05] dark:border-white/[0.06]'
@@ -1284,7 +1339,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0" onMouseDown={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1 shrink-0" onPointerDown={(e) => e.stopPropagation()}>
                     {isRunning && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded-full font-mono bg-black text-white dark:bg-white dark:text-black">
                         RUN
@@ -1408,7 +1463,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
                 {/* Node Body by ComfyUI Node Type */}
                 <div
                   className="px-2.5 pb-2.5 pt-1 space-y-2 text-[11px]"
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                 >
                   {/* 1. Positive Prompt */}
                   {node.type === 'CLIPTextEncodePositive' && (
@@ -1975,7 +2030,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
                       ) : (
                         <div
                           ref={nodeCompareBoxRef}
-                          onMouseDown={(e) => {
+                          onPointerDown={(e) => {
                             if (compareDisplayMode !== 'split' || !outputImageUrl) return;
                             e.stopPropagation();
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -2138,7 +2193,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         {/* =====================================================================
             2. BOTTOM FLOATING ARCHIVE HISTORY DOCK (Subtle Folder Prefix + History)
             ===================================================================== */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto max-w-[76%] flex items-center justify-center">
+        <div className="absolute bottom-3 left-3 right-3 min-[680px]:bottom-4 min-[680px]:left-1/2 min-[680px]:right-auto min-[680px]:-translate-x-1/2 z-30 pointer-events-auto min-[680px]:max-w-[76%] flex items-center justify-center">
           {isHistoryCollapsed ? (
             <button
               type="button"
@@ -2270,7 +2325,7 @@ export const ComfyWorkflowView: React.FC<ComfyWorkflowViewProps> = ({
         {/* =====================================================================
             3. BOTTOM-RIGHT ZOOM & FIT CONTROLS
             ===================================================================== */}
-        <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1 bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2 py-1 soft-card-shadow text-[11px] font-mono">
+        <div className="absolute bottom-16 right-3 min-[680px]:bottom-4 min-[680px]:right-4 z-30 flex items-center gap-1 bg-white/95 dark:bg-[#141620]/95 backdrop-blur-md border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2 py-1 soft-card-shadow text-[11px] font-mono">
           <button
             type="button"
             onClick={() => handleCenterZoom(0.9)}

@@ -1,8 +1,21 @@
 import { useEffect, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { isTauri } from '../../lib/platform'
+import { isMobile, isTauri } from '../../lib/platform'
 import { useStore } from '../../store'
+
+export function buildAiLinkPrompt(autoSubmit = false): string {
+  const autoSuffix = autoSubmit ? '&auto=1' : ''
+  const linkLabel = autoSubmit ? '在盼盼工作台生成' : '填入盼盼工作台'
+  const autoNote = autoSubmit
+    ? '点击后自动填入并立即发起生图；若本轮建议我添加参考图，请将末尾 &auto=1 改为 &auto=0 以便我先放参考图'
+    : '默认点击仅填入输入框以便我补参考图或微调，不要附加自动发送参数'
+  return `你是我的 AI 绘画助手，请结合对话上下文持续优化生图提示词。每次给出或修改提示词后：
+1. 若你判断本次生图需要参考图（或对话中已有图片可供参考），请在正文（非 URL）中提醒我添加参考图，并明确指出推荐哪一张（例如：“💡 建议参考图：请将【第 X 张图 / 某张图】加入工作台参考图框后再发送”）；
+2. 在回复末尾附上可直接点击唤醒工作台的 HTTPS 链接（必须使用 https:// 协议并对提示词做 URL 编码，切勿写自定义协议或把图片塞进 URL；${autoNote}）：
+[${linkLabel}](https://meiyoutou.github.io/panpan-workbench/open/?prompt=URL编码后的提示词&size=1024x1024${autoSuffix})`
+}
 
 interface McpStatus {
   enabled: boolean
@@ -25,13 +38,28 @@ const ROW = 'flex items-center justify-between gap-3'
 
 export default function McpSettingsSection() {
   const showToast = useStore((s) => s.showToast)
+  const aiLinkAutoSubmit = useStore((s) => Boolean(s.settings.aiLinkAutoSubmit))
+  const setSettings = useStore((s) => s.setSettings)
   const [status, setStatus] = useState<McpStatus | null>(null)
   const [port, setPort] = useState('7331')
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [busy, setBusy] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
+  const aiLinkPrompt = buildAiLinkPrompt(aiLinkAutoSubmit)
+
+  const copyAiLinkPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(aiLinkPrompt)
+      setPromptCopied(true)
+      showToast('已复制 AI 联动提示词', 'success')
+      window.setTimeout(() => setPromptCopied(false), 1600)
+    } catch {
+      showToast('复制失败，请长按文本手动复制', 'error')
+    }
+  }
 
   const refresh = async () => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     try {
       const next = await invoke<McpStatus>('mcp_status')
       setStatus(next)
@@ -43,7 +71,7 @@ export default function McpSettingsSection() {
   }
 
   useEffect(() => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     void refresh()
     const unlisten = listen('mcp-status-changed', () => void refresh())
     const timer = window.setInterval(() => {
@@ -54,8 +82,6 @@ export default function McpSettingsSection() {
       void unlisten.then((fn) => fn())
     }
   }, [])
-
-  if (!isTauri) return null
 
   const configure = async (patch: Partial<Pick<McpStatus, 'enabled' | 'writeEnabled'>> & { port?: number }) => {
     if (!status || busy) return
@@ -104,14 +130,67 @@ export default function McpSettingsSection() {
 
   return (
     <section className="space-y-4">
-      <div>
-        <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">本机 MCP</h4>
-        <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
-          {status?.running
-            ? `运行中：http://127.0.0.1:${status.port}/mcp`
-            : status?.enabled ? '已开启但未监听（查看下方错误）' : '默认关闭；未开启时不监听端口'}
+      <div className="space-y-2 rounded-xl bg-black/[0.03] p-3.5 dark:bg-white/[0.04]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-body-sm font-medium text-gray-700 dark:text-gray-200">
+              外部 AI 唤醒联动提示词
+            </span>
+            <code className="shrink-0 rounded bg-black/[0.05] px-1.5 py-0.5 font-mono text-micro text-gray-500 dark:bg-white/[0.08] dark:text-gray-400">
+              panpan://generate
+            </code>
+          </div>
+          <button
+            type="button"
+            onClick={() => void copyAiLinkPrompt()}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-white cursor-pointer"
+            title="复制 AI 联动提示词"
+            aria-label="复制 AI 联动提示词"
+          >
+            {promptCopied ? (
+              <Check className="h-4 w-4 stroke-[2] text-emerald-500" />
+            ) : (
+              <Copy className="h-4 w-4 stroke-[1.8]" />
+            )}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+          <span className="text-caption text-gray-600 dark:text-gray-300">点击唤醒链接后</span>
+          <div className="flex items-center gap-1 rounded-full bg-black/[0.05] p-0.5 dark:bg-white/[0.08]">
+            {[
+              { value: false, label: '仅填入输入框' },
+              { value: true, label: '自动发送生图' },
+            ].map((opt) => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => setSettings({ aiLinkAutoSubmit: opt.value })}
+                className={`h-6.5 rounded-full px-2.5 text-micro font-medium transition cursor-pointer ${
+                  aiLinkAutoSubmit === opt.value
+                    ? 'bg-black text-white shadow-2xs dark:bg-white dark:text-black'
+                    : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="select-all whitespace-pre-wrap break-all rounded-lg bg-white/80 p-2.5 font-mono text-caption leading-relaxed text-gray-600 dark:bg-black/25 dark:text-gray-300">
+          {aiLinkPrompt}
         </div>
       </div>
+
+      {isTauri && !isMobile && (
+        <>
+          <div className="border-t border-black/[0.05] pt-3 dark:border-white/[0.06]">
+            <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">本机 MCP</h4>
+            {status?.running && (
+              <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
+                {`运行中：http://127.0.0.1:${status.port}/mcp`}
+              </div>
+            )}
+          </div>
 
       <div className={ROW}>
         <span className="text-body text-gray-600 dark:text-gray-300">启用 MCP 服务</span>
@@ -169,9 +248,6 @@ export default function McpSettingsSection() {
         >
           <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${status?.writeEnabled ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
         </button>
-      </div>
-      <div className="text-body-sm text-gray-500 dark:text-gray-500">
-        写入工具默认关闭。开启后每次 task.create / image.attach 都会在主窗口弹出确认框。
       </div>
 
       <div className="space-y-2 rounded-xl bg-black/[0.03] p-3 dark:bg-white/[0.04]">
@@ -232,6 +308,8 @@ export default function McpSettingsSection() {
           </div>
         )}
       </div>
+        </>
+      )}
     </section>
   )
 }

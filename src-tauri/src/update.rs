@@ -1,37 +1,57 @@
 //! 应用内更新：用 updater 插件检查并下载更新包（下载时插件会校验签名），
 //! 通过校验的安装包保存到 <数据目录>/updates/，并记录版本号和 sha256。
 //! 之后无论远端是否已有更新的版本，都直接安装这个已下载的版本，重启应用后仍可安装
+#[cfg(desktop)]
 use std::fs;
+#[cfg(desktop)]
 use std::io::{self, ErrorKind};
+#[cfg(desktop)]
 use std::path::{Path, PathBuf};
+#[cfg(desktop)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(desktop)]
 use std::sync::Mutex;
+#[cfg(desktop)]
 use std::time::{Duration, Instant};
 
 use semver::Version;
-use serde::{Deserialize, Serialize};
+#[cfg(desktop)]
+use serde::Deserialize;
+use serde::Serialize;
+#[cfg(desktop)]
 use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, Runtime};
+#[cfg(desktop)]
+use tauri::Manager;
+use tauri::{AppHandle, Runtime};
+#[cfg(desktop)]
 use tauri_plugin_updater::{Error, Update, UpdaterExt};
 
+#[cfg(desktop)]
 use crate::proxy::{Proxy, Route};
+#[cfg(desktop)]
 use crate::{files, storage};
 
+#[cfg(desktop)]
 const META_FILE: &str = "update.json";
+#[cfg(desktop)]
 const PACKAGE_FILE: &str = "update.bin";
 
 /// 下载或安装进行中；重复调用直接报错，校验命令也不触碰正在写入的文件
+#[cfg(desktop)]
 static BUSY: AtomicBool = AtomicBool::new(false);
 
+#[cfg(desktop)]
 struct BusyGuard;
 
+#[cfg(desktop)]
 impl Drop for BusyGuard {
     fn drop(&mut self) {
         BUSY.store(false, Ordering::Release);
     }
 }
 
+#[cfg(desktop)]
 fn acquire() -> Result<BusyGuard, String> {
     if BUSY.swap(true, Ordering::AcqRel) {
         return Err("已有更新任务在进行中".into());
@@ -40,8 +60,10 @@ fn acquire() -> Result<BusyGuard, String> {
 }
 
 /// 本次运行中下载完成的更新信息，安装时直接使用，不必再联网检查
+#[cfg(desktop)]
 static DOWNLOADED: Mutex<Option<Update>> = Mutex::new(None);
 
+#[cfg(desktop)]
 #[derive(Serialize, Deserialize)]
 struct Meta {
     version: String,
@@ -54,22 +76,26 @@ pub struct Progress {
     total: Option<u64>,
 }
 
+#[cfg(desktop)]
 fn updates_dir() -> Result<PathBuf, String> {
     storage::data_dir()
         .map(|dir| dir.join("updates"))
         .map_err(|err| format!("无法定位数据目录：{err}"))
 }
 
+#[cfg(desktop)]
 fn parse_version(raw: &str) -> Option<Version> {
     Version::parse(raw.trim().trim_start_matches('v')).ok()
 }
 
+#[cfg(desktop)]
 fn read_meta(dir: &Path) -> Option<Meta> {
     serde_json::from_slice(&fs::read(dir.join(META_FILE)).ok()?).ok()
 }
 
 /// 读取版本高于当前运行版本且通过 sha256 校验的安装包；版本不高于当前版本时只返回 None（交给启动清理），
 /// sha256 校验失败时删除
+#[cfg(desktop)]
 fn read_saved(dir: &Path, current: &Version) -> Option<(Meta, Vec<u8>)> {
     let meta =
         read_meta(dir).filter(|meta| parse_version(&meta.version).is_some_and(|v| v > *current))?;
@@ -85,6 +111,7 @@ fn read_saved(dir: &Path, current: &Version) -> Option<(Meta, Vec<u8>)> {
     Some((meta, bytes))
 }
 
+#[cfg(desktop)]
 fn save(dir: &Path, update: &Update, bytes: &[u8]) -> std::io::Result<()> {
     if dir.exists() {
         fs::remove_dir_all(dir)?;
@@ -100,11 +127,13 @@ fn save(dir: &Path, update: &Update, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Windows 上文件被其他进程占用（ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION）
+#[cfg(desktop)]
 fn is_locked(err: &io::Error) -> bool {
     cfg!(windows) && matches!(err.raw_os_error(), Some(32 | 33))
 }
 
 /// 保存失败中用户能自行处理的原因给出不带冒号的整句，前端提示会把“标题：详情”截成只剩标题
+#[cfg(desktop)]
 fn save_error(err: io::Error) -> String {
     if is_locked(&err) {
         return "更新包文件被占用，请稍后重试".into();
@@ -117,6 +146,7 @@ fn save_error(err: io::Error) -> String {
 }
 
 /// 安装失败的常见原因：写入临时安装程序失败，或 ShellExecute 启动安装程序失败
+#[cfg(desktop)]
 fn install_error(err: Error) -> String {
     let Error::Io(err) = err else {
         return match err {
@@ -140,6 +170,7 @@ fn install_error(err: Error) -> String {
 /// 启动时清理：删除已安装（版本不高于当前版本）或无法识别的更新包；
 /// 以及插件安装时写到系统临时目录的安装程序。插件运行安装程序后直接 process::exit，来不及删除，
 /// 目录名为 “<应用名>-<版本>-updater-<6 位随机字符>”，只删除名称完全符合且版本不高于当前版本的目录
+#[cfg(desktop)]
 pub fn cleanup(app_name: &str, current: &Version) {
     if let Ok(dir) = updates_dir() {
         let stale = dir.exists()
@@ -177,7 +208,11 @@ pub fn cleanup(app_name: &str, current: &Version) {
     }
 }
 
+#[cfg(mobile)]
+pub fn cleanup(_app_name: &str, _current: &Version) {}
+
 /// 检查更新；没有新版本时返回 None，其余错误原样返回
+#[cfg(desktop)]
 async fn check_optional<R: Runtime>(
     app: &AppHandle<R>,
     any: bool,
@@ -224,6 +259,7 @@ async fn check_optional<R: Runtime>(
     }
 }
 
+#[cfg(desktop)]
 async fn check<R: Runtime>(app: &AppHandle<R>, any: bool) -> Result<Update, String> {
     check_optional(app, any)
         .await?
@@ -241,27 +277,43 @@ pub struct UpdateInfo {
 /// 只检查是否有新版本，不下载；没有新版本时返回 None
 #[tauri::command]
 pub async fn update_check<R: Runtime>(app: AppHandle<R>) -> Result<Option<UpdateInfo>, String> {
-    let current_version = app.package_info().version.to_string();
-    Ok(check_optional(&app, false).await?.map(|update| UpdateInfo {
-        version: update.version.clone(),
-        current_version,
-        notes: update.body.clone(),
-    }))
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        return Ok(None);
+    }
+    #[cfg(desktop)]
+    {
+        let current_version = app.package_info().version.to_string();
+        Ok(check_optional(&app, false).await?.map(|update| UpdateInfo {
+            version: update.version.clone(),
+            current_version,
+            notes: update.body.clone(),
+        }))
+    }
 }
 
 /// 本地有效安装包的版本（高于当前运行版本且通过 sha256 校验），没有时返回 None
 #[tauri::command]
 pub async fn update_ready<R: Runtime>(app: AppHandle<R>) -> Result<Option<String>, String> {
-    if BUSY.load(Ordering::Acquire) {
+    #[cfg(mobile)]
+    {
+        let _ = app;
         return Ok(None);
     }
-    let dir = updates_dir()?;
-    let current = app.package_info().version.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        read_saved(&dir, &current).map(|(meta, _)| meta.version)
-    })
-    .await
-    .map_err(|err| format!("校验更新包异常结束：{err}"))
+    #[cfg(desktop)]
+    {
+        if BUSY.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let dir = updates_dir()?;
+        let current = app.package_info().version.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            read_saved(&dir, &current).map(|(meta, _)| meta.version)
+        })
+        .await
+        .map_err(|err| format!("校验更新包异常结束：{err}"))
+    }
 }
 
 /// 下载 version 对应的更新包并保存（覆盖旧包），下载进度经 on_progress 传给前端。
@@ -272,55 +324,63 @@ pub async fn update_download<R: Runtime>(
     version: String,
     on_progress: Channel<Progress>,
 ) -> Result<(), String> {
-    let _busy = acquire()?;
-    let mut update = check(&app, false).await?;
-    if parse_version(&update.version) != parse_version(&version) {
-        return Err("更新包信息尚未同步到最新版本，请稍后重试".into());
+    #[cfg(mobile)]
+    {
+        let _ = (app, version, on_progress);
+        return Err("安卓端请下载最新 APK 安装包进行更新".into());
     }
-    // 插件下载默认不设超时，网络卡住时按钮会一直停在下载中
-    update.timeout = Some(Duration::from_secs(600));
-    let mut downloaded = 0u64;
-    let mut last = Instant::now();
-    let bytes = update
-        .download(
-            |len, total| {
-                downloaded += len as u64;
-                // 数据块很小，限制通知频率，避免大量 IPC 消息
-                if last.elapsed() < Duration::from_millis(100) && total != Some(downloaded) {
-                    return;
+    #[cfg(desktop)]
+    {
+        let _busy = acquire()?;
+        let mut update = check(&app, false).await?;
+        if parse_version(&update.version) != parse_version(&version) {
+            return Err("更新包信息尚未同步到最新版本，请稍后重试".into());
+        }
+        // 插件下载默认不设超时，网络卡住时按钮会一直停在下载中
+        update.timeout = Some(Duration::from_secs(600));
+        let mut downloaded = 0u64;
+        let mut last = Instant::now();
+        let bytes = update
+            .download(
+                |len, total| {
+                    downloaded += len as u64;
+                    // 数据块很小，限制通知频率，避免大量 IPC 消息
+                    if last.elapsed() < Duration::from_millis(100) && total != Some(downloaded) {
+                        return;
+                    }
+                    last = Instant::now();
+                    let _ = on_progress.send(Progress { downloaded, total });
+                },
+                || {},
+            )
+            .await
+            .map_err(|err| {
+                log::warn!("下载更新包失败：{err}");
+                match err {
+                    Error::Reqwest(err) if err.is_timeout() => "下载更新包超时，请重试".into(),
+                    Error::Reqwest(_) | Error::Network(_) => {
+                        "网络连接失败，请检查网络和代理设置后重试".into()
+                    }
+                    Error::Minisign(_)
+                    | Error::Base64(_)
+                    | Error::SignatureUtf8(_)
+                    | Error::MissingSignedVersion
+                    | Error::SignedVersionMismatch { .. } => "更新包签名校验失败".into(),
+                    err => format!("下载更新包失败：{err}"),
                 }
-                last = Instant::now();
-                let _ = on_progress.send(Progress { downloaded, total });
-            },
-            || {},
-        )
-        .await
-        .map_err(|err| {
-            log::warn!("下载更新包失败：{err}");
-            match err {
-                Error::Reqwest(err) if err.is_timeout() => "下载更新包超时，请重试".into(),
-                Error::Reqwest(_) | Error::Network(_) => {
-                    "网络连接失败，请检查网络和代理设置后重试".into()
-                }
-                Error::Minisign(_)
-                | Error::Base64(_)
-                | Error::SignatureUtf8(_)
-                | Error::MissingSignedVersion
-                | Error::SignedVersionMismatch { .. } => "更新包签名校验失败".into(),
-                err => format!("下载更新包失败：{err}"),
-            }
-        })?;
-    let dir = updates_dir()?;
-    let saved = update.clone();
-    tauri::async_runtime::spawn_blocking(move || save(&dir, &saved, &bytes))
-        .await
-        .map_err(|err| format!("保存更新包异常结束：{err}"))?
-        .map_err(|err| {
-            log::warn!("保存更新包失败：{err}");
-            save_error(err)
-        })?;
-    *DOWNLOADED.lock().unwrap() = Some(update);
-    Ok(())
+            })?;
+        let dir = updates_dir()?;
+        let saved = update.clone();
+        tauri::async_runtime::spawn_blocking(move || save(&dir, &saved, &bytes))
+            .await
+            .map_err(|err| format!("保存更新包异常结束：{err}"))?
+            .map_err(|err| {
+                log::warn!("保存更新包失败：{err}");
+                save_error(err)
+            })?;
+        *DOWNLOADED.lock().unwrap() = Some(update);
+        Ok(())
+    }
 }
 
 /// 校验本地安装包后安装并重启，安装的始终是已下载的版本；Windows 上插件启动安装程序后直接退出应用，由安装程序重新打开。
@@ -328,36 +388,44 @@ pub async fn update_download<R: Runtime>(
 /// 安装时不读取下载地址和签名。本次运行中下载的直接使用；重启后没有时联网检查取得句柄，只需把版本改为已下载的版本
 #[tauri::command]
 pub async fn update_install<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let _busy = acquire()?;
-    let dir = updates_dir()?;
-    let current = app.package_info().version.clone();
-    let (meta, bytes) = tauri::async_runtime::spawn_blocking(move || read_saved(&dir, &current))
-        .await
-        .map_err(|err| format!("校验更新包异常结束：{err}"))?
-        .ok_or("本地安装包已失效，请重新下载")?;
-    let cached = DOWNLOADED
-        .lock()
-        .unwrap()
-        .clone()
-        .filter(|update| parse_version(&update.version) == parse_version(&meta.version));
-    let update = match cached {
-        Some(update) => update,
-        None => {
-            let mut update = check(&app, true).await?;
-            update.version = meta.version;
-            update
-        }
-    };
-    // Windows 上插件启动安装程序后直接 process::exit，不会触发 RunEvent::Exit，需先删除未提交保存的临时文件
-    app.state::<files::Writes>().clear();
-    update.install(bytes).map_err(|err| {
-        log::warn!("安装更新失败：{err}");
-        install_error(err)
-    })?;
-    app.restart()
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        return Err("安卓端请下载最新 APK 安装包进行更新".into());
+    }
+    #[cfg(desktop)]
+    {
+        let _busy = acquire()?;
+        let dir = updates_dir()?;
+        let current = app.package_info().version.clone();
+        let (meta, bytes) = tauri::async_runtime::spawn_blocking(move || read_saved(&dir, &current))
+            .await
+            .map_err(|err| format!("校验更新包异常结束：{err}"))?
+            .ok_or("本地安装包已失效，请重新下载")?;
+        let cached = DOWNLOADED
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|update| parse_version(&update.version) == parse_version(&meta.version));
+        let update = match cached {
+            Some(update) => update,
+            None => {
+                let mut update = check(&app, true).await?;
+                update.version = meta.version;
+                update
+            }
+        };
+        // Windows 上插件启动安装程序后直接 process::exit，不会触发 RunEvent::Exit，需先删除未提交保存的临时文件
+        app.state::<files::Writes>().clear();
+        update.install(bytes).map_err(|err| {
+            log::warn!("安装更新失败：{err}");
+            install_error(err)
+        })?;
+        app.restart()
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod tests {
     use super::*;
 
