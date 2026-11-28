@@ -893,7 +893,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                 }
               }}
               className="h-6 px-2 rounded-full bg-black/[0.04] dark:bg-white/[0.07] hover:bg-black/[0.08] dark:hover:bg-white/[0.12] text-slate-600 dark:text-slate-200 flex items-center justify-center gap-1 text-caption transition cursor-pointer"
-              title="添加本地参考图（同步加入画布并随提示词发送）"
+              title="添加本地参考图（发送前预览在参考图框，发送后进入画布）"
               aria-label="添加本地参考图"
             >
               <Plus className="w-3.5 h-3.5 stroke-[1.8]" />

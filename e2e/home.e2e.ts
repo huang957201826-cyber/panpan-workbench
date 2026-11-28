@@ -258,5 +258,17 @@ test('参考图导入：发送前显示在参考图框，发送后参考图框�
   await expect(page.locator('[data-canvas-image-node] img').nth(0)).toBeVisible()
   await expect(page.locator('[data-canvas-image-node] img').nth(1)).toBeVisible()
   await expect(page.locator('[data-canvas-node]').first()).toBeVisible({ timeout: 20_000 })
+
+  // 点击「从画布选择参考图」吸取画布上的素材节点，验证重新进入参考图框，再次发送后参考图框再次消失
+  await page.locator('[data-input-bar]').getByRole('button', { name: '从画布选择参考图' }).click()
+  await page.locator('[data-canvas-image-node]').first().click()
+  await expect(page.locator('[data-reference-shelf]')).toBeVisible()
+  await expect(page.locator('[data-reference-shelf]')).toContainText('已添加 1 张参考图')
+
+  await page.locator('[data-input-bar] textarea').fill('二次吸取参考图发送验证')
+  await page.locator('[data-input-bar] button[title^="立即生成方案"]').click()
+  await expect(page.locator('[data-reference-shelf]')).toHaveCount(0)
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(2)
 })
+
 

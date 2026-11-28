@@ -1121,6 +1121,13 @@ export default function StudioShell() {
                             addInputImage({ id: imageId, dataUrl })
                             const added = useStore.getState().inputImages.some((image) => image.id === imageId)
                             if (!added) return
+                            const ws = useWorkspaceStore.getState()
+                            const currentCanvas = ws.canvases.find((item) => item.id === ws.activeCanvasId)
+                            if (currentCanvas?.removedImageIds?.includes(imageId)) {
+                              ws.updateCanvas(currentCanvas.id, {
+                                removedImageIds: currentCanvas.removedImageIds.filter((id) => id !== imageId),
+                              })
+                            }
                             setCanvasPickMode(false)
                             showToast('已加入参考图')
                           })

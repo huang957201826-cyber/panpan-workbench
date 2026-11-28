@@ -100,6 +100,13 @@ export async function addInputImageFile(file: File) {
     const image = await createInputImageFromFile(file)
     if (!image) return null
     useStore.getState().addInputImage(image)
+    const ws = useWorkspaceStore.getState()
+    const activeCanvas = ws.canvases.find((item) => item.id === ws.activeCanvasId)
+    if (activeCanvas?.removedImageIds?.includes(image.id)) {
+      ws.updateCanvas(activeCanvas.id, {
+        removedImageIds: activeCanvas.removedImageIds.filter((id) => id !== image.id),
+      })
+    }
     return image
   })
 }

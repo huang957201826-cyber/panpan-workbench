@@ -1072,6 +1072,10 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                 onPointerDown={(event) => {
                   if (event.button !== 0) return
                   event.stopPropagation()
+                  if (pickMode) {
+                    void onPickImage?.(node.imageId)
+                    return
+                  }
                   setSelectedImageIds(new Set([node.id]))
                   setSelectedIds(new Set())
                   setImageMenu(null)
@@ -1102,32 +1106,36 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                 <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-caption text-white">
                   {nodeLabel}
                 </span>
-                <button
-                  type="button"
-                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/65 text-body-sm text-white opacity-0 transition group-hover:opacity-100"
-                  title="下载原图"
-                  aria-label="下载原图"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void downloadImage(node.imageId, nodeLabel).then((result) => {
-                      if (result.canceled || result.successCount) return
-                      useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
-                    })
-                  }}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className="absolute -bottom-1 -right-1 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-black/70 opacity-0 transition group-hover:opacity-100"
-                  title="缩放素材"
-                  aria-label="缩放素材"
-                  onPointerDown={(event) => {
-                    event.stopPropagation()
-                    setImageDrag({ id: node.id, mode: 'resize', startX: event.clientX, startY: event.clientY, origin: node })
-                  }}
-                />
+                {!pickMode && (
+                  <>
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/65 text-body-sm text-white opacity-0 transition group-hover:opacity-100"
+                      title="下载原图"
+                      aria-label="下载原图"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void downloadImage(node.imageId, nodeLabel).then((result) => {
+                          if (result.canceled || result.successCount) return
+                          useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
+                        })
+                      }}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute -bottom-1 -right-1 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-black/70 opacity-0 transition group-hover:opacity-100"
+                      title="缩放素材"
+                      aria-label="缩放素材"
+                      onPointerDown={(event) => {
+                        event.stopPropagation()
+                        setImageDrag({ id: node.id, mode: 'resize', startX: event.clientX, startY: event.clientY, origin: node })
+                      }}
+                    />
+                  </>
+                )}
               </div>
             )
           })}
