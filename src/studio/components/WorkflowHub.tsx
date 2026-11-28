@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderOpen, Image as ImageIcon, Maximize2, PanelLeftClose, PanelLeftOpen, Paintbrush, Scissors } from 'lucide-react'
+import { useViewportLayout } from '../../hooks/useViewportLayout'
 import { useStore } from '../../store'
 import { WORKFLOWS } from '../workflows/manifest'
 import {
@@ -73,6 +74,7 @@ function savedProjects(): Promise<WorkflowProject[]> {
 /** 工作流画布：页面内左栏（引擎 / 流程）+ 底部「保存的工作流」弹层 */
 export function WorkflowHub() {
   const showToast = useStore((state) => state.showToast)
+  const viewportLayout = useViewportLayout()
   const engine = useEngineStatus()
   const [flowKey, setFlowKey] = useState('upscale')
   const [projects, setProjects] = useState<WorkflowProject[]>([DRAFT_PROJECT])
@@ -244,7 +246,8 @@ export function WorkflowHub() {
 
   return (
     <div className="flex h-full w-full flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
-      <div className="flex min-[680px]:hidden shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
+      {viewportLayout.isPhone && (
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto no-scrollbar border-b border-black/[0.05] bg-[#fbfcfd] px-3 py-2 dark:border-white/[0.06] dark:bg-[#12141c]">
         <button
           type="button"
           onClick={() => setEnginePanelOpen((open) => !open)}
@@ -276,6 +279,7 @@ export function WorkflowHub() {
           已保存
         </button>
       </div>
+      )}
       <aside
         data-workflow-rail
         className={`hidden min-[680px]:flex ${collapsed ? 'h-full w-12 shrink-0 flex-col border-r border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]' : SIDEBAR_PANEL_CLASS} transition-[width] duration-150`}

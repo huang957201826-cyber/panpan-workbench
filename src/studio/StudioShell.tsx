@@ -78,33 +78,34 @@ export default function StudioShell() {
     localStorage.getItem('panpan-start-activity') === 'projects' ? 'projects' : 'home',
   )
   const viewportLayout = useViewportLayout()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900)
+  const isOverlaySidebar = viewportLayout.isPhone || (viewportLayout.isTablet && (isTouchDevice || viewportLayout.width < 900))
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900 || (isTouchDevice && window.innerWidth < 1080))
   const [mobileCanvasSheetOpen, setMobileCanvasSheetOpen] = useState(false)
-  const prevTierRef = useRef(viewportLayout.tier)
+  const prevOverlayRef = useRef(isOverlaySidebar)
   useEffect(() => {
-    if (prevTierRef.current !== viewportLayout.tier) {
-      prevTierRef.current = viewportLayout.tier
-      if (viewportLayout.tier !== 'desktop') {
+    if (prevOverlayRef.current !== isOverlaySidebar) {
+      prevOverlayRef.current = isOverlaySidebar
+      if (isOverlaySidebar) {
         setSidebarCollapsed(true)
       }
-      if (viewportLayout.tier !== 'phone') {
-        setMobileCanvasSheetOpen(false)
-      }
     }
-  }, [viewportLayout.tier])
+    if (!viewportLayout.isPhone) {
+      setMobileCanvasSheetOpen(false)
+    }
+  }, [isOverlaySidebar, viewportLayout.isPhone])
   useEffect(() => {
-    if (!mobileCanvasSheetOpen && (sidebarCollapsed || viewportLayout.isDesktop)) return
+    if (!mobileCanvasSheetOpen && (sidebarCollapsed || !isOverlaySidebar)) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (mobileCanvasSheetOpen) {
         setMobileCanvasSheetOpen(false)
-      } else if (!sidebarCollapsed && !viewportLayout.isDesktop) {
+      } else if (!sidebarCollapsed && isOverlaySidebar) {
         setSidebarCollapsed(true)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [mobileCanvasSheetOpen, sidebarCollapsed, viewportLayout.isDesktop])
+  }, [mobileCanvasSheetOpen, sidebarCollapsed, isOverlaySidebar])
   const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -218,15 +219,20 @@ export default function StudioShell() {
   }, [workspace.inputDockPosition, activeActivity, activeCanvas?.id])
 
   useEffect(() => {
-    if (!activeCanvas?.id || isFavoritesCanvas(activeCanvas.id) || inputImages.length === 0) return
+    if (pendingInputs > 0 || !activeCanvas?.id || isFavoritesCanvas(activeCanvas.id) || inputImages.length === 0) return
     const existingNodeImageIds = new Set((activeCanvas.imageNodes ?? []).map((node) => node.imageId))
     const removedIds = new Set(activeCanvas.removedImageIds ?? [])
     const taskOutputIds = new Set(tasks.flatMap((task) => task.outputImages ?? []))
-    for (const img of inputImages) {
-      if (!img.id || existingNodeImageIds.has(img.id) || removedIds.has(img.id) || taskOutputIds.has(img.id)) continue
-      void ensureInputImageOnCanvas(img, activeCanvas.id)
-    }
-  }, [activeCanvas?.id, activeCanvas?.imageNodes, activeCanvas?.removedImageIds, tasks, inputImages])
+    const missing = inputImages.filter(
+      (img) => img.id && !existingNodeImageIds.has(img.id) && !removedIds.has(img.id) && !taskOutputIds.has(img.id),
+    )
+    if (!missing.length) return
+    void (async () => {
+      for (const img of missing) {
+        await ensureInputImageOnCanvas(img, activeCanvas.id)
+      }
+    })()
+  }, [pendingInputs, activeCanvas?.id, activeCanvas?.imageNodes, activeCanvas?.removedImageIds, tasks, inputImages])
 
   useEffect(() => {
     if (!activeCanvas?.id) return
@@ -876,7 +882,7 @@ export default function StudioShell() {
           enabledActivities={['home', 'projects', 'workflow', 'skills']}
           canManageProjects={true}
           hideRail={viewportLayout.isPhone}
-          overlayDrawer={!viewportLayout.isDesktop}
+          overlayDrawer={isOverlaySidebar}
         />
 
         <div className="relative flex flex-1 overflow-hidden">

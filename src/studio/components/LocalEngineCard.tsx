@@ -244,8 +244,8 @@ export function LocalEngineCard({
               type="button"
               onClick={handleClose}
               className="flex h-7 w-7 items-center justify-center rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] text-[13px] text-slate-500 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer"
-              title="关闭提示"
-              aria-label="关闭本地引擎提示"
+              title="收起提示"
+              aria-label="收起引擎提示"
             >
               ×
             </button>

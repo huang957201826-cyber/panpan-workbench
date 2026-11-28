@@ -445,13 +445,13 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
   }, [setBottomInset])
 
   useEffect(() => {
-    if (didFitRef.current || userInteractedRef.current || size.width <= 0 || allRects.length === 0) return
+    if (didFitRef.current || userInteractedRef.current || size.width <= 0 || nodeRects.length === 0) return
     const fit = fitNodesViewport(allRects, { width: size.width, height: Math.max(1, size.height - bottomInset) })
     if (fit) {
       didFitRef.current = true
       setViewport(fit)
     }
-  }, [size, bottomInset, allRects, setViewport, canvasId])
+  }, [size, bottomInset, nodeRects, allRects, setViewport, canvasId])
 
   useEffect(() => {
     const el = rootRef.current

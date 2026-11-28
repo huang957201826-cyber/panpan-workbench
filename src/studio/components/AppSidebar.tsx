@@ -211,7 +211,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <div
           className={
             overlayDrawer
-              ? `ui-scale-chrome fixed inset-0 z-[70] flex select-none text-slate-800 dark:text-slate-200 ${hideRail ? '' : 'pl-[68px]'}`
+              ? `ui-scale-chrome fixed z-[70] flex select-none text-slate-800 dark:text-slate-200 ${hideRail ? 'inset-0' : 'inset-y-0 right-0 left-[68px]'}`
               : 'contents'
           }
         >

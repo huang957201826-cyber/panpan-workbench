@@ -384,7 +384,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
             data-reference-shelf
             className="flex flex-col gap-1.5 rounded-xl border border-black/[0.05] bg-black/[0.02] px-2.5 py-2 dark:border-white/[0.07] dark:bg-white/[0.03]"
           >
-            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+            <div className="flex items-center justify-between gap-2 text-caption text-slate-500 dark:text-slate-400">
               <span className="truncate font-medium">
                 已添加 {referenceImages.length} 张参考图 · 将随提示词一起发送（点击缩略图插入 @图N）
               </span>
@@ -392,7 +392,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
                 <button
                   type="button"
                   onClick={onClearReferenceImages}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-black/[0.06] hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-200 transition cursor-pointer"
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-caption text-slate-500 hover:bg-black/[0.06] hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/[0.08] dark:hover:text-slate-200 transition cursor-pointer"
                   title="清空全部参考图"
                 >
                   <Trash2 className="w-3 h-3 stroke-[1.5]" />

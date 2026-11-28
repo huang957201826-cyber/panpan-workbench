@@ -199,3 +199,42 @@ test('R6：Rail 68px、首页舞台 780px、光晕 720×340、发送按钮 36px'
   await expect(page.locator('[data-home-stage]')).toBeVisible({ timeout: 30_000 })
   await page.screenshot({ path: 'docs/execution/evidence/r6-home-1440-dark.png' })
 })
+
+test('参考图导入：首页与工作台导入图片后同时显示内联预览架与画布素材节点', async ({ page }) => {
+  const png1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    'base64',
+  )
+  const png2 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  await seedWorkspace(page)
+  await page.goto('/')
+  await expect(page.locator('[data-home-stage]')).toBeVisible({ timeout: 30_000 })
+
+  await page.locator('#home-prompt-ref-upload').setInputFiles({
+    name: 'ref-home.png',
+    mimeType: 'image/png',
+    buffer: png1,
+  })
+  await expect(page.locator('[data-home-reference-shelf]')).toBeVisible()
+  await expect(page.locator('[data-home-reference-shelf]')).toContainText('已添加 1 张参考图')
+
+  await page.getByRole('button', { name: '工作区' }).click()
+  await expect(page.locator('[data-canvas-root]')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('[data-reference-shelf]')).toBeVisible()
+  await expect(page.locator('[data-reference-shelf]')).toContainText('已添加 1 张参考图')
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(1)
+  await expect(page.locator('[data-canvas-image-node] img').first()).toBeVisible()
+
+  await page.locator('#bottom-prompt-ref-upload').setInputFiles({
+    name: 'ref-canvas.png',
+    mimeType: 'image/png',
+    buffer: png2,
+  })
+  await expect(page.locator('[data-reference-shelf]')).toContainText('已添加 2 张参考图')
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(2)
+  await expect(page.locator('[data-canvas-image-node] img').nth(1)).toBeVisible()
+})
+
