@@ -72,7 +72,7 @@ export function StudioViewToolbar({
   const activeFilters = (status === 'all' ? 0 : 1) + (model ? 1 : 0) + (favoriteOnly ? 1 : 0)
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex w-full md:w-auto min-w-0 items-center gap-1 sm:gap-1.5">
       <TextField
         icon={<Search size={13} />}
         value={query}
@@ -80,7 +80,7 @@ export function StudioViewToolbar({
         onClear={() => onQueryChange('')}
         placeholder="搜索提示词 / 模型"
         aria-label="搜索任务"
-        className="min-w-[116px] sm:min-w-[140px] max-w-[180px] flex-1"
+        className="min-w-[84px] sm:min-w-[140px] max-w-[180px] flex-1"
       />
 
       <Tooltip label="筛选状态、模型与收藏">
@@ -90,7 +90,7 @@ export function StudioViewToolbar({
           aria-haspopup="menu"
           aria-expanded={filterOpen}
           onClick={() => setFilterOpen((value) => !value)}
-          className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-control border px-2.5 text-body-sm transition-colors duration-fast ${
+          className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-control border px-2 sm:px-2.5 text-body-sm transition-colors duration-fast ${
             activeFilters
               ? 'border-brand/30 bg-brand-soft text-brand'
               : 'border-line bg-surface-2 text-ink-1 hover:bg-surface-3'
@@ -137,7 +137,7 @@ export function StudioViewToolbar({
           aria-haspopup="menu"
           aria-expanded={sortOpen}
           onClick={() => setSortOpen((value) => !value)}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-control border border-line bg-surface-2 px-2.5 text-body-sm text-ink-1 transition-colors duration-fast hover:bg-surface-3"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-control border border-line bg-surface-2 px-2 sm:px-2.5 text-body-sm text-ink-1 transition-colors duration-fast hover:bg-surface-3"
         >
           <ArrowUpDown size={14} />
           {SORT_OPTIONS.find((option) => option.value === sort)?.label ?? '排序'}

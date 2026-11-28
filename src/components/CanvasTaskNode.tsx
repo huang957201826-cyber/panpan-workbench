@@ -76,7 +76,7 @@ function CanvasTaskNode({ task, x, y, width, height, scale, selected, compact, s
     setDownloadMenu(false)
     try {
       const result = await downloadTaskImages(task, [id], { fileNameBase: task.prompt })
-      if (result.successCount && result.location) {
+      if (result.successCount) {
         useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
       } else if (!result.canceled && !result.successCount) {
         useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')

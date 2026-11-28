@@ -1119,7 +1119,7 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                         void downloadImage(node.imageId, nodeLabel).then((result) => {
                           if (result.canceled) return
                           if (result.successCount) {
-                            if (result.location) useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+                            useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
                             return
                           }
                           useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')

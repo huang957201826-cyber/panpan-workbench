@@ -179,4 +179,35 @@ test('卡片右上角下载：画布节点与卡片都能下载', async ({ page 
   const [cardFile] = await Promise.all([page.waitForEvent('download'), cardDownload.click()])
   expect(await cardFile.failure()).toBeNull()
   expect(cardFile.suggestedFilename()).toMatch(/\.(png|jpg|webp)$/i)
+  await expect(page.getByText(/下载成功/)).toBeVisible()
+
+  // 手机竖屏（390x844）下检验卡片视图排版：顶部栏不遮挡、2 列网格、徽章与操作栏不重叠、底部文字单行省略
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(350)
+  const mobileGridMetrics = await page.locator('[data-card-grid]').evaluate((el) => {
+    const tracks = getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).map((v) => parseFloat(v))
+    return { columns: tracks.length, cardWidth: tracks[0] ?? 0 }
+  })
+  expect(mobileGridMetrics.columns).toBe(2)
+  expect(mobileGridMetrics.cardWidth).toBeGreaterThan(150)
+
+  const headerBtnBox = await page.getByRole('button', { name: '打开项目抽屉' }).boundingBox()
+  const studioToolbarBox = await page.locator('[data-studio-header]').boundingBox()
+  expect(headerBtnBox).not.toBeNull()
+  expect(studioToolbarBox).not.toBeNull()
+  expect(studioToolbarBox!.y).toBeGreaterThanOrEqual(headerBtnBox!.y + headerBtnBox!.height)
+
+  const sortBtnBox = await page.getByRole('button', { name: /最新优先|排序/ }).boundingBox()
+  const favBtnBox = await page.getByRole('button', { name: '只看收藏' }).boundingBox()
+  expect(sortBtnBox).not.toBeNull()
+  expect(favBtnBox).not.toBeNull()
+  expect(sortBtnBox!.x + sortBtnBox!.width).toBeLessThanOrEqual(favBtnBox!.x + 1)
+
+  const metaLineHeight = await page.locator('[data-card-grid] .font-mono.truncate').first().evaluate((el) => el.clientHeight)
+  expect(metaLineHeight).toBeLessThanOrEqual(24)
+
+  await page.screenshot({ path: 'docs/execution/evidence/verify-mobile-card-grid.png' })
+
+  await page.getByRole('button', { name: '画布', exact: true }).first().click()
+  await expect(page.locator('[data-canvas-root]')).toBeVisible()
 })

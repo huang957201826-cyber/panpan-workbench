@@ -111,7 +111,7 @@ export const CardGridView: React.FC<CardGridViewProps> = ({
       : await downloadImage(ref, artboard.prompt || artboard.title, artboard.imageIndex)
     if (result.canceled) return
     if (result.successCount) {
-      if (result.location) useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+      useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
       return
     }
     useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')

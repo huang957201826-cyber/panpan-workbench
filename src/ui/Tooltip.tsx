@@ -48,7 +48,7 @@ export function Tooltip({ label, children, side = 'top' }: TooltipProps) {
     <>
       <span
         ref={anchorRef}
-        className="inline-flex"
+        className="inline-flex shrink-0"
         onMouseEnter={show}
         onMouseLeave={clear}
         onFocus={show}
