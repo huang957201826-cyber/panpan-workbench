@@ -155,5 +155,16 @@ jobs:
       - name: Initialize Tauri iOS project & verify iOS Rust compilation
         run: |
           npx tauri ios init --ci
+          PLIST=$(find src-tauri/gen/apple -name "Info.plist" | head -n 1)
+          if [ -n "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.panpan.workbench" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string panpan" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string panpan-workbench" "$PLIST" 2>/dev/null || true
+          fi
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios-sim

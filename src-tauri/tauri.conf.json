@@ -56,7 +56,7 @@
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["panpan-workbench"]
+        "schemes": ["panpan-workbench", "panpan"]
       }
     }
   },

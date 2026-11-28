@@ -87,6 +87,109 @@ jobs:
           if [ -d "src-tauri/icons/android" ]; then
             cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/ || true
           fi
+          # Patch AndroidManifest.xml with deep-link schemes (panpan://, panpan-workbench://) and legacy gallery permissions
+          node -e '
+            const fs = require("fs");
+            const manifestPath = "src-tauri/gen/android/app/src/main/AndroidManifest.xml";
+            if (fs.existsSync(manifestPath)) {
+              let xml = fs.readFileSync(manifestPath, "utf8");
+              if (!xml.includes("WRITE_EXTERNAL_STORAGE")) {
+                xml = xml.replace(
+                  "<application",
+                  "    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" />\n    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />\n    <application"
+                );
+              }
+              if (!xml.includes("android:scheme=\"panpan\"")) {
+                const deepLinkFilter = [
+                  "            <intent-filter>",
+                  "                <action android:name=\"android.intent.action.VIEW\" />",
+                  "                <category android:name=\"android.intent.category.DEFAULT\" />",
+                  "                <category android:name=\"android.intent.category.BROWSABLE\" />",
+                  "                <data android:scheme=\"panpan\" />",
+                  "                <data android:scheme=\"panpan-workbench\" />",
+                  "            </intent-filter>",
+                  "        </activity>"
+                ].join("\n");
+                xml = xml.replace("</activity>", deepLinkFilter);
+              }
+              fs.writeFileSync(manifestPath, xml);
+            }
+          '
+          # Patch MainActivity.kt with MediaScannerConnection + FileObserver so saved images immediately appear in System Gallery
+          MAIN_KT=$(find src-tauri/gen/android/app/src/main/java -name "MainActivity.kt" | head -n 1)
+          if [ -n "$MAIN_KT" ]; then
+            PKG_LINE=$(grep -E "^package " "$MAIN_KT" | head -n 1)
+            cat > "$MAIN_KT" <<EOF
+          ${PKG_LINE}
+
+          import android.media.MediaScannerConnection
+          import android.os.Bundle
+          import android.os.FileObserver
+          import java.io.File
+
+          class MainActivity : TauriActivity() {
+            private val observers = mutableListOf<FileObserver>()
+
+            private fun scanGalleryDirs() {
+              val dirs = listOf(
+                File("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                File("/storage/emulated/0/DCIM/PanPanWorkbench"),
+                File("/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench")
+              )
+              val files = dirs.flatMap { dir ->
+                if (dir.exists() && dir.isDirectory) {
+                  dir.listFiles()?.filter {
+                    it.isFile && !it.name.startsWith(".") && !it.name.startsWith("panpan_probe_")
+                  }?.map { it.absolutePath } ?: emptyList()
+                } else {
+                  emptyList()
+                }
+              }.toTypedArray()
+              if (files.isNotEmpty()) {
+                MediaScannerConnection.scanFile(applicationContext, files, null, null)
+              }
+            }
+
+            override fun onCreate(savedInstanceState: Bundle?) {
+              super.onCreate(savedInstanceState)
+              val watchDirs = listOf(
+                File("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                File("/storage/emulated/0/DCIM/PanPanWorkbench")
+              )
+              for (dir in watchDirs) {
+                runCatching {
+                  if (!dir.exists()) dir.mkdirs()
+                  @Suppress("DEPRECATION")
+                  val obs = object : FileObserver(dir.absolutePath, CLOSE_WRITE or MOVED_TO) {
+                    override fun onEvent(event: Int, path: String?) {
+                      if (path != null && !path.startsWith(".") && !path.startsWith("panpan_probe_")) {
+                        val target = File(dir, path)
+                        if (target.exists()) {
+                          MediaScannerConnection.scanFile(applicationContext, arrayOf(target.absolutePath), null, null)
+                        }
+                      }
+                    }
+                  }
+                  obs.startWatching()
+                  observers.add(obs)
+                }
+              }
+              scanGalleryDirs()
+            }
+
+            override fun onResume() {
+              super.onResume()
+              scanGalleryDirs()
+            }
+
+            override fun onDestroy() {
+              observers.forEach { runCatching { it.stopWatching() } }
+              observers.clear()
+              super.onDestroy()
+            }
+          }
+          EOF
+          fi
           # Ensure monotonically increasing versionCode so new APKs upgrade in-place and preserve user data
           APP_VERSION=$(node -p "require('./package.json').version")
           VERSION_CODE=$((10000 + ${{ github.run_number }}))

@@ -15,6 +15,7 @@ import {
 import type { GenerationParams, ReferenceImage } from '../types.ts';
 import type { Skill, SkillSlotValue } from '../../types';
 import { getAtImageQuery, imageMentionMatches } from '../../lib/promptImageMentions';
+import { parseGenerateDeepLink } from '../../lib/importLink';
 import { MAX_PROMPT_LENGTH, clampPrompt } from '../../lib/promptLimits';
 import { isMobile, isTouchDevice, submitShortcutHint } from '../../lib/platform';
 import { useStore } from '../../store';
@@ -557,7 +558,25 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               value={prompt}
               maxLength={MAX_PROMPT_LENGTH}
               onChange={(e) => {
-                const next = clampPrompt(e.target.value);
+                const rawVal = e.target.value;
+                if (/panpan(?:-workbench)?:\/\//i.test(rawVal)) {
+                  const parsed = parseGenerateDeepLink(rawVal);
+                  if (parsed) {
+                    const unpacked = clampPrompt(parsed.prompt);
+                    onPromptChange(unpacked);
+                    if (parsed.size || parsed.model) {
+                      onParamsChange?.({
+                        ...params,
+                        ...(parsed.size ? { size: parsed.size } : {}),
+                        ...(parsed.model ? { model: parsed.model } : {}),
+                      });
+                    }
+                    useStore.getState().showToast('已解析外部 AI 联动提示词', 'success');
+                    refreshAtMenu(unpacked, unpacked.length);
+                    return;
+                  }
+                }
+                const next = clampPrompt(rawVal);
                 onPromptChange(next);
                 if (!next.trim() && activeSkillId) clearSkillChip();
                 refreshAtMenu(next, e.target.selectionStart ?? next.length);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { describeImportLink, getProfileImportBaseUrl, parseImportLink } from './importLink'
+import { describeImportLink, getProfileImportBaseUrl, parseGenerateDeepLink, parseImportLink } from './importLink'
 import { createCustomProfileImportUrl } from './profileImportUrl'
 import { createDefaultOpenAIProfile, DEFAULT_OPENAI_PROFILE_ID, normalizeSettings } from './apiProfiles'
 import { setPresetConfig } from './presetConfig'
@@ -19,8 +19,34 @@ describe('parseImportLink', () => {
   it('识别 deep link', () => {
     expect(parseImportLink('panpan-workbench://?apiUrl={address}&apiKey={key}&model={model}')?.get('model')).toBe('{model}')
     expect(parseImportLink('panpan-workbench://?apiKey=sk-1')).not.toBeNull()
+    expect(parseImportLink('panpan://?apiKey=sk-1')).not.toBeNull()
     expect(parseImportLink('panpan-workbench://')).toBeNull()
     expect(parseImportLink('panpan-workbench://?foo=bar')).toBeNull()
+  })
+
+  it('识别外部 AI 唤醒生图链接（panpan://generate）', () => {
+    expect(
+      parseGenerateDeepLink('panpan://generate?prompt=%E4%B8%80%E5%8F%AA%E6%98%9F%E7%A9%BA%E7%8C%AB&size=1536x1024&auto=1'),
+    ).toEqual({
+      prompt: '一只星空猫',
+      size: '1536x1024',
+      auto: true,
+    })
+
+    expect(
+      parseGenerateDeepLink(
+        '已经为你写好提示词，点击唤醒：[一键生图](panpan://generate?prompt=cyberpunk%20city&ratio=9:16&model=gpt-image-1)',
+      ),
+    ).toEqual({
+      prompt: 'cyberpunk city',
+      size: '9:16',
+      model: 'gpt-image-1',
+      auto: false,
+    })
+
+    expect(parseGenerateDeepLink('panpan://generate?prompt=hello&auto=0')?.auto).toBe(false)
+    expect(parseGenerateDeepLink('panpan://generate')).toBeNull()
+    expect(parseGenerateDeepLink('https://example.com/?q=test')).toBeNull()
   })
 
   it('普通网址和文本不视为导入链接', () => {

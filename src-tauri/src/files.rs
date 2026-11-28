@@ -187,28 +187,22 @@ impl Writes {
         self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
 
-    /// 在 dir 中创建临时文件（若在安卓 MediaProvider 相册目录中无法创建 .tmp 则回退到系统临时目录），
+    /// 在 dir 中创建临时文件（安卓端始终在应用内部缓存目录创建 .tmp，避免在相册 FUSE 目录产生隐藏临时文件），
     /// 返回前端凭以追加和提交的序号
     fn begin(&self, dir: &Path, target: Target) -> io::Result<u32> {
+        #[cfg(target_os = "android")]
+        let tmp = {
+            fs::create_dir_all(dir)?;
+            tempfile::Builder::new()
+                .prefix(".gpt-image-playground-")
+                .suffix(".tmp")
+                .tempfile()?
+        };
+        #[cfg(not(target_os = "android"))]
         let tmp = tempfile::Builder::new()
             .prefix(".gpt-image-playground-")
             .suffix(".tmp")
-            .tempfile_in(dir)
-            .or_else(|err| {
-                #[cfg(target_os = "android")]
-                {
-                    let _ = err;
-                    fs::create_dir_all(dir)?;
-                    tempfile::Builder::new()
-                        .prefix(".gpt-image-playground-")
-                        .suffix(".tmp")
-                        .tempfile()
-                }
-                #[cfg(not(target_os = "android"))]
-                {
-                    Err(err)
-                }
-            })?;
+            .tempfile_in(dir)?;
         let mut guard = self.lock();
         guard.0 = guard.0.wrapping_add(1);
         let id = guard.0;
@@ -235,7 +229,7 @@ impl Writes {
             .as_file()
             .sync_all()
             .map_err(|err| format!("刷新文件失败：{err}"))?;
-        match pending.target {
+        let result = match pending.target {
             Target::Replace(path) => match pending.tmp.persist(&path) {
                 Ok(_) => Ok(path),
                 Err(mut err) => {
@@ -258,7 +252,12 @@ impl Writes {
             },
             Target::Unique(dir, name) => persist_unique(pending.tmp, &dir, &name)
                 .map_err(|err| format!("写入 {name} 失败：{err}")),
+        };
+        #[cfg(target_os = "android")]
+        if let Ok(ref saved_path) = result {
+            notify_android_media_scanner(saved_path);
         }
+        result
     }
 
     fn abort(&self, id: u32) {
@@ -680,10 +679,15 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
         .meta_get(DOWNLOAD_DIR_KEY)
         .map_err(|err| err.message)?;
     if let Some(dir) = saved {
-        let path = PathBuf::from(dir);
+        let path = PathBuf::from(&dir);
         #[cfg(target_os = "android")]
         {
-            if !in_data_dir(&path, storage.root()) && ensure_writable(&path).is_ok() {
+            let is_legacy_private_fallback = dir.contains("/Android/data/")
+                || dir.starts_with("/data/");
+            if !is_legacy_private_fallback
+                && !in_data_dir(&path, storage.root())
+                && ensure_writable(&path).is_ok()
+            {
                 return Ok(path);
             }
         }
@@ -696,6 +700,7 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
     {
         for candidate in [
             PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench"),
+            PathBuf::from("/storage/emulated/0/DCIM/PanPanWorkbench"),
             PathBuf::from("/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench"),
             PathBuf::from("/storage/emulated/0/Download/PanPanWorkbench"),
             PathBuf::from("/storage/emulated/0/Android/data/com.panpan.workbench/files/Pictures/PanPanWorkbench"),
@@ -726,25 +731,83 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
 /// 不存在时创建，并实际创建临时文件探测权限，提前发现目录不可写或所在磁盘已移除
 fn ensure_writable(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
-    if let Err(err) = tempfile::tempfile_in(dir) {
-        #[cfg(target_os = "android")]
+    #[cfg(target_os = "android")]
+    {
+        // 安卓 11+ Scoped Storage 下 Pictures/DCIM 目录拒绝以点开头的隐藏文件或无图片后缀的 .tmp，
+        // 改用非隐藏的 .png 文件探测可写性
+        let probe = dir.join(format!("panpan_probe_{}.png", std::process::id()));
+        if let Ok(file) = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&probe)
         {
-            // 安卓 11+ Scoped Storage 下 Pictures/DCIM 目录拒绝无图片后缀的 .tmpXXXXXX，改用 .png 后缀探测可写性
-            let probe = dir.join(format!(".panpan-probe-{}.png", std::process::id()));
-            if let Ok(file) = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&probe)
-            {
-                drop(file);
-                let _ = fs::remove_file(&probe);
-                return Ok(());
-            }
+            drop(file);
+            let _ = fs::remove_file(&probe);
+            return Ok(());
         }
+    }
+    if let Err(err) = tempfile::tempfile_in(dir) {
         return Err(err);
     }
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn notify_android_media_scanner(path: &Path) {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif");
+    let mut scan_paths = vec![path.to_path_buf()];
+
+    // 若保存目录不在公共 Pictures / DCIM 下，同步写入一份到公共相册目录以保证系统相册可见
+    let path_str = path.to_string_lossy();
+    if is_image
+        && !path_str.starts_with("/storage/emulated/0/Pictures/")
+        && !path_str.starts_with("/storage/emulated/0/DCIM/")
+    {
+        if let Some(file_name) = path.file_name() {
+            for pub_dir in [
+                PathBuf::from("/storage/emulated/0/Pictures/PanPanWorkbench"),
+                PathBuf::from("/storage/emulated/0/DCIM/PanPanWorkbench"),
+            ] {
+                if fs::create_dir_all(&pub_dir).is_ok() {
+                    let pub_target = pub_dir.join(file_name);
+                    if let (Ok(mut src), Ok(mut dst)) = (
+                        fs::File::open(path),
+                        fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(&pub_target),
+                    ) {
+                        if io::copy(&mut src, &mut dst).is_ok() && dst.sync_all().is_ok() {
+                            scan_paths.push(pub_target);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::thread::spawn(move || {
+        for p in scan_paths {
+            let uri = format!("file://{}", p.display());
+            let _ = std::process::Command::new("am")
+                .args([
+                    "broadcast",
+                    "-a",
+                    "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                    "-d",
+                    &uri,
+                ])
+                .output();
+        }
+    });
 }
 
 #[tauri::command]

@@ -22,7 +22,7 @@ import { fitNodesViewport, nodeInView, screenToWorld, zoomAtPoint } from '../lib
 import { isUiModalOpen } from '../lib/uiLayers'
 import { ensureImageCached, getCachedImage } from '../lib/imageCache'
 import { downloadImage } from '../lib/downloadImage'
-import { getDownloadErrorMessage } from '../lib/downloadImages'
+import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { useWorkspaceStore } from '../lib/workspaceStore'
 import { addCanvasImageNode, createCanvasImageNode, fitCanvasImageNodeSize } from '../lib/canvasImageNodes'
 import { assertCanvasUndoActive, createCanvasUndoEntry, getCanvasUndoDepth, isCanvasUndoing, pushCanvasUndo, runCanvasUndo, subscribeCanvasUndo } from '../lib/canvasUndo'
@@ -1117,7 +1117,11 @@ export default function CanvasBoard({ tasks: providedTasks, allTaskCount, canvas
                       onClick={(event) => {
                         event.stopPropagation()
                         void downloadImage(node.imageId, nodeLabel).then((result) => {
-                          if (result.canceled || result.successCount) return
+                          if (result.canceled) return
+                          if (result.successCount) {
+                            if (result.location) useStore.getState().showToast(withSaveLocation('下载成功', result.location), 'success')
+                            return
+                          }
                           useStore.getState().showToast(getDownloadErrorMessage(result.error), 'error')
                         })
                       }}

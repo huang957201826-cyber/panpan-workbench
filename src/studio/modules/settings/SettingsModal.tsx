@@ -1917,16 +1917,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <div className="flex flex-wrap gap-1.5">
                               {[
                                 {
-                                  label: '相册媒体目录（推荐）',
-                                  path: '/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench',
+                                  label: '系统相册 / Pictures（推荐）',
+                                  path: '/storage/emulated/0/Pictures/PanPanWorkbench',
+                                },
+                                {
+                                  label: '系统相册 / DCIM',
+                                  path: '/storage/emulated/0/DCIM/PanPanWorkbench',
                                 },
                                 {
                                   label: '下载 / PanPanWorkbench',
                                   path: '/storage/emulated/0/Download/PanPanWorkbench',
-                                },
-                                {
-                                  label: '应用图库目录',
-                                  path: '/storage/emulated/0/Android/data/com.panpan.workbench/files/Pictures/PanPanWorkbench',
                                 },
                               ].map((preset) => (
                                 <button
@@ -1948,7 +1948,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             type="text"
                             value={saveDirInput}
                             onChange={(e) => setSaveDirInput(e.target.value)}
-                            placeholder={isIOS ? '输入应用文档内的子目录完整路径' : '/storage/emulated/0/Android/media/com.panpan.workbench/Pictures/PanPanWorkbench'}
+                            placeholder={isIOS ? '输入应用文档内的子目录完整路径' : '/storage/emulated/0/Pictures/PanPanWorkbench'}
                             className="w-full h-9 px-3 rounded-lg bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.1] text-caption font-mono text-slate-800 dark:text-slate-100 outline-none focus:border-black dark:focus:border-white"
                           />
                           {isAndroid && (
@@ -2089,11 +2089,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <h4 className="text-body font-bold text-slate-900 dark:text-white">
                       AI 工具集成
                     </h4>
-                    {isTauri ? (
-                      <McpSettingsSection />
-                    ) : (
-                      <p className="text-caption text-slate-400">MCP 服务仅在桌面端可用。</p>
-                    )}
+                    <McpSettingsSection />
                   </section>
                 </div>
               )}

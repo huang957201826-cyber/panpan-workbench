@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { isTauri } from '../../lib/platform'
+import { isMobile, isTauri } from '../../lib/platform'
 import { useStore } from '../../store'
+
+const AI_LINK_PROMPT = `你是我的 AI 绘画助手，请结合对话上下文持续优化生图提示词。每次给出或修改提示词后，都在回复末尾附上可直接点击唤醒工作台生图的链接（将提示词做 URL 编码）：
+[在盼盼工作台生成](panpan://generate?prompt=URL编码后的提示词&size=1024x1024&auto=1)`
 
 interface McpStatus {
   enabled: boolean
@@ -29,9 +33,21 @@ export default function McpSettingsSection() {
   const [port, setPort] = useState('7331')
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [busy, setBusy] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
+
+  const copyAiLinkPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(AI_LINK_PROMPT)
+      setPromptCopied(true)
+      showToast('已复制 AI 联动提示词', 'success')
+      window.setTimeout(() => setPromptCopied(false), 1600)
+    } catch {
+      showToast('复制失败，请长按文本手动复制', 'error')
+    }
+  }
 
   const refresh = async () => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     try {
       const next = await invoke<McpStatus>('mcp_status')
       setStatus(next)
@@ -43,7 +59,7 @@ export default function McpSettingsSection() {
   }
 
   useEffect(() => {
-    if (!isTauri) return
+    if (!isTauri || isMobile) return
     void refresh()
     const unlisten = listen('mcp-status-changed', () => void refresh())
     const timer = window.setInterval(() => {
@@ -54,8 +70,6 @@ export default function McpSettingsSection() {
       void unlisten.then((fn) => fn())
     }
   }, [])
-
-  if (!isTauri) return null
 
   const configure = async (patch: Partial<Pick<McpStatus, 'enabled' | 'writeEnabled'>> & { port?: number }) => {
     if (!status || busy) return
@@ -104,14 +118,45 @@ export default function McpSettingsSection() {
 
   return (
     <section className="space-y-4">
-      <div>
-        <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">本机 MCP</h4>
-        {status?.running && (
-          <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
-            {`运行中：http://127.0.0.1:${status.port}/mcp`}
+      <div className="space-y-2 rounded-xl bg-black/[0.03] p-3.5 dark:bg-white/[0.04]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-body-sm font-medium text-gray-700 dark:text-gray-200">
+              外部 AI 唤醒联动提示词
+            </span>
+            <code className="shrink-0 rounded bg-black/[0.05] px-1.5 py-0.5 font-mono text-micro text-gray-500 dark:bg-white/[0.08] dark:text-gray-400">
+              panpan://generate
+            </code>
           </div>
-        )}
+          <button
+            type="button"
+            onClick={() => void copyAiLinkPrompt()}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-white cursor-pointer"
+            title="复制 AI 联动提示词"
+            aria-label="复制 AI 联动提示词"
+          >
+            {promptCopied ? (
+              <Check className="h-4 w-4 stroke-[2] text-emerald-500" />
+            ) : (
+              <Copy className="h-4 w-4 stroke-[1.8]" />
+            )}
+          </button>
+        </div>
+        <div className="select-all whitespace-pre-wrap break-all rounded-lg bg-white/80 p-2.5 font-mono text-caption leading-relaxed text-gray-600 dark:bg-black/25 dark:text-gray-300">
+          {AI_LINK_PROMPT}
+        </div>
       </div>
+
+      {isTauri && !isMobile && (
+        <>
+          <div className="border-t border-black/[0.05] pt-3 dark:border-white/[0.06]">
+            <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">本机 MCP</h4>
+            {status?.running && (
+              <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
+                {`运行中：http://127.0.0.1:${status.port}/mcp`}
+              </div>
+            )}
+          </div>
 
       <div className={ROW}>
         <span className="text-body text-gray-600 dark:text-gray-300">启用 MCP 服务</span>
@@ -229,6 +274,8 @@ export default function McpSettingsSection() {
           </div>
         )}
       </div>
+        </>
+      )}
     </section>
   )
 }

@@ -37,6 +37,57 @@ export const handledImportLinks = new Set<string>()
 export const WEB_APP_URL = readRuntimeEnv(import.meta.env.VITE_WEB_APP_URL).replace(/\/+$/, '')
 
 export const DEEP_LINK_PROTOCOL = 'panpan-workbench:'
+export const SHORT_DEEP_LINK_PROTOCOL = 'panpan:'
+
+export interface GenerateDeepLinkPayload {
+  prompt: string
+  size?: string
+  model?: string
+  quality?: string
+  auto?: boolean
+}
+
+/**
+ * 解析外部 AI 唤醒生图链接（如 panpan://generate?prompt=...&size=1024x1024&auto=1）。
+ * 同时支持独立链接或包含在对话文本/Markdown 中的 panpan:// 链接。
+ */
+export function parseGenerateDeepLink(input: string): GenerateDeepLinkPayload | null {
+  const raw = input.trim()
+  if (!raw || raw.length > 32768) return null
+
+  const embeddedMatch = raw.match(/(?:panpan(?:-workbench)?:\/\/[^\s)>\]"']+)/i)
+  const candidate = embeddedMatch ? embeddedMatch[0] : (/\s/.test(raw) ? '' : raw)
+  if (!candidate) return null
+
+  let url: URL
+  try {
+    url = new URL(candidate)
+  } catch {
+    return null
+  }
+
+  const proto = url.protocol.toLowerCase()
+  const isCustomProto = proto === SHORT_DEEP_LINK_PROTOCOL || proto === DEEP_LINK_PROTOCOL
+  if (!isCustomProto && proto !== 'http:' && proto !== 'https:') return null
+
+  const params = url.searchParams
+  const prompt = params.get('prompt')?.trim() ?? ''
+  if (!prompt) return null
+
+  const size = (params.get('size') ?? params.get('ratio') ?? params.get('aspectRatio'))?.trim() || undefined
+  const model = params.get('model')?.trim() || undefined
+  const quality = params.get('quality')?.trim() || undefined
+  const autoRaw = (params.get('auto') ?? params.get('submit') ?? '').trim().toLowerCase()
+  const auto = autoRaw === '1' || autoRaw === 'true' || autoRaw === 'yes'
+
+  return {
+    prompt,
+    ...(size ? { size } : {}),
+    ...(model ? { model } : {}),
+    ...(quality ? { quality } : {}),
+    auto,
+  }
+}
 
 /** 客户端页面地址是 http://tauri.localhost，复制的导入链接改用网页版地址；未配置网页版地址时改用 deep link，其他客户端可直接打开或复制后切回客户端导入 */
 export function getProfileImportBaseUrl(client: boolean, href: string, webAppUrl = WEB_APP_URL) {
@@ -75,8 +126,11 @@ export function parseImportLink(text: string): URLSearchParams | null {
   }
 
   const params = url.searchParams
-  if (url.protocol === DEEP_LINK_PROTOCOL) return hasUrlSettingParams(params) ? params : null
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  const proto = url.protocol.toLowerCase()
+  if (proto === DEEP_LINK_PROTOCOL || proto === SHORT_DEEP_LINK_PROTOCOL) {
+    return hasUrlSettingParams(params) ? params : null
+  }
+  if (proto !== 'http:' && proto !== 'https:') return null
 
   const payload = getUrlSettingsPayload(params)
   if (isRecord(payload) && Array.isArray(payload.profiles) && payload.profiles.length > 0) return params

@@ -8,6 +8,8 @@ import { isMobile, isTauri, isTouchDevice } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
 import { addInputImageFile, ensureInputImageOnCanvas } from '../lib/canvasImageInput'
+import { parseGenerateDeepLink, type GenerateDeepLinkPayload } from '../lib/importLink'
+import { takePendingGenerateDeepLink } from '../hooks/useImportLinks'
 import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { downloadTasksImages } from '../lib/taskExport'
 import { pickSaveDir, type SaveDir } from '../lib/saveFile'
@@ -484,7 +486,16 @@ export default function StudioShell() {
     showToast('已保存为技能', 'success')
   }
 
-  const handleGenerate = async (promptText: string, nextParams: typeof generationParams) => {
+  const handleGenerate = async (rawPromptText: string, rawNextParams: typeof generationParams) => {
+    const parsedLink = parseGenerateDeepLink(rawPromptText)
+    const promptText = parsedLink ? parsedLink.prompt : rawPromptText
+    const nextParams = parsedLink
+      ? {
+          ...rawNextParams,
+          ...(parsedLink.size ? { size: parsedLink.size } : {}),
+          ...(parsedLink.model ? { model: parsedLink.model } : {}),
+        }
+      : rawNextParams
     if (isFavoritesCanvas(activeCanvas?.id)) {
       showToast('收藏是跨项目汇总视图，请到具体项目里生成', 'info')
       return
@@ -571,6 +582,47 @@ export default function StudioShell() {
       setSubmitting(false)
     }
   }
+
+  const handleGenerateRef = useRef(handleGenerate)
+  handleGenerateRef.current = handleGenerate
+  const generationParamsRef = useRef(generationParams)
+  generationParamsRef.current = generationParams
+
+  useEffect(() => {
+    const applyDeepLink = (payload: GenerateDeepLinkPayload) => {
+      setShowSettings(false)
+      setActiveActivity('projects')
+      setPrompt(payload.prompt)
+      const ws = useWorkspaceStore.getState()
+      if (ws.activeCanvasId && !isFavoritesCanvas(ws.activeCanvasId)) {
+        ws.updateCanvas(ws.activeCanvasId, { promptDraft: payload.prompt })
+      }
+      const nextParams = {
+        ...generationParamsRef.current,
+        ...(payload.size ? { size: payload.size } : {}),
+        ...(payload.model ? { model: payload.model } : {}),
+      }
+      handleParamsChange(nextParams)
+      const currentSettings = useStore.getState().settings
+      const profile = getActiveApiProfile(currentSettings)
+      if (payload.auto && Boolean(profile.apiKey?.trim())) {
+        showToast('已从外部 AI 联动发起生图', 'success')
+        void handleGenerateRef.current(payload.prompt, nextParams)
+      } else {
+        showToast('已从外部 AI 载入提示词', 'success')
+      }
+    }
+
+    const pending = takePendingGenerateDeepLink()
+    if (pending) applyDeepLink(pending)
+
+    const onDeepLink = (event: Event) => {
+      const detail = (event as CustomEvent<GenerateDeepLinkPayload>).detail
+      if (detail?.prompt) applyDeepLink(detail)
+    }
+    window.addEventListener('panpan:deep-link-generate', onDeepLink)
+    return () => window.removeEventListener('panpan:deep-link-generate', onDeepLink)
+  }, [])
 
   const findTask = (taskId?: string) => tasks.find((task) => task.id === taskId)
   const selectedTasks = pickSelectedTasks(filteredTasks, selectedTaskIds)

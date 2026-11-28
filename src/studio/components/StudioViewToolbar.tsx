@@ -80,7 +80,7 @@ export function StudioViewToolbar({
         onClear={() => onQueryChange('')}
         placeholder="搜索提示词 / 模型"
         aria-label="搜索任务"
-        className="min-w-[88px] max-w-[180px] flex-1"
+        className="min-w-[116px] sm:min-w-[140px] max-w-[180px] flex-1"
       />
 
       <Tooltip label="筛选状态、模型与收藏">

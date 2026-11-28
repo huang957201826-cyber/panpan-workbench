@@ -3,7 +3,7 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import type { AppSettings } from '../types'
 import { restoreExplicitPresetConfig, useStore } from '../store'
 import { normalizeSettings } from '../lib/apiProfiles'
-import { describeImportLink, handledImportLinks, parseImportLink } from '../lib/importLink'
+import { describeImportLink, handledImportLinks, parseGenerateDeepLink, parseImportLink, type GenerateDeepLinkPayload } from '../lib/importLink'
 import { isTauri } from '../lib/platform'
 import { buildSettingsFromUrlParams, getExplicitUrlSettingsIds } from '../lib/urlSettings'
 import ImportLinkDiff from '../components/ImportLinkDiff'
@@ -23,6 +23,18 @@ export async function applyUrlSettings(baseSettings: Partial<AppSettings>, searc
 let promptQueue = Promise.resolve()
 // 冷启动的 deep link 只读取一次，StrictMode 下 effect 会执行两次
 let launchLinkChecked = false
+let pendingGenerateLink: GenerateDeepLinkPayload | null = null
+
+export function takePendingGenerateDeepLink(): GenerateDeepLinkPayload | null {
+  const next = pendingGenerateLink
+  pendingGenerateLink = null
+  return next
+}
+
+export function dispatchGenerateDeepLink(payload: GenerateDeepLinkPayload) {
+  pendingGenerateLink = payload
+  window.dispatchEvent(new CustomEvent<GenerateDeepLinkPayload>('panpan:deep-link-generate', { detail: payload }))
+}
 
 /** 等待没有其他对话框且设置弹窗已关闭；设置弹窗中的草稿会在保存时覆盖导入结果 */
 function waitIdle() {
@@ -46,6 +58,15 @@ function waitIdle() {
  */
 export function promptImportLink(input: string | URLSearchParams, opened = false) {
   const link = typeof input === 'string' ? input.trim() : ''
+  if (typeof input === 'string' && link) {
+    const genPayload = parseGenerateDeepLink(link)
+    if (genPayload) {
+      if (!opened && handledImportLinks.has(link)) return
+      handledImportLinks.add(link)
+      dispatchGenerateDeepLink(genPayload)
+      return
+    }
+  }
   if (!opened && handledImportLinks.has(link)) return
   const params = typeof input === 'string' ? parseImportLink(link) : input
   if (!params) return
@@ -94,7 +115,21 @@ export function promptImportLink(input: string | URLSearchParams, opened = false
 /** 客户端中识别 deep link 里的导入链接；不再自动读取剪贴板，避免启动时误导入 */ 
 export function useImportLinks(ready: boolean) {
   useEffect(() => {
-    if (!isTauri || !ready) return
+    if (!ready) return
+
+    // 支持带 ?prompt=... 参数的链接直接载入提示词
+    const webGenPayload = parseGenerateDeepLink(window.location.href)
+    if (webGenPayload) {
+      const url = new URL(window.location.href)
+      for (const key of ['prompt', 'size', 'model', 'quality', 'auto', 'submit']) {
+        url.searchParams.delete(key)
+      }
+      const nextSearch = url.searchParams.toString()
+      window.history.replaceState(null, '', `${url.pathname}${nextSearch ? `?${nextSearch}` : ''}${url.hash}`)
+      dispatchGenerateDeepLink(webGenPayload)
+    }
+
+    if (!isTauri) return
 
     const unlisteners = [
       onOpenUrl((urls) => urls.forEach((url) => promptImportLink(url, true))),
