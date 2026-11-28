@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeftClose, PanelLeftOpen, RotateCcw, Settings, Upload } from 'lucide-react'
 import { importData, useStore } from '../../store'
-import { loadBuiltinSkills } from '../../lib/capabilitySkills'
+import { defaultSkillValues, loadBuiltinSkills, resolveSkillParamPatch } from '../../lib/capabilitySkills'
+import { isFavoritesCanvas } from '../../lib/favorites'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { useWorkspaceStore } from '../../lib/workspaceStore'
@@ -61,14 +62,28 @@ function toItem(skill: Skill): SkillItem {
     description: skill.description,
     recommendedModel: skill.model || '通用',
     promptTemplate: skill.basePrompt,
+    negativePrompt: skill.negativePrompt,
     tags: skill.tags ?? [],
     variables: skill.slots
-      .filter((slot) => slot.type !== 'image' && slot.type !== 'multi-image')
+      .filter(
+        (slot): slot is typeof slot & { type: 'text' | 'enum' | 'multi' | 'number' | 'bool' } =>
+          slot.type !== 'image' && slot.type !== 'multi-image',
+      )
       .map((slot) => ({
         key: slot.key,
         label: slot.label,
-        defaultValue:
-          typeof slot.defaultValue === 'string' ? slot.defaultValue : (slot.options?.[0] ?? ''),
+        type: slot.type,
+        defaultValue: Array.isArray(slot.defaultValue)
+          ? slot.defaultValue.join('、')
+          : typeof slot.defaultValue === 'boolean'
+          ? slot.defaultValue
+            ? '是'
+            : '否'
+          : typeof slot.defaultValue === 'number'
+          ? String(slot.defaultValue)
+          : typeof slot.defaultValue === 'string'
+          ? slot.defaultValue
+          : (slot.options?.[0] ?? ''),
         placeholder: slot.placeholder,
         options: slot.options,
       })),
@@ -150,7 +165,40 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     return [...CATEGORY_LABELS, ...extras]
   }, [items])
 
-  const handleApplySkill = (item: SkillItem, text: string, mode: 'replace' | 'append' = 'replace') => {
+  const handleApplySkill = (
+    item: SkillItem,
+    text: string,
+    mode: 'replace' | 'append' = 'replace',
+    variableValues?: Record<string, string>,
+  ) => {
+    const storeState = useStore.getState()
+    if (mode === 'replace' && storeState.activeSkillId) {
+      clearSkillChip()
+    }
+    const matchedSkill = registrySkills.find(
+      (skill) => (skill.registryId ?? skill.id) === item.id || skill.id === item.id,
+    )
+    if (matchedSkill) {
+      const mergedValues = {
+        ...defaultSkillValues(matchedSkill),
+        ...(variableValues ?? {}),
+      }
+      const patch = resolveSkillParamPatch(matchedSkill, mergedValues)
+      if (patch.size || patch.count) {
+        const paramPatch = {
+          ...(patch.size ? { size: patch.size as typeof storeState.params.size } : {}),
+          ...(patch.count ? { n: patch.count as typeof storeState.params.n } : {}),
+        }
+        storeState.setParams(paramPatch)
+        const ws = useWorkspaceStore.getState()
+        const activeCanvas = ws.canvases.find((c) => c.id === ws.activeCanvasId)
+        if (activeCanvas && !isFavoritesCanvas(activeCanvas.id)) {
+          ws.updateCanvas(activeCanvas.id, {
+            paramsDraft: { ...storeState.params, ...paramPatch },
+          })
+        }
+      }
+    }
     const current = useStore.getState().prompt.trim()
     setPrompt(mode === 'append' && current ? `${current}，${text}` : text)
     onApplied()
@@ -161,7 +209,7 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
   const [canScrollUp, setCanScrollUp] = useState(false)
   const [canScrollDown, setCanScrollDown] = useState(false)
   const hasPromptOverrides = useMemo(
-    () => Object.values(overrides).some((item) => Boolean(item?.basePrompt)),
+    () => Object.values(overrides).some((item) => Boolean(item?.basePrompt || item?.negativePrompt)),
     [overrides],
   )
 
@@ -172,7 +220,7 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     try {
       if (file.name.toLowerCase().endsWith('.json')) {
         const parsed = JSON.parse(await file.text()) as {
-          capabilityOverrides?: Record<string, { basePrompt?: string; description?: string; name?: string }>
+          capabilityOverrides?: Record<string, { basePrompt?: string; negativePrompt?: string; description?: string; name?: string }>
         }
         if (parsed?.capabilityOverrides && typeof parsed.capabilityOverrides === 'object') {
           const snapshot = getRegisteredSkillSnapshot()
@@ -193,7 +241,7 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
     const nextOverrides = Object.fromEntries(
       Object.entries(overrides).flatMap(([id, item]) => {
         if (!item) return []
-        const { basePrompt: _b, description: _d, name: _n, slots: _s, ...rest } = item
+        const { basePrompt: _b, negativePrompt: _neg, description: _d, name: _n, slots: _s, ...rest } = item
         return Object.keys(rest).length ? [[id, rest]] : []
       }),
     )
@@ -256,6 +304,13 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col min-[680px]:flex-row bg-[#f3f4f8] dark:bg-[#0c0e14]">
+      <input
+        ref={skillPackInputRef}
+        type="file"
+        accept=".zip,.json"
+        className="hidden"
+        onChange={(e) => { void handleImportSkillPack(e) }}
+      />
       <div className="relative flex min-[680px]:hidden shrink-0 items-center border-b border-black/[0.05] bg-[#fbfcfd] dark:border-white/[0.06] dark:bg-[#12141c]">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar px-3 py-2 pr-8">
           {['all', 'mine', 'favorites', ...allCategoryLabels].map((label, idx) => {
@@ -340,13 +395,6 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
             </div>
 
             <div className={`${SIDEBAR_FOOTER_CLASS} space-y-1.5`}>
-              <input
-                ref={skillPackInputRef}
-                type="file"
-                accept=".zip,.json"
-                className="hidden"
-                onChange={(e) => { void handleImportSkillPack(e) }}
-              />
               {category !== 'all' && (
                 <button
                   type="button"
@@ -449,6 +497,10 @@ export function SkillHubHost({ onApplied }: { onApplied: () => void }) {
           }}
           activeCategory={category}
           onSelectCategory={setCategory}
+          isSidebarCollapsed={collapsed}
+          onToggleSidebar={() => setCollapsed((value) => !value)}
+          onImportSkillPack={() => skillPackInputRef.current?.click()}
+          onResetBuiltinOverrides={hasPromptOverrides ? handleResetBuiltinPromptOverrides : undefined}
         />
       </div>
     </div>

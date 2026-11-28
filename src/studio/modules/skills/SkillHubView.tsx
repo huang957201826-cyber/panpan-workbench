@@ -11,12 +11,19 @@ import {
   PanelLeftOpen,
   Plus,
   Trash2,
+  Upload,
+  RotateCcw,
 } from 'lucide-react';
 import type { SkillItem, SkillVariable } from './types';
 
 interface SkillHubViewProps {
   skills: SkillItem[];
-  onApplySkill: (skill: SkillItem, customizedPrompt: string, mode?: 'replace' | 'append') => void;
+  onApplySkill: (
+    skill: SkillItem,
+    customizedPrompt: string,
+    mode?: 'replace' | 'append',
+    variableValues?: Record<string, string>,
+  ) => void;
   onToggleFavorite: (skillId: string) => void;
   onCreateSkill: (skill: SkillItem) => void;
   onDeleteSkill: (skillId: string) => void;
@@ -28,6 +35,10 @@ interface SkillHubViewProps {
   onUpdateSkill?: (skillId: string, skill: SkillItem) => void;
   /** 复制为自定义技能 */
   onDuplicateSkill?: (skill: SkillItem) => void;
+  /** 导入技能精调包（移动端或收起左栏时在顶栏展示） */
+  onImportSkillPack?: () => void;
+  /** 恢复官方默认内置技能提示词 */
+  onResetBuiltinOverrides?: () => void;
 }
 
 const CATEGORY_TITLES: Record<string, string> = {
@@ -86,10 +97,14 @@ function resolvePromptWithValues(skill: SkillItem, values?: Record<string, strin
       }
     });
   }
+  const parts = [result.trim()];
   if (extraLines.length > 0) {
-    result = `${result.trim()}\n\n【本次输入】\n${extraLines.join('\n')}`;
+    parts.push(`【本次输入】\n${extraLines.join('\n')}`);
   }
-  return result;
+  if (skill.negativePrompt?.trim()) {
+    parts.push(`【负向约束（避免出现）】\n${skill.negativePrompt.trim()}`);
+  }
+  return parts.join('\n\n');
 }
 
 function resolvePromptWithDefaults(skill: SkillItem): string {
@@ -127,6 +142,8 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
   onToggleSidebar,
   onUpdateSkill,
   onDuplicateSkill,
+  onImportSkillPack,
+  onResetBuiltinOverrides,
 }) => {
   const [internalCategory, setInternalCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -315,9 +332,9 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Clean Search + Create Skill CTA */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="h-9 px-3 rounded-full bg-white dark:bg-[#141620] border border-black/[0.05] dark:border-white/[0.08] soft-card-shadow flex items-center gap-2 w-48 sm:w-56">
+        {/* Right: Clean Search + Mobile/Collapsed Pack Actions + Create Skill CTA */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="h-9 px-3 rounded-full bg-white dark:bg-[#141620] border border-black/[0.05] dark:border-white/[0.08] soft-card-shadow flex items-center gap-2 w-44 sm:w-56">
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <input
               type="text"
@@ -336,6 +353,34 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
               </button>
             )}
           </div>
+
+          {onImportSkillPack && (
+            <button
+              type="button"
+              onClick={onImportSkillPack}
+              title="导入技能包（支持 panpan-pro-skills.zip）"
+              className={`${
+                isSidebarCollapsed ? 'flex' : 'flex min-[680px]:hidden'
+              } h-9 px-3 rounded-full bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.1] soft-card-shadow items-center gap-1.5 text-caption font-medium text-slate-700 dark:text-slate-200 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer shrink-0`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>导入技能包</span>
+            </button>
+          )}
+
+          {onResetBuiltinOverrides && (
+            <button
+              type="button"
+              onClick={onResetBuiltinOverrides}
+              title="还原为官方默认内置技能提示词"
+              className={`${
+                isSidebarCollapsed ? 'flex' : 'flex min-[680px]:hidden'
+              } h-9 px-3 rounded-full bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.1] soft-card-shadow items-center gap-1.5 text-caption font-medium text-slate-600 dark:text-slate-300 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition cursor-pointer shrink-0`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>恢复默认</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -580,40 +625,104 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                     </div>
 
                     <div className="space-y-2.5">
-                      {inspectingSkill.variables.map((v) => (
-                        <div key={v.key} className="space-y-1">
-                          <label className="text-micro text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                            <span>{v.label}</span>
-                            <span className="font-mono opacity-75">{`{${v.key}}`}</span>
-                          </label>
+                      {inspectingSkill.variables.map((v) => {
+                        const rawVal = variableValues[v.key] ?? v.defaultValue ?? '';
+                        if (v.type === 'multi' && v.options && v.options.length > 0) {
+                          const selectedParts = rawVal
+                            .split(/[、,，]/)
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          return (
+                            <div key={v.key} className="space-y-1.5">
+                              <label className="text-micro text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                                <span>{v.label}（可多选）</span>
+                                <span className="font-mono opacity-75">{`{${v.key}}`}</span>
+                              </label>
+                              <div className="flex flex-wrap gap-1.5">
+                                {v.options.map((opt) => {
+                                  const active = selectedParts.includes(opt);
+                                  return (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      onClick={() => {
+                                        const next = active
+                                          ? selectedParts.filter((item) => item !== opt)
+                                          : [...selectedParts, opt];
+                                        setVariableValues({
+                                          ...variableValues,
+                                          [v.key]: next.join('、'),
+                                        });
+                                      }}
+                                      className={`px-2.5 py-1 rounded-full text-caption font-medium transition cursor-pointer ${
+                                        active
+                                          ? 'bg-black text-white dark:bg-white dark:text-black'
+                                          : 'bg-white dark:bg-[#141620] text-slate-600 dark:text-slate-300 border border-black/[0.08] dark:border-white/[0.08]'
+                                      }`}
+                                    >
+                                      {opt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (v.type === 'bool') {
+                          const checked = rawVal === '是' || rawVal === 'true';
+                          return (
+                            <div key={v.key} className="space-y-1">
+                              <label className="flex items-center justify-between gap-2 h-8.5 px-2.5 rounded-xl bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] text-caption text-slate-800 dark:text-slate-200 cursor-pointer">
+                                <span>{v.label}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) =>
+                                    setVariableValues({
+                                      ...variableValues,
+                                      [v.key]: e.target.checked ? '是' : '否',
+                                    })
+                                  }
+                                />
+                              </label>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={v.key} className="space-y-1">
+                            <label className="text-micro text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                              <span>{v.label}</span>
+                              <span className="font-mono opacity-75">{`{${v.key}}`}</span>
+                            </label>
 
-                          {v.options && v.options.length > 0 ? (
-                            <select
-                              value={variableValues[v.key] || v.defaultValue}
-                              onChange={(e) =>
-                                setVariableValues({ ...variableValues, [v.key]: e.target.value })
-                              }
-                              className="w-full h-8.5 bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] rounded-xl px-2.5 text-caption text-slate-800 dark:text-slate-200 outline-none"
-                            >
-                              {v.options.map((opt, i) => (
-                                <option key={i} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={variableValues[v.key] || ''}
-                              onChange={(e) =>
-                                setVariableValues({ ...variableValues, [v.key]: e.target.value })
-                              }
-                              placeholder={v.placeholder || '输入自定义内容...'}
-                              className="w-full h-8.5 bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] rounded-xl px-2.5 text-caption text-slate-800 dark:text-slate-200 outline-none"
-                            />
-                          )}
-                        </div>
-                      ))}
+                            {v.options && v.options.length > 0 ? (
+                              <select
+                                value={rawVal}
+                                onChange={(e) =>
+                                  setVariableValues({ ...variableValues, [v.key]: e.target.value })
+                                }
+                                className="w-full h-8.5 bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] rounded-xl px-2.5 text-caption text-slate-800 dark:text-slate-200 outline-none"
+                              >
+                                {v.options.map((opt, i) => (
+                                  <option key={i} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type={v.type === 'number' ? 'number' : 'text'}
+                                value={variableValues[v.key] ?? ''}
+                                onChange={(e) =>
+                                  setVariableValues({ ...variableValues, [v.key]: e.target.value })
+                                }
+                                placeholder={v.placeholder || '输入自定义内容...'}
+                                className="w-full h-8.5 bg-white dark:bg-[#141620] border border-black/[0.08] dark:border-white/[0.08] rounded-xl px-2.5 text-caption text-slate-800 dark:text-slate-200 outline-none"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
@@ -705,7 +814,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onApplySkill(inspectingSkill, assembledPrompt, 'append');
+                    onApplySkill(inspectingSkill, assembledPrompt, 'append', variableValues);
                     setInspectingSkill(null);
                   }}
                   className="h-8.5 px-3.5 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-slate-800 dark:text-slate-100 font-semibold text-caption flex items-center gap-1 transition cursor-pointer"
@@ -716,7 +825,7 @@ export const SkillHubView: React.FC<SkillHubViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onApplySkill(inspectingSkill, assembledPrompt, 'replace');
+                    onApplySkill(inspectingSkill, assembledPrompt, 'replace', variableValues);
                     setInspectingSkill(null);
                   }}
                   className="h-8.5 px-4 rounded-full bg-black text-white dark:bg-white dark:text-black font-semibold text-caption flex items-center gap-1.5 hover:opacity-90 active:scale-95 transition cursor-pointer"

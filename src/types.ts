@@ -787,6 +787,7 @@ export interface ExportData {
     coverImageId?: string
     model?: string
     basePrompt?: string
+    negativePrompt?: string
     slots?: SkillSlot[]
     name?: string
     description?: string

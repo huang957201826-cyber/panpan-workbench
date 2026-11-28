@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Skill } from '../types'
-import { composeSkillPrompt, defaultSkillValues, resolveSkillParamPatch, toCapabilitySkill, validateSkillValues } from './capabilitySkills'
+import {
+  composeSkillPrompt,
+  defaultSkillValues,
+  pruneDetachedSkillImages,
+  resolveSkillParamPatch,
+  toCapabilitySkill,
+  validateSkillValues,
+} from './capabilitySkills'
 import { mergeImportedCapabilitySkills, serializeCapabilitySkillsForExport } from './exportZip'
 
 const SKILL: Skill = {
@@ -53,24 +60,38 @@ describe('capability skills', () => {
     expect(merged[0].description).toBe('导入版本')
   })
 
-  it('numbers multiple attached images across slots as @图1 and @图2', () => {
+  it('numbers multiple attached images across slots as @图1 and @图2 and deduplicates inline {key} slots', () => {
     const multiSlotSkill: Skill = {
       ...SKILL,
       basePrompt: '执行材质替换（{material}）。',
+      negativePrompt: '抠图硬边，贴图失真',
       slots: [
         { key: 'base_image', label: '空间底图', type: 'image' },
         { key: 'material_ref', label: '新材质参考图', type: 'image' },
         { key: 'material', label: '目标材质', type: 'text', required: true },
+        { key: 'light', label: '光照条件', type: 'text' },
       ],
     }
     const prompt = composeSkillPrompt(
       multiSlotSkill,
-      { base_image: ['img-a'], material_ref: ['img-b'], material: '微水泥' },
+      { base_image: ['img-a'], material_ref: ['img-b'], material: '微水泥', light: '自然侧光' },
       '',
     )
     expect(prompt).toBe(
-      '执行材质替换（微水泥）。\n\n【本次输入】\n- 空间底图（base_image）：已附参考图（对应 @图1）\n- 新材质参考图（material_ref）：已附参考图（对应 @图2）\n- 目标材质（material）：微水泥',
+      '执行材质替换（微水泥）。\n\n【本次输入】\n- 空间底图（base_image）：已附参考图（对应 @图1）\n- 新材质参考图（material_ref）：已附参考图（对应 @图2）\n- 光照条件（light）：自然侧光\n\n【负向约束（避免出现）】\n抠图硬边，贴图失真',
     )
+  })
+
+  it('prunes detached image IDs from skill slot values when inputImages are cleared', () => {
+    const cleaned = pruneDetachedSkillImages(
+      SKILL,
+      { space: '展厅', ref: ['img-old-1', 'img-keep-2'] },
+      ['img-keep-2'],
+    )
+    expect(cleaned).toEqual({ space: '展厅', ref: ['img-keep-2'] })
+    const afterClearAll = pruneDetachedSkillImages(SKILL, cleaned, [])
+    expect(afterClearAll).toEqual({ space: '展厅', ref: [] })
+    expect(composeSkillPrompt(SKILL, afterClearAll, '')).not.toContain('已附参考图')
   })
 
   it('maps ratio / ratios / layout slot values to workbench size parameters', () => {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw, Search, Settings, Sparkles, X } from 'lucide-react'
 import type { Skill, SkillSlot, SkillSlotValue } from '../../types'
 import { createInputImageFromFile, useStore } from '../../store'
-import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, validateSkillValues } from '../../lib/capabilitySkills'
+import { composeSkillPrompt, defaultSkillValues, loadBuiltinSkills, pruneDetachedSkillImages, validateSkillValues } from '../../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import {
@@ -123,12 +123,16 @@ export function SkillPickerModal({ onClose, onApply, onApplyAndGenerate, onSave,
     skill: Skill,
     seed?: Record<string, SkillSlotValue>,
   ): { nextValues: Record<string, SkillSlotValue>; nextPreviews: Record<string, string> } => {
-    const nextValues: Record<string, SkillSlotValue> = {
-      ...defaultSkillValues(skill),
-      ...(seed ?? {}),
-    }
-    const nextPreviews: Record<string, string> = {}
     const existingImages = useStore.getState().inputImages
+    const nextValues: Record<string, SkillSlotValue> = pruneDetachedSkillImages(
+      skill,
+      {
+        ...defaultSkillValues(skill),
+        ...(seed ?? {}),
+      },
+      existingImages.map((img) => img.id),
+    )
+    const nextPreviews: Record<string, string> = {}
     for (const img of existingImages) {
       nextPreviews[img.id] = img.dataUrl
     }

@@ -110,23 +110,34 @@ function displayValue(slot: SkillSlot, value: SkillSlotValue | undefined): strin
   return String(value ?? '').trim()
 }
 
-/** 技能基座里的 {{key}} / {key} / {{label}} / {label} 用本次输入或槽位默认值展开 */
-function fillBasePrompt(skill: Skill, values: Record<string, SkillSlotValue>): string {
+/** 技能基座里的 {{key}} / {key} / {{label}} / {label} 用本次输入或槽位默认值展开，并记录已内嵌的槽位 key */
+function fillBasePrompt(
+  skill: Skill,
+  values: Record<string, SkillSlotValue>,
+): { text: string; inlinedKeys: Set<string> } {
   let prompt = skill.basePrompt
+  const inlinedKeys = new Set<string>()
   for (const slot of skill.slots) {
     const value = displayValue(slot, values[slot.key] ?? slot.defaultValue)
-    prompt = prompt.split(`{{${slot.key}}}`).join(value)
-    prompt = prompt.split(`{${slot.key}}`).join(value)
+    const tokens = [`{{${slot.key}}}`, `{${slot.key}}`]
     if (slot.label && slot.label !== slot.key) {
-      prompt = prompt.split(`{{${slot.label}}}`).join(value)
-      prompt = prompt.split(`{${slot.label}}`).join(value)
+      tokens.push(`{{${slot.label}}}`, `{${slot.label}}`)
+    }
+    if (tokens.some((token) => prompt.includes(token))) {
+      if (slot.type !== 'image' && slot.type !== 'multi-image') {
+        inlinedKeys.add(slot.key)
+      }
+      for (const token of tokens) {
+        prompt = prompt.split(token).join(value)
+      }
     }
   }
-  return prompt.trim()
+  return { text: prompt.trim(), inlinedKeys }
 }
 
-/** 合并顺序：技能基座（先展开占位符） → 本次输入槽位 → 用户补充；用户文字永远在最后 */
+/** 合并顺序：技能基座（先展开占位符） → 未内嵌的本次输入槽位 → 负向约束 → 用户补充；用户文字永远在最后 */
 export function composeSkillPrompt(skill: Skill, values: Record<string, SkillSlotValue>, userPrompt: string): string {
+  const { text: baseText, inlinedKeys } = fillBasePrompt(skill, values)
   const totalAttachedImages = skill.slots
     .filter((slot) => slot.type === 'image' || slot.type === 'multi-image')
     .reduce((sum, slot) => sum + getSlotImageIds(values[slot.key]).length, 0)
@@ -144,15 +155,34 @@ export function composeSkillPrompt(skill: Skill, values: Record<string, SkillSlo
         const refs = ids.map(() => `@图${++imageCursor}`).join('、')
         return `- ${slot.label}（${slot.key}）：已附参考图（对应 ${refs}）`
       }
+      if (inlinedKeys.has(slot.key)) return ''
       const value = displayValue(slot, values[slot.key])
       return value ? `- ${slot.label}（${slot.key}）：${value}` : ''
     })
     .filter(Boolean)
-  const parts = [fillBasePrompt(skill, values)]
+  const parts = [baseText]
   if (lines.length) parts.push(`【本次输入】\n${lines.join('\n')}`)
+  const negative = skill.negativePrompt?.trim()
+  if (negative) parts.push(`【负向约束（避免出现）】\n${negative}`)
   const user = userPrompt.trim()
   if (user) parts.push(`【用户补充】\n${user}`)
   return parts.join('\n\n')
+}
+
+/** 清理槽位中已不在当前底栏 inputImages 里的失效图片 ID，防止连续生图时虚报“已附参考图” */
+export function pruneDetachedSkillImages(
+  skill: Skill,
+  values: Record<string, SkillSlotValue>,
+  activeImageIds: Iterable<string>,
+): Record<string, SkillSlotValue> {
+  const validSet = new Set(activeImageIds)
+  const next: Record<string, SkillSlotValue> = { ...values }
+  for (const slot of skill.slots) {
+    if (slot.type !== 'image' && slot.type !== 'multi-image') continue
+    const ids = getSlotImageIds(values[slot.key]).filter((id) => validSet.has(id))
+    next[slot.key] = ids
+  }
+  return next
 }
 
 function mapRatioTokenToSize(token: string): string | undefined {

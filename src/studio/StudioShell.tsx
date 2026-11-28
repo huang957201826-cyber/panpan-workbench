@@ -20,7 +20,7 @@ import { filterStudioTasks } from '../lib/studioGrid'
 import { deleteCanvas, deleteProject, enqueueWorkspaceAction, getCanvasTasks, getProjectTasks, getRunningTasks, restoreActiveCanvasSnapshot, saveActiveCanvasSnapshot, stopTasks, switchCanvas } from '../lib/workspaceActions'
 import { clearAllSelection } from '../lib/selection'
 import { clearCanvasUndo, retainCanvasUndo } from '../lib/canvasUndo'
-import { composeSkillPrompt, loadBuiltinSkills, skillCoverColor } from '../lib/capabilitySkills'
+import { composeSkillPrompt, loadBuiltinSkills, pruneDetachedSkillImages, skillCoverColor } from '../lib/capabilitySkills'
 import { useCapabilitySkillStore } from '../lib/capabilitySkillStore'
 import { useSkillStore } from '../lib/skillStore'
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill, saveCapabilitySkill } from '../lib/skillRegistry'
@@ -529,7 +529,9 @@ export default function StudioShell() {
         showToast('技能暂不支持批量提交，请先关闭批量或只保留一条提示词', 'info')
         return
       }
-      finalPrompt = composeSkillPrompt(skill, liveSlotValues, promptText)
+      const activeImageIds = liveState.inputImages.map((img) => img.id)
+      const effectiveSlotValues = pruneDetachedSkillImages(skill, liveSlotValues, activeImageIds)
+      finalPrompt = composeSkillPrompt(skill, effectiveSlotValues, promptText)
       if (finalPrompt.length > MAX_PROMPT_LENGTH) {
         showToast(`技能与输入合并后超过 ${MAX_PROMPT_LENGTH} 字上限，请精简后再试`, 'error')
         return
@@ -539,7 +541,7 @@ export default function StudioShell() {
         name: skill.name,
         basePrompt: skill.basePrompt,
         slots: skill.slots,
-        slotValues: liveSlotValues,
+        slotValues: effectiveSlotValues,
         userPrompt: promptText,
         version: skill.version,
       }
@@ -563,6 +565,12 @@ export default function StudioShell() {
         },
         onTaskDispatched: (_taskId, targetCanvasId) => {
           useStore.getState().clearInputImages()
+          if (skill) {
+            const cur = useStore.getState()
+            if (cur.activeSkillId) {
+              cur.setSkillSlotValues(pruneDetachedSkillImages(skill, cur.skillSlotValues, []))
+            }
+          }
           if (targetCanvasId && !isFavoritesCanvas(targetCanvasId)) {
             useWorkspaceStore.getState().updateCanvas(targetCanvasId, {
               referenceImageIds: [],
