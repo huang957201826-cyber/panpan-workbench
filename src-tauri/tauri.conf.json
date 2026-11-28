@@ -55,6 +55,18 @@
       }
     },
     "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["panpan", "panpan-workbench"],
+          "appLink": false
+        },
+        {
+          "scheme": ["https", "http"],
+          "host": "meiyoutou.github.io",
+          "pathPrefix": ["/panpan-workbench"],
+          "appLink": false
+        }
+      ],
       "desktop": {
         "schemes": ["panpan-workbench", "panpan"]
       }

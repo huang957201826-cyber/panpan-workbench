@@ -79,7 +79,18 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const cancelRenameRef = useRef(false);
+  const renameStartedAtRef = useRef(0);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; projectId: string; name: string } | null>(null);
+
+  useEffect(() => {
+    if (!editingProjectId) return;
+    const focusTimer = window.setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 30);
+    return () => window.clearTimeout(focusTimer);
+  }, [editingProjectId]);
 
   useEffect(() => {
     if (!rowMenu) return;
@@ -274,6 +285,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                 <div
                   key={project.id}
                   onClick={() => {
+                    if (editingProjectId === project.id) return;
                     onSelectProject(project.id);
                     if (overlayDrawer) onCollapse();
                   }}
@@ -285,12 +297,13 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                   onDoubleClick={() => {
                     if (!canManageProjects || project.isFavorites) return;
                     cancelRenameRef.current = false;
+                    renameStartedAtRef.current = Date.now();
                     setEditingProjectId(project.id);
                     setEditingName(project.name);
                   }}
                   className={`${SIDEBAR_ITEM_CLASS} group cursor-pointer justify-between ${isActive ? SIDEBAR_ITEM_ACTIVE_CLASS : SIDEBAR_ITEM_IDLE_CLASS}`}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     {project.isFavorites ? (
                       <Star className="h-3.5 w-3.5 shrink-0 text-amber-500" fill="currentColor" strokeWidth={1.2} />
                     ) : (
@@ -298,8 +311,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                     )}
                     {editingProjectId === project.id ? (
                       <input
+                        ref={renameInputRef}
+                        type="text"
                         autoFocus
                         value={editingName}
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
                         onChange={(event) => setEditingName(event.target.value)}
                         onBlur={() => {
@@ -308,17 +324,26 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                             setEditingProjectId(null);
                             return;
                           }
+                          if (Date.now() - renameStartedAtRef.current < 280) {
+                            renameInputRef.current?.focus();
+                            return;
+                          }
                           commitRename(project);
                         }}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter') commitRename(project);
+                          event.stopPropagation();
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitRename(project);
+                          }
                           if (event.key === 'Escape') {
+                            event.preventDefault();
                             cancelRenameRef.current = true;
                             setEditingProjectId(null);
                           }
                         }}
                         aria-label="项目名称"
-                        className="min-w-0 flex-1 rounded border border-black/20 bg-white px-1 py-0.5 text-body-sm text-slate-800 outline-none dark:border-white/20 dark:bg-[#1a1c28] dark:text-slate-100"
+                        className="select-text min-w-0 flex-1 rounded border border-black/20 bg-white px-1.5 py-0.5 text-body-sm text-slate-800 outline-none dark:border-white/20 dark:bg-[#1a1c28] dark:text-slate-100"
                       />
                     ) : (
                       <span className="truncate font-medium">{project.name}</span>
@@ -377,36 +402,41 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           : drawerNode;
       })()}
 
-      {rowMenu && (
-        <div
-          className="fixed z-[9999] w-40 rounded-lg border border-black/10 bg-white/98 p-1 text-body-sm shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#1a1d28]/98"
-          style={{ left: Math.min(rowMenu.x, window.innerWidth - 176), top: Math.min(rowMenu.y, window.innerHeight - 100) }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              cancelRenameRef.current = false;
-              setEditingProjectId(rowMenu.projectId);
-              setEditingName(rowMenu.name);
-              setRowMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+      {rowMenu && (() => {
+        const menuNode = (
+          <div
+            className="fixed z-[9999] w-40 rounded-lg border border-black/10 bg-white/98 p-1 text-body-sm text-slate-800 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-[#1a1d28]/98 dark:text-slate-200"
+            style={{ left: Math.min(rowMenu.x, window.innerWidth - 176), top: Math.min(rowMenu.y, window.innerHeight - 100) }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
-            <Pencil className="h-3 w-3" /> 重命名
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onDeleteProject(rowMenu.projectId);
-              setRowMenu(null);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-500 hover:bg-red-500/10"
-          >
-            <Trash2 className="h-3 w-3" /> 删除
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={() => {
+                cancelRenameRef.current = false;
+                renameStartedAtRef.current = Date.now();
+                setEditingProjectId(rowMenu.projectId);
+                setEditingName(rowMenu.name);
+                setRowMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+            >
+              <Pencil className="h-3 w-3" /> 重命名
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onDeleteProject(rowMenu.projectId);
+                setRowMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-red-500 hover:bg-red-500/10"
+            >
+              <Trash2 className="h-3 w-3" /> 删除
+            </button>
+          </div>
+        );
+        return typeof document !== 'undefined' ? createPortal(menuNode, document.body) : menuNode;
+      })()}
     </div>
   );
 };

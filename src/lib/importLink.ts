@@ -48,14 +48,16 @@ export interface GenerateDeepLinkPayload {
 }
 
 /**
- * 解析外部 AI 唤醒生图链接（如 panpan://generate?prompt=...&size=1024x1024&auto=1）。
- * 同时支持独立链接或包含在对话文本/Markdown 中的 panpan:// 链接。
+ * 解析外部 AI 唤醒生图链接（如 panpan://generate?prompt=... 或 https://meiyoutou.github.io/panpan-workbench/open/?prompt=...）。
+ * 同时支持独立链接或包含在对话文本/Markdown 中的唤醒链接。
  */
 export function parseGenerateDeepLink(input: string): GenerateDeepLinkPayload | null {
   const raw = input.trim()
   if (!raw || raw.length > 32768) return null
 
-  const embeddedMatch = raw.match(/(?:panpan(?:-workbench)?:\/\/[^\s)>\]"']+)/i)
+  const embeddedMatch = raw.match(
+    /(?:(?:panpan(?:-workbench)?:\/\/|https?:\/\/[^\s)>\]"']*\/(?:panpan-workbench\/)?open\/?\?[^\s)>\]"']*prompt=)[^\s)>\]"']+)/i,
+  )
   const candidate = embeddedMatch ? embeddedMatch[0] : (/\s/.test(raw) ? '' : raw)
   if (!candidate) return null
 
@@ -70,6 +72,7 @@ export function parseGenerateDeepLink(input: string): GenerateDeepLinkPayload | 
   const isCustomProto = proto === SHORT_DEEP_LINK_PROTOCOL || proto === DEEP_LINK_PROTOCOL
   if (!isCustomProto && proto !== 'http:' && proto !== 'https:') return null
 
+  // 若是多行文本中未命中 embeddedMatch 的普通网址，仅当带 prompt 参数时视为生图唤醒链接
   const params = url.searchParams
   const prompt = params.get('prompt')?.trim() ?? ''
   if (!prompt) return null

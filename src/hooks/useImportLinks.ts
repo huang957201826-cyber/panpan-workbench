@@ -24,6 +24,14 @@ let promptQueue = Promise.resolve()
 // 冷启动的 deep link 只读取一次，StrictMode 下 effect 会执行两次
 let launchLinkChecked = false
 let pendingGenerateLink: GenerateDeepLinkPayload | null = null
+let lastDispatchedSignature = ''
+let lastDispatchedAt = 0
+
+declare global {
+  interface Window {
+    __PANPAN_INITIAL_DEEP_LINK__?: string
+  }
+}
 
 export function takePendingGenerateDeepLink(): GenerateDeepLinkPayload | null {
   const next = pendingGenerateLink
@@ -32,6 +40,11 @@ export function takePendingGenerateDeepLink(): GenerateDeepLinkPayload | null {
 }
 
 export function dispatchGenerateDeepLink(payload: GenerateDeepLinkPayload) {
+  const sig = JSON.stringify(payload)
+  const now = Date.now()
+  if (sig === lastDispatchedSignature && now - lastDispatchedAt < 2500) return
+  lastDispatchedSignature = sig
+  lastDispatchedAt = now
   pendingGenerateLink = payload
   window.dispatchEvent(new CustomEvent<GenerateDeepLinkPayload>('panpan:deep-link-generate', { detail: payload }))
 }
@@ -129,7 +142,50 @@ export function useImportLinks(ready: boolean) {
       dispatchGenerateDeepLink(webGenPayload)
     }
 
-    if (!isTauri) return
+    const onNativeDeepLink = (event: Event) => {
+      const url = (event as CustomEvent<string>).detail
+      if (typeof url === 'string' && url.trim()) {
+        promptImportLink(url, true)
+      }
+    }
+    window.addEventListener('panpan:native-deep-link', onNativeDeepLink)
+
+    if (typeof window.__PANPAN_INITIAL_DEEP_LINK__ === 'string' && window.__PANPAN_INITIAL_DEEP_LINK__.trim()) {
+      const initUrl = window.__PANPAN_INITIAL_DEEP_LINK__
+      window.__PANPAN_INITIAL_DEEP_LINK__ = ''
+      promptImportLink(initUrl, true)
+    }
+
+    // 当用户从 ChatGPT 或跳转页复制了包含唤醒链接的文本切回工作台时，仅识别含生图唤醒协议的剪贴板内容（不读取普通配置链接）
+    const checkClipboardGenerateLink = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      if (!navigator.clipboard?.readText) return
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          const trimmed = text?.trim() ?? ''
+          if (!trimmed || handledImportLinks.has(trimmed)) return
+          if (!/(?:panpan(?:-workbench)?:\/\/|\/open\/?\?[^\s]*prompt=)/i.test(trimmed)) return
+          const payload = parseGenerateDeepLink(trimmed)
+          if (!payload) return
+          handledImportLinks.add(trimmed)
+          dispatchGenerateDeepLink(payload)
+        })
+        .catch(() => {})
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') checkClipboardGenerateLink()
+    }
+    window.addEventListener('focus', checkClipboardGenerateLink)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    if (!isTauri) {
+      return () => {
+        window.removeEventListener('panpan:native-deep-link', onNativeDeepLink)
+        window.removeEventListener('focus', checkClipboardGenerateLink)
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
+    }
 
     const unlisteners = [
       onOpenUrl((urls) => urls.forEach((url) => promptImportLink(url, true))),
@@ -143,6 +199,9 @@ export function useImportLinks(ready: boolean) {
     }
 
     return () => {
+      window.removeEventListener('panpan:native-deep-link', onNativeDeepLink)
+      window.removeEventListener('focus', checkClipboardGenerateLink)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn())
     }
   }, [ready])

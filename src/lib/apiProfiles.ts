@@ -811,6 +811,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     agentTextProfileId,
     agentImageProfileId,
     studioShellEnabled: typeof record.studioShellEnabled === 'boolean' ? record.studioShellEnabled : true,
+    customAppName: typeof record.customAppName === 'string' ? record.customAppName.slice(0, 32) : undefined,
     uiScale: normalizeUiScale(record.uiScale),
     profiles,
     activeProfileId,

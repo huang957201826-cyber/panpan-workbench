@@ -559,7 +559,7 @@ export const BottomPromptBar: React.FC<BottomPromptBarProps> = ({
               maxLength={MAX_PROMPT_LENGTH}
               onChange={(e) => {
                 const rawVal = e.target.value;
-                if (/panpan(?:-workbench)?:\/\//i.test(rawVal)) {
+                if (/(?:panpan(?:-workbench)?:\/\/|\/open\/?\?[^\s]*prompt=)/i.test(rawVal)) {
                   const parsed = parseGenerateDeepLink(rawVal);
                   if (parsed) {
                     const unpacked = clampPrompt(parsed.prompt);

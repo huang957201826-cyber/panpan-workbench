@@ -30,6 +30,7 @@ export function CanvasCapsuleBar({
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const cancelRenameRef = useRef(false)
+  const renameStartedAtRef = useRef(0)
   const [editingName, setEditingName] = useState('')
   const [overflow, setOverflow] = useState({ left: false, right: false })
   const [menu, setMenu] = useState<{ x: number; y: number; canvasId: string } | null>(null)
@@ -64,11 +65,13 @@ export function CanvasCapsuleBar({
     if (!editingCanvasId) return
     const canvas = canvases.find((item) => item.id === editingCanvasId)
     if (!canvas) return
+    renameStartedAtRef.current = Date.now()
     setEditingName(canvas.name)
-    window.requestAnimationFrame(() => {
+    const timer = window.setTimeout(() => {
       inputRef.current?.focus()
       inputRef.current?.select()
-    })
+    }, 30)
+    return () => window.clearTimeout(timer)
   }, [editingCanvasId])
 
   useEffect(() => {
@@ -89,6 +92,7 @@ export function CanvasCapsuleBar({
 
   const startRename = (canvas: ProjectCanvas) => {
     cancelRenameRef.current = false
+    renameStartedAtRef.current = Date.now()
     setEditingName(canvas.name)
     onEditingChange(canvas.id)
     setMenu(null)
@@ -131,7 +135,10 @@ export function CanvasCapsuleBar({
                   <span className="font-mono text-[10px] text-white/60 dark:text-black/60">{String(index + 1).padStart(2, '0')}</span>
                   <input
                     ref={inputRef}
+                    type="text"
                     value={editingName}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
                     onChange={(event) => setEditingName(event.target.value)}
                     onBlur={() => {
                       if (cancelRenameRef.current) {
@@ -139,9 +146,14 @@ export function CanvasCapsuleBar({
                         onEditingChange(null)
                         return
                       }
+                      if (Date.now() - renameStartedAtRef.current < 280) {
+                        inputRef.current?.focus()
+                        return
+                      }
                       commitRename(canvas)
                     }}
                     onKeyDown={(event) => {
+                      event.stopPropagation()
                       if (event.key === 'Enter') {
                         event.preventDefault()
                         commitRename(canvas)
@@ -153,7 +165,7 @@ export function CanvasCapsuleBar({
                       }
                     }}
                     aria-label="画布名称"
-                    className="w-[96px] border-none bg-transparent p-0 text-[11.5px] font-medium text-white outline-none dark:text-black"
+                    className="select-text w-[96px] border-none bg-transparent p-0 text-[11.5px] font-medium text-white outline-none dark:text-black"
                   />
                 </div>
               )

@@ -54,6 +54,7 @@ describe('normalizeApiProfile', () => {
   it('uses the mode default and preserves the external model field', () => {
     expect(normalizeApiProfile({ apiMode: 'responses' }).model).toBe(DEFAULT_RESPONSES_MODEL)
     expect(normalizeSettings({ apiMode: 'responses' }).model).toBe(DEFAULT_RESPONSES_MODEL)
+    expect(normalizeSettings({ customAppName: '我的专属画室' }).customAppName).toBe('我的专属画室')
     expect(normalizeApiProfile({ apiMode: 'responses', model: 'vendor/text' }).model).toBe('vendor/text')
     expect(normalizeApiProfile({ model: 'legacy' }).model).toBe('legacy')
   })

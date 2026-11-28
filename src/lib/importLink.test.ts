@@ -44,6 +44,16 @@ describe('parseImportLink', () => {
       auto: false,
     })
 
+    expect(
+      parseGenerateDeepLink(
+        '直接点击唤起盼盼工作台：\n[在盼盼工作台生成 · 夜幕钛晶](https://meiyoutou.github.io/panpan-workbench/open/?prompt=%E5%A4%9C%E5%B9%95%E9%92%9B%E6%99%B6&size=1024x1024&auto=1)',
+      ),
+    ).toEqual({
+      prompt: '夜幕钛晶',
+      size: '1024x1024',
+      auto: true,
+    })
+
     expect(parseGenerateDeepLink('panpan://generate?prompt=hello&auto=0')?.auto).toBe(false)
     expect(parseGenerateDeepLink('panpan://generate')).toBeNull()
     expect(parseGenerateDeepLink('https://example.com/?q=test')).toBeNull()

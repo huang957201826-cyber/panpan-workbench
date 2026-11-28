@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>在盼盼工作台生成</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f6fa;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: rgba(15, 23, 42, 0.08);
+      --chip-bg: #f1f5f9;
+      --primary-bg: #0f172a;
+      --primary-text: #ffffff;
+      --secondary-bg: #f1f5f9;
+      --secondary-text: #334155;
+      --ok: #16a34a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0d13;
+        --card: #141720;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --border: rgba(255, 255, 255, 0.08);
+        --chip-bg: rgba(255, 255, 255, 0.06);
+        --primary-bg: #ffffff;
+        --primary-text: #0f172a;
+        --secondary-bg: rgba(255, 255, 255, 0.08);
+        --secondary-text: #e2e8f0;
+        --ok: #4ade80;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 24px 20px;
+      box-shadow: 0 20px 50px -12px rgba(15, 23, 42, 0.12);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: var(--primary-bg);
+      color: var(--primary-text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .subtitle {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .prompt-box {
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.6;
+      max-height: 180px;
+      overflow-y: auto;
+      word-break: break-word;
+      white-space: pre-wrap;
+      margin-bottom: 12px;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--chip-bg);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      height: 46px;
+      border-radius: 14px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.12s ease, opacity 0.12s ease;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: var(--primary-bg);
+      color: var(--primary-text);
+      margin-bottom: 10px;
+    }
+    .btn-secondary {
+      background: var(--secondary-bg);
+      color: var(--secondary-text);
+      font-size: 13px;
+      height: 42px;
+    }
+    .status {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+    .status.ok { color: var(--ok); font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="logo">盼</div>
+      <div>
+        <div class="title">盼盼工作台 · AI 联动生图</div>
+        <div class="subtitle" id="subtitle">正在准备唤醒盼盼工作台…</div>
+      </div>
+    </div>
+    <div class="prompt-box" id="prompt-box">正在读取提示词参数…</div>
+    <div class="meta" id="meta-row"></div>
+    <a id="open-btn" class="btn btn-primary" href="javascript:void(0)">
+      立即打开盼盼工作台生图
+    </a>
+    <button id="copy-btn" type="button" class="btn btn-secondary">
+      复制生图指令（切回工作台自动填入）
+    </button>
+    <div class="status" id="status-text"></div>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      if (!params.get('prompt') && window.location.hash.indexOf('?') !== -1) {
+        params = new URLSearchParams(window.location.hash.slice(window.location.hash.indexOf('?')));
+      }
+      var prompt = (params.get('prompt') || '').trim();
+      var size = (params.get('size') || params.get('ratio') || '1024x1024').trim();
+      var model = (params.get('model') || '').trim();
+      var auto = (params.get('auto') || params.get('submit') || '1').trim();
+
+      var query = new URLSearchParams();
+      if (prompt) query.set('prompt', prompt);
+      if (size) query.set('size', size);
+      if (model) query.set('model', model);
+      if (auto) query.set('auto', auto);
+
+      var qs = query.toString();
+      var deepLink = 'panpan://generate' + (qs ? '?' + qs : '');
+      var ua = navigator.userAgent || '';
+      var isAndroid = /Android/i.test(ua);
+      var fallbackUrl = window.location.href;
+      var androidIntentUrl =
+        'intent://generate' + (qs ? '?' + qs : '') +
+        '#Intent;scheme=panpan;package=com.panpan.workbench;S.browser_fallback_url=' +
+        encodeURIComponent(fallbackUrl) + ';end';
+
+      var promptBox = document.getElementById('prompt-box');
+      var metaRow = document.getElementById('meta-row');
+      var openBtn = document.getElementById('open-btn');
+      var copyBtn = document.getElementById('copy-btn');
+      var statusText = document.getElementById('status-text');
+      var subtitle = document.getElementById('subtitle');
+
+      promptBox.textContent = prompt || '（未检测到 prompt 参数，请检查链接）';
+
+      var addBadge = function (text) {
+        var span = document.createElement('span');
+        span.className = 'badge';
+        span.textContent = text;
+        metaRow.appendChild(span);
+      };
+      if (size) addBadge('尺寸 ' + size);
+      if (model) addBadge('模型 ' + model);
+      addBadge(auto === '1' || auto === 'true' ? '自动开始生图' : '填入输入框');
+
+      var copyDeepLink = function (silent) {
+        var textToCopy = deepLink;
+        var done = function () {
+          if (!silent) {
+            statusText.className = 'status ok';
+            statusText.textContent = '已复制生图指令！直接切换到「盼盼工作台」App 即可自动填入';
+          }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(textToCopy).then(done).catch(function () {
+            fallbackCopy(textToCopy, done);
+          });
+        } else {
+          fallbackCopy(textToCopy, done);
+        }
+      };
+
+      var fallbackCopy = function (text, cb) {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (cb) cb();
+        } catch (e) {}
+      };
+
+      var launchApp = function () {
+        copyDeepLink(true);
+        subtitle.textContent = '已同步指令，正在唤起盼盼工作台…';
+        statusText.className = 'status ok';
+        statusText.textContent = '已同时复制生图指令，若未自动跳转，直接打开盼盼工作台即可自动填入';
+        if (isAndroid) {
+          window.location.href = androidIntentUrl;
+        } else {
+          window.location.href = deepLink;
+        }
+      };
+
+      openBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        launchApp();
+      });
+
+      copyBtn.addEventListener('click', function () {
+        copyDeepLink(false);
+      });
+
+      if (prompt) {
+        setTimeout(function () {
+          if (isAndroid) {
+            window.location.href = androidIntentUrl;
+          } else {
+            window.location.href = deepLink;
+          }
+        }, 180);
+      }
+    })();
+  </script>
+</body>
+</html>

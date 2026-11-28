@@ -119,6 +119,8 @@ export default function StudioShell() {
   const [cardSort, setCardSort] = useState<'newest' | 'oldest' | 'prompt'>('newest')
   const [selectionMode, setSelectionMode] = useState(false)
   const [editingCanvasId, setEditingCanvasId] = useState<string | null>(null)
+  const [mobileEditingCanvasId, setMobileEditingCanvasId] = useState<string | null>(null)
+  const [mobileEditingCanvasName, setMobileEditingCanvasName] = useState('')
   const [localExportFormat, setLocalExportFormat] = useState<'gif' | 'svg' | null>(() => {
     const saved = localStorage.getItem('panpan-local-export-format')
     return saved === 'gif' || saved === 'svg' ? saved : null
@@ -1350,7 +1352,13 @@ export default function StudioShell() {
           )}
 
           {viewportLayout.isPhone && mobileCanvasSheetOpen && activeProject && (
-            <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/35 backdrop-blur-[1px]" onClick={() => setMobileCanvasSheetOpen(false)}>
+            <div
+              className="fixed inset-0 z-50 flex flex-col justify-end bg-black/35 backdrop-blur-[1px]"
+              onClick={() => {
+                setMobileEditingCanvasId(null)
+                setMobileCanvasSheetOpen(false)
+              }}
+            >
               <div
                 className="studio-safe-bottom-padded max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-black/10 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-[#141720]"
                 onClick={(event) => event.stopPropagation()}
@@ -1363,6 +1371,7 @@ export default function StudioShell() {
                   <button
                     type="button"
                     onClick={() => {
+                      setMobileEditingCanvasId(null)
                       createStudioCanvas(activeProject.id)
                       setMobileCanvasSheetOpen(false)
                     }}
@@ -1374,23 +1383,91 @@ export default function StudioShell() {
                 <div className="space-y-1.5">
                   {activeProjectCanvases.map((canvas) => {
                     const isCurrent = canvas.id === activeCanvas?.id
+                    const isEditing = mobileEditingCanvasId === canvas.id
+                    if (isEditing) {
+                      return (
+                        <div
+                          key={canvas.id}
+                          className="flex min-h-[44px] w-full items-center gap-2 rounded-xl border border-black/15 bg-black/[0.03] px-3 py-1.5 dark:border-white/15 dark:bg-white/[0.06]"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={mobileEditingCanvasName}
+                            onChange={(event) => setMobileEditingCanvasName(event.target.value)}
+                            onKeyDown={(event) => {
+                              event.stopPropagation()
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                const nextName = mobileEditingCanvasName.trim()
+                                if (nextName) useWorkspaceStore.getState().renameCanvas(canvas.id, nextName)
+                                setMobileEditingCanvasId(null)
+                              }
+                              if (event.key === 'Escape') {
+                                event.preventDefault()
+                                setMobileEditingCanvasId(null)
+                              }
+                            }}
+                            aria-label="画布名称"
+                            className="select-text min-w-0 flex-1 rounded-lg border border-black/15 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 outline-none dark:border-white/15 dark:bg-[#1a1c28] dark:text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextName = mobileEditingCanvasName.trim()
+                              if (nextName) useWorkspaceStore.getState().renameCanvas(canvas.id, nextName)
+                              setMobileEditingCanvasId(null)
+                            }}
+                            className="shrink-0 rounded-lg bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white dark:bg-white dark:text-slate-900"
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )
+                    }
                     return (
-                      <button
+                      <div
                         key={canvas.id}
-                        type="button"
-                        onClick={() => {
-                          void switchCanvas(canvas.id)
-                          setMobileCanvasSheetOpen(false)
-                        }}
-                        className={`flex min-h-[44px] w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-[13px] transition ${
+                        className={`flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl px-3.5 py-2 text-[13px] transition ${
                           isCurrent
                             ? 'bg-slate-900 font-medium text-white dark:bg-white dark:text-slate-900'
                             : 'bg-black/[0.03] text-slate-700 hover:bg-black/[0.06] dark:bg-white/[0.05] dark:text-slate-200'
                         }`}
                       >
-                        <span className="truncate">{canvas.name}</span>
-                        {isCurrent && <span className="text-[11px] opacity-75">当前</span>}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void switchCanvas(canvas.id)
+                            setMobileCanvasSheetOpen(false)
+                          }}
+                          className="min-w-0 flex-1 truncate text-left"
+                        >
+                          {canvas.name}
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {isCurrent && <span className="text-[11px] opacity-75">当前</span>}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setMobileEditingCanvasId(canvas.id)
+                              setMobileEditingCanvasName(canvas.name)
+                            }}
+                            title="重命名画布"
+                            aria-label={`重命名画布 ${canvas.name}`}
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                              isCurrent
+                                ? 'text-white/80 hover:bg-white/15 dark:text-slate-900/80 dark:hover:bg-black/10'
+                                : 'text-slate-500 hover:bg-black/10 dark:text-slate-400 dark:hover:bg-white/10'
+                            }`}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
                     )
                   })}
                 </div>

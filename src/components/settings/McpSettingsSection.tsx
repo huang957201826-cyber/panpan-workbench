@@ -5,8 +5,8 @@ import { listen } from '@tauri-apps/api/event'
 import { isMobile, isTauri } from '../../lib/platform'
 import { useStore } from '../../store'
 
-const AI_LINK_PROMPT = `你是我的 AI 绘画助手，请结合对话上下文持续优化生图提示词。每次给出或修改提示词后，都在回复末尾附上可直接点击唤醒工作台生图的链接（将提示词做 URL 编码）：
-[在盼盼工作台生成](panpan://generate?prompt=URL编码后的提示词&size=1024x1024&auto=1)`
+const AI_LINK_PROMPT = `你是我的 AI 绘画助手，请结合对话上下文持续优化生图提示词。每次给出或修改提示词后，都在回复末尾附上可直接点击唤醒工作台生图的 HTTPS 链接（必须使用 https:// 协议并对提示词做 URL 编码，切勿直接写自定义协议以免被聊天软件屏蔽点击）：
+[在盼盼工作台生成](https://meiyoutou.github.io/panpan-workbench/open/?prompt=URL编码后的提示词&size=1024x1024&auto=1)`
 
 interface McpStatus {
   enabled: boolean
