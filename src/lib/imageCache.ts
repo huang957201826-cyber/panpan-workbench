@@ -131,6 +131,10 @@ export async function ensureImageThumbnailCached(id: string): Promise<ImageThumb
 
   const thumbnail = isTauri ? await readTauriThumbnail(id) : await getThumbnailSource(id, CURRENT_THUMBNAIL_VERSION)
   if (!thumbnail) {
+    const cachedDataUrl = getCachedImage(id)
+    if (cachedDataUrl) {
+      return { src: cachedDataUrl, thumbnailVersion: CURRENT_THUMBNAIL_VERSION }
+    }
     scheduleThumbnailBackfill([id], 'visible')
     return undefined
   }

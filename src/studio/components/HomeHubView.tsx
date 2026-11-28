@@ -9,7 +9,7 @@ import { useCapabilitySkillStore } from '../../lib/capabilitySkillStore'
 import { useSkillStore } from '../../lib/skillStore'
 import { buildRegisteredSkillCatalog, resolveRegisteredSkill } from '../../lib/skillRegistry'
 import { ensureImageCached } from '../../lib/imageCache'
-import { addImageFileToCanvas } from '../../lib/canvasImageInput'
+import { addInputImageFile } from '../../lib/canvasImageInput'
 import { useWorkspaceStore } from '../../lib/workspaceStore'
 import { STUDIO_FORMATS } from '../constants'
 import { SkillPickerModal } from './SkillPickerModal'
@@ -95,7 +95,7 @@ export function HomeHubView({
         if (onAddReferenceFile) {
           await onAddReferenceFile(file)
         } else {
-          await addImageFileToCanvas(useWorkspaceStore.getState().activeCanvasId, file)
+          await addInputImageFile(file)
         }
       }
     } finally {

@@ -1071,7 +1071,17 @@ export const useStore = create<AppState>()(
         }),
       clearInputImages: () =>
         set((s) => {
-          for (const img of s.inputImages) deleteCachedImage(img.id)
+          const retainedIds = new Set<string>()
+          for (const task of s.tasks) {
+            for (const id of task.inputImageIds ?? []) retainedIds.add(id)
+            for (const id of task.outputImages ?? []) retainedIds.add(id)
+          }
+          for (const canvas of useWorkspaceStore.getState().canvases) {
+            for (const node of canvas.imageNodes ?? []) retainedIds.add(node.imageId)
+          }
+          for (const img of s.inputImages) {
+            if (!retainedIds.has(img.id)) deleteCachedImage(img.id)
+          }
           return syncActiveInputDraft(s, {
             ...updateInputDraftImages(s, []),
             maskDraft: null,
@@ -2256,6 +2266,10 @@ export interface SubmitTaskOptions {
   position?: { x: number; y: number }
   /** GIF/SVG 本地导出格式；API 仍按 PNG/JPEG/WebP 请求 */
   localExportFormat?: 'gif' | 'svg'
+  /** 任务校验通过后、计算画布落点前执行（如将待发送参考图框同步落入画布素材节点） */
+  onBeforePlaceTasks?: (images: InputImage[], targetCanvasId: string) => Promise<void> | void
+  /** 首条任务写入画布并进入执行队列时立即回调（如发送后清空输入栏参考图框） */
+  onTaskDispatched?: (taskId: string, targetCanvasId: string) => void
 }
 
 /** 提交新任务，返回已开始的任务 id；批量提交时等全部任务结束后才返回 */
@@ -2365,10 +2379,16 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
       await storeImage(img.dataUrl)
     }
   } catch (err) {
-    console.error('保存参考图失败', err)
-    endBatch(batchId)
-    showToast(`保存参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-    return []
+    if (orderedInputImages.every((img) => img.id.startsWith('mem-') && Boolean(img.dataUrl))) {
+      for (const img of orderedInputImages) {
+        cacheImage(img.id, img.dataUrl)
+      }
+    } else {
+      console.error('保存参考图失败', err)
+      endBatch(batchId)
+      showToast(`保存参考图失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      return []
+    }
   }
 
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
@@ -2404,6 +2424,9 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
   if (missingInputImageIds.length) {
     showToast(`有 ${missingInputImageIds.length} 张参考图已从画布删除，请先移除或重新拖入后再提交。`, 'error')
     return []
+  }
+  if (options.onBeforePlaceTasks && orderedInputImages.length > 0) {
+    await options.onBeforePlaceTasks(orderedInputImages, targetCanvasId)
   }
   const targetSize = canvasView.viewMode === 'canvas'
     ? { width: canvasView.size.width || 1200, height: (canvasView.size.height - canvasView.bottomInset) || 800 }
@@ -2496,6 +2519,9 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<strin
     if (outcome === 'superseded') return null
     if (batchId) batchTaskIds.add(task.id)
     taskIds.push(task.id)
+    if (taskIds.length === 1) {
+      options.onTaskDispatched?.(task.id, targetCanvasId)
+    }
     // 批量任务由 runBatchPrompts 控制并发；手动连续提交走全局队列
     if (batchId) executeTask(task.id)
     else enqueueManualTask(task.id)
@@ -4872,9 +4898,17 @@ async function executeTask(taskId: string) {
       taskExecutions.delete(taskId)
       taskControllers.delete(taskId)
     }
-    // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
+    // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载；内存回退与画布素材节点保留）
     if (!taskExecutions.has(taskId)) {
-      for (const imgId of task.inputImageIds) deleteCachedImage(imgId)
+      const canvasNodeImageIds = new Set<string>()
+      for (const canvas of useWorkspaceStore.getState().canvases) {
+        for (const node of canvas.imageNodes ?? []) canvasNodeImageIds.add(node.imageId)
+      }
+      for (const imgId of task.inputImageIds) {
+        if (!imgId.startsWith('mem-') && !canvasNodeImageIds.has(imgId)) {
+          deleteCachedImage(imgId)
+        }
+      }
     }
   }
 }

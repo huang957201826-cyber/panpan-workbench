@@ -200,7 +200,7 @@ test('R6：Rail 68px、首页舞台 780px、光晕 720×340、发送按钮 36px'
   await page.screenshot({ path: 'docs/execution/evidence/r6-home-1440-dark.png' })
 })
 
-test('参考图导入：首页与工作台导入图片后同时显示内联预览架与画布素材节点', async ({ page }) => {
+test('参考图导入：发送前显示在参考图框，发送后参考图框消失并展示在画布里', async ({ page }) => {
   const png1 = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
     'base64',
@@ -212,6 +212,21 @@ test('参考图导入：首页与工作台导入图片后同时显示内联预�
   await seedWorkspace(page)
   await page.goto('/')
   await expect(page.locator('[data-home-stage]')).toBeVisible({ timeout: 30_000 })
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await useMockProfile(page)
+    await page.waitForTimeout(300)
+    await page.reload()
+    await expect(page.locator('[data-home-stage]')).toBeVisible({ timeout: 30_000 })
+    const applied = await page.evaluate(() => {
+      const raw = localStorage.getItem('gpt-image-playground')
+      if (!raw) return false
+      const data = JSON.parse(raw)
+      const settings = data.state?.settings
+      const active = settings?.profiles?.find((profile: { id: string }) => profile.id === settings.activeProfileId)
+      return typeof active?.baseUrl === 'string' && active.baseUrl.includes('127.0.0.1:8787')
+    })
+    if (applied) break
+  }
 
   await page.locator('#home-prompt-ref-upload').setInputFiles({
     name: 'ref-home.png',
@@ -225,8 +240,7 @@ test('参考图导入：首页与工作台导入图片后同时显示内联预�
   await expect(page.locator('[data-canvas-root]')).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('[data-reference-shelf]')).toBeVisible()
   await expect(page.locator('[data-reference-shelf]')).toContainText('已添加 1 张参考图')
-  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(1)
-  await expect(page.locator('[data-canvas-image-node] img').first()).toBeVisible()
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(0)
 
   await page.locator('#bottom-prompt-ref-upload').setInputFiles({
     name: 'ref-canvas.png',
@@ -234,7 +248,15 @@ test('参考图导入：首页与工作台导入图片后同时显示内联预�
     buffer: png2,
   })
   await expect(page.locator('[data-reference-shelf]')).toContainText('已添加 2 张参考图')
-  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(2)
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(0)
+
+  await page.locator('[data-input-bar] textarea').fill('参考图发送后入画布验证')
+  await page.locator('[data-input-bar] button[title^="立即生成方案"]').click()
+
+  await expect(page.locator('[data-reference-shelf]')).toHaveCount(0)
+  await expect(page.locator('[data-canvas-image-node]')).toHaveCount(2, { timeout: 20_000 })
+  await expect(page.locator('[data-canvas-image-node] img').nth(0)).toBeVisible()
   await expect(page.locator('[data-canvas-image-node] img').nth(1)).toBeVisible()
+  await expect(page.locator('[data-canvas-node]').first()).toBeVisible({ timeout: 20_000 })
 })
 

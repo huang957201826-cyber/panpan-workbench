@@ -7,7 +7,7 @@ import { useViewportLayout } from '../hooks/useViewportLayout'
 import { isMobile, isTauri, isTouchDevice } from '../lib/platform'
 import { getActiveApiProfile, resolveApiProfileModel, splitModelList } from '../lib/apiProfiles'
 import { ensureImageCached } from '../lib/imageCache'
-import { addImageFileToCanvas, ensureInputImageOnCanvas } from '../lib/canvasImageInput'
+import { addInputImageFile, ensureInputImageOnCanvas } from '../lib/canvasImageInput'
 import { getDownloadErrorMessage, withSaveLocation } from '../lib/downloadImages'
 import { downloadTasksImages } from '../lib/taskExport'
 import { pickSaveDir, type SaveDir } from '../lib/saveFile'
@@ -219,22 +219,6 @@ export default function StudioShell() {
   }, [workspace.inputDockPosition, activeActivity, activeCanvas?.id])
 
   useEffect(() => {
-    if (pendingInputs > 0 || !activeCanvas?.id || isFavoritesCanvas(activeCanvas.id) || inputImages.length === 0) return
-    const existingNodeImageIds = new Set((activeCanvas.imageNodes ?? []).map((node) => node.imageId))
-    const removedIds = new Set(activeCanvas.removedImageIds ?? [])
-    const taskOutputIds = new Set(tasks.flatMap((task) => task.outputImages ?? []))
-    const missing = inputImages.filter(
-      (img) => img.id && !existingNodeImageIds.has(img.id) && !removedIds.has(img.id) && !taskOutputIds.has(img.id),
-    )
-    if (!missing.length) return
-    void (async () => {
-      for (const img of missing) {
-        await ensureInputImageOnCanvas(img, activeCanvas.id)
-      }
-    })()
-  }, [pendingInputs, activeCanvas?.id, activeCanvas?.imageNodes, activeCanvas?.removedImageIds, tasks, inputImages])
-
-  useEffect(() => {
     if (!activeCanvas?.id) return
     const timer = setTimeout(() => useWorkspaceStore.getState().setCanvasViewport(activeCanvas.id, canvasViewport), 300)
     return () => clearTimeout(timer)
@@ -296,7 +280,7 @@ export default function StudioShell() {
       event.preventDefault()
       void withInputPending(async () => {
         for (const file of files) {
-          await addImageFileToCanvas(useWorkspaceStore.getState().activeCanvasId, file)
+          await addInputImageFile(file)
         }
       })
     }
@@ -558,11 +542,30 @@ export default function StudioShell() {
         promptOverride: finalPrompt,
         skillContext,
         localExportFormat: nextParams.format === 'GIF' ? 'gif' : nextParams.format === 'SVG' ? 'svg' : undefined,
+        onBeforePlaceTasks: async (images, targetCanvasId) => {
+          if (!targetCanvasId || isFavoritesCanvas(targetCanvasId)) return
+          for (const img of images) {
+            await ensureInputImageOnCanvas(img, targetCanvasId)
+          }
+        },
+        onTaskDispatched: (_taskId, targetCanvasId) => {
+          useStore.getState().clearInputImages()
+          if (targetCanvasId && !isFavoritesCanvas(targetCanvasId)) {
+            useWorkspaceStore.getState().updateCanvas(targetCanvasId, {
+              referenceImageIds: [],
+              maskDraft: null,
+              maskEditorImageId: null,
+            })
+          }
+        },
       })
       const taskIds = await pending
-      if (taskIds.length && useStore.getState().settings.clearInputAfterSubmit) {
-        setPrompt('')
-        clearSkillChip()
+      if (taskIds.length) {
+        useStore.getState().clearInputImages()
+        if (useStore.getState().settings.clearInputAfterSubmit) {
+          setPrompt('')
+          clearSkillChip()
+        }
       }
     } finally {
       setSubmitting(false)
@@ -1014,7 +1017,7 @@ export default function StudioShell() {
                 onParamsChange={handleParamsChange}
                 onAddReferenceFile={async (file) => {
                   try {
-                    const added = await addImageFileToCanvas(activeCanvas?.id ?? '', file)
+                    const added = await addInputImageFile(file)
                     if (!added) {
                       useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
                     }
@@ -1160,7 +1163,7 @@ export default function StudioShell() {
                 onAddReferenceImage={(image) => addInputImage({ id: image.id, dataUrl: image.url })}
                 onAddReferenceFile={async (file) => {
                   try {
-                    const added = await addImageFileToCanvas(activeCanvas?.id ?? '', file)
+                    const added = await addInputImageFile(file)
                     if (!added) {
                       useStore.getState().showToast('未能识别该图片文件，请选择 PNG / JPG / WebP 等图片', 'error')
                     }
