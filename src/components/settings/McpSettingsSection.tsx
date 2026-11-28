@@ -106,11 +106,11 @@ export default function McpSettingsSection() {
     <section className="space-y-4">
       <div>
         <h4 className="text-body font-bold text-gray-800 dark:text-gray-100">本机 MCP</h4>
-        <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
-          {status?.running
-            ? `运行中：http://127.0.0.1:${status.port}/mcp`
-            : status?.enabled ? '已开启但未监听（查看下方错误）' : '默认关闭；未开启时不监听端口'}
-        </div>
+        {status?.running && (
+          <div className="mt-1 text-body-sm leading-relaxed text-gray-500 dark:text-gray-500">
+            {`运行中：http://127.0.0.1:${status.port}/mcp`}
+          </div>
+        )}
       </div>
 
       <div className={ROW}>
@@ -169,9 +169,6 @@ export default function McpSettingsSection() {
         >
           <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${status?.writeEnabled ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
         </button>
-      </div>
-      <div className="text-body-sm text-gray-500 dark:text-gray-500">
-        写入工具默认关闭。开启后每次 task.create / image.attach 都会在主窗口弹出确认框。
       </div>
 
       <div className="space-y-2 rounded-xl bg-black/[0.03] p-3 dark:bg-white/[0.04]">

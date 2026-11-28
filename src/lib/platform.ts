@@ -54,18 +54,38 @@ export function toIpcBinaryBody(bytes: Uint8Array): Uint8Array | { base64: strin
   return { base64: btoa(parts.join('')) }
 }
 
-// 安卓 WebView 下 Tauri 返回大于 1KB 的二进制或大于 8KB 的 JSON 时会尝试 fetch('http://ipc.localhost/plugin%3A__TAURI_CHANNEL__%7Cfetch')，
-// 若系统开启了 VPN/代理或 WebView 拦截了 ipc.localhost，Rust 侧队列条目被消费后网络层报错会导致 invoke 永久挂起。
-// 在 JS 层立即拒绝 ipc.localhost 的 fetch，使 Tauri ipc-protocol.js 立即回退到可靠的 window.ipc.postMessage 通道且不丢失队列数据。
-if (isTauri && isAndroid && typeof window !== 'undefined' && typeof window.fetch === 'function') {
-  const nativeFetch = window.fetch.bind(window)
-  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url ?? ''
-    if (/^https?:\/\/ipc\.localhost\//i.test(url)) {
-      return Promise.reject(new TypeError('Android IPC channel fallback to postMessage'))
+function decodeHttpReadChunk(raw: string | ArrayBuffer | Uint8Array | null | undefined): Uint8Array {
+  if (!raw) return new Uint8Array(0)
+  if (typeof raw === 'string') {
+    if (!raw.length) return new Uint8Array(0)
+    const bin = atob(raw)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) {
+      out[i] = bin.charCodeAt(i)
     }
-    return nativeFetch(input, init)
-  }) as typeof window.fetch
+    return out
+  }
+  if (raw instanceof Uint8Array) return raw
+  return new Uint8Array(raw)
+}
+
+function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(abortReason(signal))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(val)
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      },
+    )
+  })
 }
 
 interface HttpHead {
@@ -110,7 +130,10 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
 
   const meta = { id, method: req.method, url: req.url, headers: [...req.headers] }
   // 请求体以二进制传给 Rust（安卓端转为 base64 对象），避免大图编辑请求经 JSON 数组放大数倍
-  const head = await invoke<HttpHead>('http_send', toIpcBinaryBody(body), { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
+  const head = await raceWithSignal(
+    invoke<HttpHead>('http_send', toIpcBinaryBody(body), { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }),
+    signal,
+  ).catch((err) => {
     settle()
     throw signal?.aborted ? abortReason(signal) : new FetchConnectError(String(err))
   })
@@ -123,7 +146,8 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   }
   const pull = async (ctrl: ReadableStreamDefaultController<Uint8Array>) => {
     try {
-      const chunk = new Uint8Array(await invoke<ArrayBuffer>('http_read', { id }))
+      const raw = await raceWithSignal(invoke<string | ArrayBuffer>('http_read', { id }), signal)
+      const chunk = decodeHttpReadChunk(raw)
       if (chunk.byteLength) return ctrl.enqueue(chunk)
       settle()
       ctrl.close()

@@ -86,6 +86,19 @@ describe('测试连接', () => {
     expect(result.error).toContain('密钥无效')
   })
 
+  it('未带 /v1 的根地址 404 时自动尝试 /v1/models 并返回标准化地址', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'gpt-image-2.5' }] }), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    }))
+    const result = await testConnection('https://api.example.com', 'sk-key')
+    expect(result.ok).toBe(true)
+    expect(result.models).toEqual(['gpt-image-2.5'])
+    expect(result.normalizedUrl).toBe('https://api.example.com/v1')
+  })
+
   it('超时与网络错误分开报', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {

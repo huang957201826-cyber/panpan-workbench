@@ -1,8 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
-import { apiFetch, isTauri } from '../lib/platform'
+import { apiFetch, isAndroid, isIOS, isMacOS, isTauri } from '../lib/platform'
 
 const STORAGE_KEY = 'panpan-comfy-engine-url'
+const ROOT_STORAGE_KEY = 'panpan-comfy-engine-root'
 export const DEFAULT_ENGINE_URL = 'http://127.0.0.1:8188'
+export const DEFAULT_ENGINE_ROOT = isAndroid
+  ? '/storage/emulated/0/Download/ComfyUI'
+  : isIOS || isMacOS
+    ? '~/AI/ComfyUI'
+    : 'D:\\AI\\ComfyUI'
 
 /** 读取本地引擎地址；未配置时回落到 ComfyUI 默认端口 */
 export function getEngineUrl(): string {
@@ -19,6 +25,24 @@ export function setEngineUrl(url: string): void {
     localStorage.setItem(STORAGE_KEY, next)
   } catch (err) {
     console.warn('保存本地引擎地址失败：', err)
+  }
+}
+
+/** 读取本地引擎安装目录；未配置时回落到当前系统默认目录 */
+export function getEngineRoot(): string {
+  try {
+    return localStorage.getItem(ROOT_STORAGE_KEY)?.trim() || DEFAULT_ENGINE_ROOT
+  } catch {
+    return DEFAULT_ENGINE_ROOT
+  }
+}
+
+export function setEngineRoot(root: string): void {
+  const next = root.trim() || DEFAULT_ENGINE_ROOT
+  try {
+    localStorage.setItem(ROOT_STORAGE_KEY, next)
+  } catch (err) {
+    console.warn('保存本地引擎目录失败：', err)
   }
 }
 
@@ -49,8 +73,8 @@ export interface EngineProcessInfo {
   detail: string
 }
 
-export async function startEngineProcess(): Promise<EngineProcessInfo> {
-  return await invoke<EngineProcessInfo>('comfy_engine_start')
+export async function startEngineProcess(rootDir = getEngineRoot()): Promise<EngineProcessInfo> {
+  return await invoke<EngineProcessInfo>('comfy_engine_start', { rootDir })
 }
 
 export async function stopEngineProcess(): Promise<void> {

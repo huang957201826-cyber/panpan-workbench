@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH};
 use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
-use tauri::ipc::{InvokeBody, Request, Response};
+use tauri::ipc::{InvokeBody, Request};
 use tauri::State;
 use tokio::sync::watch;
 
@@ -18,6 +18,36 @@ use crate::proxy::{Proxy, Route};
 
 const CANCELED: &str = "请求已取消";
 const USER_AGENT: &str = concat!("gpt-image-playground/", env!("CARGO_PKG_VERSION"));
+
+#[cfg(target_os = "android")]
+fn android_root_certs() -> Vec<reqwest::Certificate> {
+    use std::sync::OnceLock;
+    static CERTS: OnceLock<Vec<reqwest::Certificate>> = OnceLock::new();
+    CERTS
+        .get_or_init(|| {
+            let mut certs = Vec::with_capacity(webpki_root_certs::TLS_SERVER_ROOT_CERTS.len() + 32);
+            for der in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
+                if let Ok(cert) = reqwest::Certificate::from_der(der.as_ref()) {
+                    certs.push(cert);
+                }
+            }
+            for dir in ["/system/etc/security/cacerts", "/apex/com.android.conscrypt/cacerts"] {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(raw) = std::fs::read(entry.path()) {
+                            if let Ok(cert) = reqwest::Certificate::from_pem(&raw)
+                                .or_else(|_| reqwest::Certificate::from_der(&raw))
+                            {
+                                certs.push(cert);
+                            }
+                        }
+                    }
+                }
+            }
+            certs
+        })
+        .clone()
+}
 
 struct Pending {
     cancel: watch::Sender<bool>,
@@ -203,8 +233,13 @@ fn build(
         headers.insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
     }
     // 每次新建客户端：系统代理和应用内的代理设置变化后的请求立即生效，取消时连接不会留在连接池中
+    let builder = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(15));
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(android_root_certs());
     let client = route
-        .apply(reqwest::Client::builder().user_agent(USER_AGENT))
+        .apply(builder)
         .and_then(|builder| builder.build())
         .map_err(|err| format!("创建 HTTP 客户端失败：{err}"))?;
     let proxied = route.proxies(&url);
@@ -298,9 +333,10 @@ pub async fn http_send(
     Ok(head)
 }
 
-/// 读取下一块响应体，读完时返回空内容；取消时立即丢弃响应、断开连接
+/// 读取下一块响应体（Base64 编码字符串），读完时返回空字符串；取消时立即丢弃响应、断开连接
 #[tauri::command]
-pub async fn http_read(id: String, state: State<'_, Requests>) -> Result<Response, String> {
+pub async fn http_read(id: String, state: State<'_, Requests>) -> Result<String, String> {
+    use base64::Engine;
     let (mut res, mut cancel) = {
         let mut map = state.lock();
         let pending = map.get_mut(&id).ok_or(CANCELED)?;
@@ -318,11 +354,11 @@ pub async fn http_read(id: String, state: State<'_, Requests>) -> Result<Respons
             Ok(Some(bytes)) => {
                 let pending = map.get_mut(&id).ok_or(CANCELED)?;
                 pending.res = Some(res);
-                return Ok(Response::new(bytes.to_vec()));
+                return Ok(base64::engine::general_purpose::STANDARD.encode(&bytes));
             }
             Ok(None) => {
                 map.remove(&id);
-                return Ok(Response::new(Vec::new()));
+                return Ok(String::new());
             }
             Err(err) => {
                 map.remove(&id);

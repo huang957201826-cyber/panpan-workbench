@@ -146,7 +146,7 @@ const PROVIDER_SHORT_LABELS: Record<ApiProfile['providerType'], string> = {
 // 判断是否为画图模型
 const isLikelyImageModel = (modelId: string): boolean => {
   const lower = modelId.toLowerCase();
-  return /image|flux|dall|sd|midjourney|mj|ideogram|recraft|imagen|kling|kolors|wanx/.test(lower);
+  return /image|flux|dall|sd|stable-diffusion|midjourney|mj|ideogram|recraft|imagen|kling|kolors|wanx|seedream|jimeng|cogview|hunyuan|banana|nano|doubao|qwen-image|sora|omni|gemini-.*-image|gpt-4o/.test(lower);
 };
 
 // 极简统一黑白复选框控件（取代原生突兀蓝色方框）
@@ -698,11 +698,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // URL sanitization helper on blur
   const sanitizeUrl = (raw: string) => {
-    let cleaned = raw.trim().replace(/\s+/g, '');
-    // If user accidentally pasted full endpoint path like /v1/images/generations, keep base /v1
-    if (cleaned.endsWith('/images/generations')) {
-      cleaned = cleaned.replace('/images/generations', '');
-    }
+    let cleaned = raw.trim().replace(/\s+/g, '').replace(/\/+$/, '');
+    cleaned = cleaned.replace(/\/(models|chat\/completions|images\/generations|images\/edits|responses)$/i, '');
     return cleaned;
   };
 
@@ -737,12 +734,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const startedAt = performance.now();
 
     try {
-      const result = await testConnection(cleanUrl, cleanKey, { timeoutMs: 8000 });
+      const result = await testConnection(cleanUrl, cleanKey, {
+        timeoutMs: 12000,
+        profileId: draft.id,
+      });
       const latencyMs = Math.max(1, Math.round(performance.now() - startedAt));
       if (!result.ok) {
         setDiscoveredModels([]);
         setTestResult({ status: 'error', message: result.error ?? '连接失败' });
         return;
+      }
+      if (result.normalizedUrl && result.normalizedUrl !== cleanUrl) {
+        setDraft((prev) => ({ ...prev, apiUrl: result.normalizedUrl! }));
       }
       if (result.models.length === 0) {
         setDiscoveredModels([]);
@@ -752,19 +755,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const modelsResult: DiscoveredModel[] = result.models.map((id) => ({
         id,
         isImageModel: isLikelyImageModel(id),
-        recommended: /gpt-image-2\.5|flux/i.test(id),
+        recommended: /gpt-image-2\.5|gpt-image-1|flux|dall-e-3|imagen|seedream/i.test(id),
       }));
       const imageCount = modelsResult.filter((m) => m.isImageModel).length;
       setDiscoveredModels(modelsResult);
+      if (imageCount === 0 && modelsResult.length > 0) {
+        setShowAllDiscovered(true);
+      }
       setTestResult({
         status: 'success',
         message: `连接成功（${latencyMs}ms）· 返回 ${modelsResult.length} 个模型，其中 ${imageCount} 个画图模型`,
       });
 
       if (draft.models.length === 0) {
-        const autoPicks = modelsResult
-          .filter((m) => m.isImageModel && m.recommended)
-          .slice(0, 2)
+        const preferred = modelsResult.filter((m) => m.isImageModel && m.recommended);
+        const fallbacks = modelsResult.filter((m) => m.isImageModel);
+        const autoPicks = (preferred.length > 0 ? preferred : fallbacks.length > 0 ? fallbacks : modelsResult)
+          .slice(0, 3)
           .map((m) => m.id);
         if (autoPicks.length > 0) setDraft((prev) => ({ ...prev, models: autoPicks }));
       }
@@ -790,9 +797,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Select all visible image models from discovered pool
   const handleSelectAllImageModels = () => {
     const imageIds = discoveredModels.filter((m) => m.isImageModel).map((m) => m.id);
-    const merged = Array.from(new Set([...draft.models, ...imageIds]));
+    const targetIds = imageIds.length > 0 ? imageIds : discoveredModels.map((m) => m.id);
+    const merged = Array.from(new Set([...draft.models, ...targetIds]));
     setDraft({ ...draft, models: merged });
-    notifyUser(`已一键加入 ${imageIds.length} 个可用画图模型`);
+    notifyUser(`已一键加入 ${targetIds.length} 个可用画图模型`);
   };
 
   // Add manual fallback model ID
@@ -1009,10 +1017,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 );
               })}
             </div>
-
-            <div className="hidden md:block px-2 pt-3 border-t border-black/[0.04] dark:border-white/[0.05] text-caption text-slate-400 leading-relaxed">
-              所有密钥与偏好仅保存在本地设备。
-            </div>
           </aside>
 
           {/* Right Content Stage */}
@@ -1030,9 +1034,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <h4 className="text-body font-semibold text-slate-900 dark:text-white">
                           已保存的 API 配置
                         </h4>
-                        <p className="text-caption text-slate-500 dark:text-slate-400">
-                          下拉切换已保存配置，或点击右侧按钮新建一套
-                        </p>
                       </div>
                       <button
                         type="button"
@@ -1228,9 +1229,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 · {FEATURED_RELAY_NODE.priceHint}
                               </span>
                             </div>
-                            <p className="text-caption text-slate-500 dark:text-slate-400 leading-relaxed">
-                              {FEATURED_RELAY_NODE.highlight}
-                            </p>
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
@@ -1260,18 +1258,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow divide-y divide-black/[0.05] dark:divide-white/[0.06]">
                     {/* STEP 1: 服务地址与名称 */}
                     <div className="p-5 space-y-4">
-                      <div className="flex items-start gap-3">
-                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 tabular-nums">
                           1
                         </span>
-                        <div className="space-y-0.5">
-                          <h5 className="text-body font-bold text-slate-900 dark:text-white">
-                            第 1 步 · 填写配置名称与接口地址
-                          </h5>
-                          <p className="text-caption text-slate-500 dark:text-slate-400 leading-relaxed">
-                            起个好记的名字。若用中转站，类型保持默认「OpenAI 兼容接口」，将后台提供的 API 网址粘贴进下方即可。
-                          </p>
-                        </div>
+                        <h5 className="text-body font-bold text-slate-900 dark:text-white">
+                          第 1 步 · 填写配置名称与接口地址
+                        </h5>
                       </div>
 
                       <div className="pl-9 space-y-3.5">
@@ -1291,7 +1284,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                           <div className="space-y-1.5">
                             <label className="text-caption font-medium text-slate-700 dark:text-slate-300">
-                              服务商类型（一般保持默认）
+                              服务商类型
                             </label>
                             <select
                               value={draft.providerType}
@@ -1335,18 +1328,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* STEP 2: 粘贴 Key 并测试获取可用模型 */}
                     <div className="p-5 space-y-4">
-                      <div className="flex items-start gap-3">
-                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 tabular-nums">
                           2
                         </span>
-                        <div className="space-y-0.5">
-                          <h5 className="text-body font-bold text-slate-900 dark:text-white">
-                            第 2 步 · 粘贴 API Key 并测试获取模型
-                          </h5>
-                          <p className="text-caption text-slate-500 dark:text-slate-400 leading-relaxed">
-                            去中转站后台「令牌 / API Key」复制 <code className="font-mono text-slate-700 dark:text-slate-200">sk-</code> 开头的密钥粘贴到下面，点击<strong>「测试连接并获取模型」</strong>。
-                          </p>
-                        </div>
+                        <h5 className="text-body font-bold text-slate-900 dark:text-white">
+                          第 2 步 · 粘贴 API Key 并测试获取模型
+                        </h5>
                       </div>
 
                       <div className="pl-9 space-y-3">
@@ -1424,18 +1412,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* STEP 3: 点选加入画图模型（免手输）与保存提示 */}
                     <div className="p-5 space-y-4" ref={step3Ref}>
-                      <div className="flex items-start gap-3">
-                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-black text-white dark:bg-white dark:text-black text-caption font-bold flex items-center justify-center shrink-0 tabular-nums">
                           3
                         </span>
-                        <div className="space-y-0.5">
-                          <h5 className="text-body font-bold text-slate-900 dark:text-white">
-                            第 3 步 · 点选要使用的画图模型，并点右下角保存
-                          </h5>
-                          <p className="text-caption text-slate-500 dark:text-slate-400 leading-relaxed">
-                            上面展示已启用的模型（首页直接可选）；测试连接后下方会自动列出该节点支持的可用模型，<strong>点一下即可加入，不用手动敲字</strong>。最后请点击右下角黑色<strong>「保存此配置」</strong>。
-                          </p>
-                        </div>
+                        <h5 className="text-body font-bold text-slate-900 dark:text-white">
+                          第 3 步 · 点选要使用的画图模型，并点右下角保存
+                        </h5>
                       </div>
 
                       <div className="pl-9 space-y-4">
@@ -1611,14 +1594,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() => setShowAdvancedApi(!showAdvancedApi)}
                       className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-black/[0.015] dark:hover:bg-white/[0.02] transition cursor-pointer"
                     >
-                      <div>
-                        <span className="text-caption font-semibold text-slate-800 dark:text-slate-200">
-                          高级与专业参数（新手无需修改）
-                        </span>
-                        <span className="text-caption text-slate-400 ml-2.5">
-                          接口模式 · 流式传输 · .ppconfig 文件导入导出
-                        </span>
-                      </div>
+                      <span className="text-caption font-semibold text-slate-800 dark:text-slate-200">
+                        高级与专业参数
+                      </span>
                       <ChevronDown
                         className={`w-4 h-4 text-slate-400 transition-transform ${
                           showAdvancedApi ? 'rotate-180' : ''
@@ -1663,13 +1641,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between py-2 border-t border-black/[0.04] dark:border-white/[0.05]">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              流式传输（Streaming）
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              开启后边生成边返回预览图，部分中转站不支持时请保持关闭
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            流式传输（Streaming）
                           </div>
                           <MonoSwitch
                             checked={draft.streaming}
@@ -1679,13 +1652,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                         {draft.streaming && (
                           <div className="flex items-center justify-between py-1">
-                            <div>
-                              <div className="font-medium text-slate-800 dark:text-slate-200">
-                                请求中间步骤图像数（partial_images）
-                              </div>
-                              <div className="text-caption text-slate-400">
-                                建议设为 1–2 张以保持连接心跳
-                              </div>
+                            <div className="font-medium text-slate-800 dark:text-slate-200">
+                              请求中间步骤图像数（partial_images）
                             </div>
                             <select
                               value={draft.partialImages}
@@ -1702,10 +1670,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                         )}
 
-                        <div className="pt-3 border-t border-black/[0.04] dark:border-white/[0.05] flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-caption text-slate-400">
-                            支持 .ppconfig 配置文件或参数链接导入导出
-                          </span>
+                        <div className="pt-3 border-t border-black/[0.04] dark:border-white/[0.05] flex flex-wrap items-center justify-end gap-2">
                           <div className="flex items-center gap-2">
                             <input
                               ref={fileInputRef}
@@ -1750,13 +1715,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </h4>
 
                     <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
-                      <div>
-                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                          任务提交快捷键
-                        </div>
-                        <div className="text-caption text-slate-400">
-                          选择 Ctrl+Enter 时回车为换行；选择 Enter 时 Shift+Enter 为换行
-                        </div>
+                      <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                        任务提交快捷键
                       </div>
                       <div className="flex items-center gap-1 p-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.06] shrink-0">
                         {[
@@ -1780,13 +1740,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
 
                     <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-black/[0.05] dark:border-white/[0.06]">
-                      <div>
-                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                          界面缩放比例
-                        </div>
-                        <div className="text-caption text-slate-400">
-                          仅放大界面文字与按钮，不影响画布图片尺寸
-                        </div>
+                      <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                        界面缩放比例
                       </div>
                       <div className="flex items-center gap-1 p-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.06] shrink-0">
                         {(['100%', '110%', '125%', '150%'] as const).map((s) => (
@@ -1808,13 +1763,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     <div className="pt-3.5 border-t border-black/[0.05] dark:border-white/[0.06] space-y-2">
                       <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                            自定义软件名称
-                          </div>
-                          <div className="text-caption text-slate-400 mt-0.5">
-                            在安卓手机、平板、iPhone、iPad 与桌面端顶栏显示自定义名称（留空则显示“盼盼工作台”）
-                          </div>
+                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                          自定义软件名称
                         </div>
                         {settings.customAppName?.trim() && (
                           <button
@@ -1853,13 +1803,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <div className="text-caption font-mono text-slate-400 truncate mt-0.5">
                             {defaultDownloadPath}
                           </div>
-                          {isMobile && (
-                            <div className="text-caption text-slate-400 mt-1">
-                              {isAndroid
-                                ? '默认在系统相册创建 PanPanWorkbench 文件夹存放导出图片，可自定义目录并一键迁移已有图片'
-                                : '默认保存在应用文档目录，可自定义子目录并一键迁移已有文件'}
-                            </div>
-                          )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
@@ -1952,13 +1895,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
 
                     <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
-                          任务完成或失败时发送系统通知
-                        </div>
-                        <div className="text-caption text-slate-400">
-                          切到其他软件时也能及时收到出图完成提醒
-                        </div>
+                      <div className="font-medium text-slate-800 dark:text-slate-200 text-caption">
+                        任务完成或失败时发送系统通知
                       </div>
                       <MonoSwitch
                         checked={Boolean(settings.taskCompletionNotification)}
@@ -1974,14 +1912,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() => setShowMoreGeneral(!showMoreGeneral)}
                       className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-black/[0.015] dark:hover:bg-white/[0.02] transition cursor-pointer"
                     >
-                      <div>
-                        <span className="text-caption font-semibold text-slate-800 dark:text-slate-200">
-                          更多运行、网络与隐私设置
-                        </span>
-                        <span className="text-caption text-slate-400 ml-2.5">
-                          并发数 · 重试规则 · 网络代理 · 隐私快捷键
-                        </span>
-                      </div>
+                      <span className="text-caption font-semibold text-slate-800 dark:text-slate-200">
+                        更多运行、网络与隐私设置
+                      </span>
                       <ChevronDown
                         className={`w-4 h-4 text-slate-400 transition-transform ${
                           showMoreGeneral ? 'rotate-180' : ''
@@ -1992,13 +1925,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {showMoreGeneral && (
                       <div className="px-5 pb-5 pt-4 border-t border-black/[0.05] dark:border-white/[0.06] space-y-4 text-caption">
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              连续提交并发数
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              同时执行的生图任务上限，调整后即启用并发限制
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            连续提交并发数
                           </div>
                           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.08] font-mono tabular-nums">
                             <button
@@ -2020,13 +1948,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              重试任务方式
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              点击重新生成时，新建卡片还是覆盖原卡片
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            重试任务方式
                           </div>
                           <select
                             value={settings.retryMode === 'new' ? 'new' : 'overwrite'}
@@ -2041,13 +1964,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              允许模型优化改写提示词
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              关闭时严格按你输入的原词请求，不附加改写前缀
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            允许模型优化改写提示词
                           </div>
                           <MonoSwitch
                             checked={Boolean(settings.allowPromptRewrite)}
@@ -2056,13 +1974,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              网络代理
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              API 请求与检查更新所使用的网络通道
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            网络代理
                           </div>
                           <select
                             value={networkProxy}
@@ -2076,13 +1989,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800 dark:text-slate-200">
-                              一键隐私遮罩快捷键
-                            </div>
-                            <div className="text-caption text-slate-400">
-                              按下可瞬间隐藏历史记录与输入内容，再按一次恢复
-                            </div>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                            一键隐私遮罩快捷键
                           </div>
                           <kbd className="px-3 py-1 rounded-lg bg-[#f3f4f8] dark:bg-white/[0.08] font-mono text-caption">
                             {settings.privacyModeShortcut || 'Ctrl + Shift + H'}
@@ -2094,14 +2002,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   {/* AI 工具集成：直接复用手头的 MCP 组件 */}
                   <section className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow p-5 space-y-3">
-                    <div>
-                      <h4 className="text-body font-bold text-slate-900 dark:text-white">
-                        AI 工具集成
-                      </h4>
-                      <p className="text-caption text-slate-400 mt-0.5">
-                        本机 MCP 服务，与正式设置页共用同一份配置
-                      </p>
-                    </div>
+                    <h4 className="text-body font-bold text-slate-900 dark:text-white">
+                      AI 工具集成
+                    </h4>
                     {isTauri ? (
                       <McpSettingsSection />
                     ) : (
@@ -2117,20 +2020,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {activeTab === 'appearance' && (
                 <div className="space-y-4">
                   <section className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow p-5 space-y-4">
-                    <div>
-                      <h4 className="text-body font-bold text-slate-900 dark:text-white">
-                        颜色主题
-                      </h4>
-                      <p className="text-caption text-slate-400 mt-0.5">
-                        选择「跟随系统」时，随操作系统浅色或深色模式自动切换
-                      </p>
-                    </div>
+                    <h4 className="text-body font-bold text-slate-900 dark:text-white">
+                      颜色主题
+                    </h4>
 
                     <div className="grid grid-cols-3 gap-3">
                       {[
-                        { id: 'light', label: '浅色质感', desc: '温润暖灰底板', icon: Sun },
-                        { id: 'dark', label: '黑曜石深色', desc: '专注夜间沉浸', icon: Moon },
-                        { id: 'system', label: '跟随系统', desc: '自动同步切换', icon: Monitor },
+                        { id: 'light', label: '浅色质感', icon: Sun },
+                        { id: 'dark', label: '黑曜石深色', icon: Moon },
+                        { id: 'system', label: '跟随系统', icon: Monitor },
                       ].map((opt) => {
                         const Icon = opt.icon;
                         const active = themePreference === opt.id;
@@ -2147,13 +2045,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           >
                             <Icon className="w-4.5 h-4.5 stroke-[1.8]" />
                             <span className="text-caption font-semibold mt-0.5">{opt.label}</span>
-                            <span
-                              className={`text-micro ${
-                                active ? 'opacity-75' : 'text-slate-400'
-                              }`}
-                            >
-                              {opt.desc}
-                            </span>
                           </button>
                         );
                       })}
@@ -2162,14 +2053,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <section className="rounded-2xl bg-white dark:bg-[#141620] border border-black/[0.06] dark:border-white/[0.07] soft-card-shadow p-5 space-y-3">
                     <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <h4 className="text-body font-bold text-slate-900 dark:text-white">
-                          界面字体
-                        </h4>
-                        <p className="text-caption text-slate-400 mt-0.5">
-                          内置思源黑体针对高分屏已做清晰度优化，也可切换回系统默认字体
-                        </p>
-                      </div>
+                      <h4 className="text-body font-bold text-slate-900 dark:text-white">
+                        界面字体
+                      </h4>
 
                       <div className="flex items-center gap-1 p-1 rounded-full bg-[#f3f4f8] dark:bg-white/[0.06] shrink-0">
                         {[
@@ -2215,11 +2101,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <Download className="w-4 h-4 text-slate-500" />
                           <span>导出数据备份</span>
                         </div>
-                        <p className="text-caption text-slate-400 leading-relaxed">
-                          {isMobile
-                            ? '备份将自动分卷保存到默认下载目录，默认不含敏感 API Key。'
-                            : '备份将自动分卷保存，默认不含敏感 API Key。'}
-                        </p>
                         <div className="flex flex-col gap-2 pt-1">
                           <MonoCheckbox
                             checked={exportIncludeConfig}
@@ -2248,9 +2129,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <Upload className="w-4 h-4 text-slate-500" />
                           <span>从 ZIP 恢复导入</span>
                         </div>
-                        <p className="text-caption text-slate-400 leading-relaxed">
-                          支持选择单个普通备份，或一次性选中全部分卷包。
-                        </p>
                         <div className="flex flex-col gap-2 pt-1">
                           <MonoCheckbox
                             checked={importIncludeConfig}
@@ -2301,9 +2179,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           label="包含任务和图片"
                         />
                       </div>
-                      <p className="text-micro text-slate-400">
-                        不包含技能库和保存的工作流；这两类数据请通过备份恢复或分别删除。
-                      </p>
                     </div>
 
                     <button
@@ -2344,9 +2219,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             v{__APP_VERSION__}
                           </button>
                         </div>
-                        <p className="text-caption text-slate-500 dark:text-slate-400">
-                          开发者 盼盼盼2222 · 顺手的地方请留下，不顺手的地方欢迎随时反馈。
-                        </p>
                       </div>
                     </div>
 
@@ -2395,13 +2267,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <BookOpen className="w-4 h-4 text-slate-400" />
-                        <div>
-                          <div className="text-caption font-semibold text-slate-800 dark:text-slate-200">
-                            使用说明与常见问题
-                          </div>
-                          <div className="text-caption text-slate-400">
-                            快速上手 API 配置、画布快捷键与参考图用法
-                          </div>
+                        <div className="text-caption font-semibold text-slate-800 dark:text-slate-200">
+                          使用说明与常见问题
                         </div>
                       </div>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
@@ -2417,13 +2284,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <MessageSquare className="w-4 h-4 text-slate-400" />
-                        <div>
-                          <div className="text-caption font-semibold text-slate-800 dark:text-slate-200">
-                            反馈问题与功能建议
-                          </div>
-                          <div className="text-caption text-slate-400">
-                            提交 Bug 截图或期望新增的创作功能
-                          </div>
+                        <div className="text-caption font-semibold text-slate-800 dark:text-slate-200">
+                          反馈问题与功能建议
                         </div>
                       </div>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
@@ -2540,8 +2402,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </>
               ) : (
-                <>
-                  <span className="text-caption text-slate-400">当前页面偏好修改实时生效</span>
+                <div className="ml-auto">
                   <button
                     type="button"
                     onClick={onClose}
@@ -2549,7 +2410,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     完成
                   </button>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -2579,9 +2440,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-caption text-slate-500 dark:text-slate-400 leading-relaxed">
-              可直接粘贴服务商分享的参数链接（含 <code className="font-mono">?apiUrl=...</code>），或选择本地 <code className="font-mono">.ppconfig</code> 文件。
-            </p>
             <textarea
               rows={4}
               value={importText}

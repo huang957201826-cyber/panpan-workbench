@@ -137,11 +137,7 @@ export default function StorageInfoSection() {
           )}
         </div>
       )}
-      {isMobile ? (
-        <p className="text-body-sm text-gray-500 dark:text-gray-400">
-          移动端数据保存在应用沙盒内，覆盖安装更新版本时会自动保留个人配置和历史数据。
-        </p>
-      ) : (
+      {!isMobile && (
         <button
           onClick={handleChange}
           className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-body font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white flex items-center justify-center gap-2"
